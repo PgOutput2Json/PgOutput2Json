@@ -2,6 +2,18 @@
 
 namespace PgOutput2Json.Core
 {
+    /// <summary>
+    /// Handles json message stored in the json StringBuilder. 
+    /// StringBuilders contents can be modified in the handler.
+    /// </summary>
+    /// <param name="json">StringBuilder containing json representation of the changed row.</param>
+    /// <param name="tableName">Schema qualified table name</param>
+    /// <param name="partition">Partition number in range from 0 to partition count - 1</param>
+    public delegate void MessageHandler(StringBuilder json, StringBuilder tableName, int partition);
+
+    public delegate void LoggingHandler(string logMessage);
+    public delegate void LoggingErrorHandler(Exception ex, string logMessage);
+
     public class ReplicationListenerOptions
     {
         public string ConnectionString { get; set; }
@@ -18,31 +30,29 @@ namespace PgOutput2Json.Core
 
         /// <summary>
         /// Called on every change of a database row. 
-        /// The first parameter is json, the second parameter is table name, and the third parameter is partion.
-        /// Partitions are ints from 0 to partition count - 1.
         /// </summary>
-        public Action<StringBuilder, StringBuilder, int> MessageHandler { get; set; }
+        public MessageHandler MessageHandler { get; set; }
 
         /// <summary>
         /// Called when the replication listener sends an informational message.
         /// </summary>
-        public Action<string>? LoggingInfoHandler { get; set; }
+        public LoggingHandler? LoggingInfoHandler { get; set; }
 
         /// <summary>
         /// Called when the replication listener sends a warning message.
         /// </summary>
-        public Action<string>? LoggingWarnHandler { get; set; }
+        public LoggingHandler? LoggingWarnHandler { get; set; }
 
         /// <summary>
         /// Called on error inside replication listener. 
         /// The listener will automatically try to reconnect after 10 seconds.
         /// </summary>
-        public Action<Exception, string>? LoggingErrorHandler { get; set; }
+        public LoggingErrorHandler? LoggingErrorHandler { get; set; }
 
         public ReplicationListenerOptions(string connectionString,
                                           string publicationName,
                                           string replicationSlotName,
-                                          Action<StringBuilder, StringBuilder, int> messageHandler)
+                                          MessageHandler messageHandler)
         {
             ConnectionString = connectionString;
             PublicationName = publicationName;
