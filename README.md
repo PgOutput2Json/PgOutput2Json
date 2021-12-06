@@ -1,2 +1,2 @@
-# pg2rabbit
-Pg2rabbit library uses PostgreSQL logical replication to push changes, as JSON messages, from database tables to RabbitMQ. 
+# PgOutput2Json
+PgOutput2Json library uses PostgreSQL logical replication to push changes, as JSON messages, from database tables to a message broker, such as RabbitMq or Redis. 
