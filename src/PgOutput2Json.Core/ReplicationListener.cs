@@ -3,11 +3,18 @@ using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
 using System.Text;
 
-namespace Pg2Rabbit.Core
+namespace PgOutput2Json.Core
 {
     public class ReplicationListener
     {
-        public static async Task ListenForChanges(CancellationToken cancellationToken, bool sendNulls)
+        private readonly ReplicationListenerOptions _options;
+
+        public ReplicationListener(ReplicationListenerOptions options)
+        {
+            _options = options;
+        }
+
+        public async Task ListenForChanges(CancellationToken cancellationToken)
         {
             while (true)
             {
@@ -16,16 +23,16 @@ namespace Pg2Rabbit.Core
                     await using var conn = new LogicalReplicationConnection("server=localhost;database=repl_test_db;username=replicator;password=replicator");
                     await conn.Open();
 
-                    Console.WriteLine("Connected to PostgreSQL");
+                    _options.LoggingInfoHandler?.Invoke("Connected to PostgreSQL");
 
                     var slot = new PgOutputReplicationSlot("test_slot");
-                    var options = new PgOutputReplicationOptions("pub_test", 1);
+                    var replOptions = new PgOutputReplicationOptions("pub_test", 1);
 
                     var stringBuilder = new StringBuilder(256);
 
                     DateTime commitTimeStamp = DateTime.UtcNow;
 
-                    await foreach (var message in conn.StartReplication(slot, options, cancellationToken))
+                    await foreach (var message in conn.StartReplication(slot, replOptions, cancellationToken))
                     {
                         if (message is BeginMessage beginMsg)
                         {
@@ -39,7 +46,7 @@ namespace Pg2Rabbit.Core
                                              "I",
                                              commitTimeStamp,
                                              insertMsg.ServerClock,
-                                             sendNulls);
+                                             _options.WriteNulls);
                         }
                         else if (message is UpdateMessage updateMsg)
                         {
@@ -49,7 +56,7 @@ namespace Pg2Rabbit.Core
                                              "U",
                                              commitTimeStamp,
                                              updateMsg.ServerClock,
-                                             sendNulls);
+                                             _options.WriteNulls);
                         }
                         else if (message is KeyDeleteMessage keyDeleteMsg)
                         {
@@ -90,11 +97,11 @@ namespace Pg2Rabbit.Core
                 {
                     if (ex.Message.StartsWith("55006:"))
                     {
-                        Console.WriteLine("Slot taken - waiting for 10 seconds...");
+                        _options.LoggingWarnHandler?.Invoke("Slot taken - waiting for 10 seconds...");
                     }
                     else
                     {
-                        Console.Error.WriteLine(ex);
+                        _options.LoggingErrorHandler?.Invoke(ex, "Error in replication listener. Waiting for 10 seconds...");
                     }
 
                     Thread.Sleep(10000);

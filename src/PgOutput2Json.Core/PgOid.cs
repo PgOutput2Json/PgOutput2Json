@@ -1,4 +1,4 @@
-﻿namespace Pg2Rabbit.Core
+﻿namespace PgOutput2Json.Core
 {
     internal enum PgOid
     {
