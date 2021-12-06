@@ -22,7 +22,7 @@ namespace PgOutput2Json.Core
             {
                 try
                 {
-                    await using var conn = new LogicalReplicationConnection("server=localhost;database=repl_test_db;username=replicator;password=replicator");
+                    await using var conn = new LogicalReplicationConnection(_options.ConnectionString);
                     await conn.Open();
 
                     _options.LoggingInfoHandler?.Invoke("Connected to PostgreSQL");

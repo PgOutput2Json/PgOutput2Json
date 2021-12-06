@@ -1,7 +1,10 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using PgOutput2Json.Core;
 
-var options = new ReplicationListenerOptions("pub_test", "test_slot", (json, tableName, partition) =>
+var options = new ReplicationListenerOptions("server=localhost;database=repl_test_db;username=replicator;password=replicator", 
+    "pub_test", 
+    "test_slot", 
+    (json, tableName, partition) =>
     {
         Console.WriteLine(tableName + "." + partition);
         Console.WriteLine(json);

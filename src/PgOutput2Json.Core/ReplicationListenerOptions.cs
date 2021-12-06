@@ -4,6 +4,7 @@ namespace PgOutput2Json.Core
 {
     public class ReplicationListenerOptions
     {
+        public string ConnectionString { get; set; }
         public string PublicationName { get; set; }
         public string ReplicationSlotName { get; set; }
 
@@ -38,10 +39,12 @@ namespace PgOutput2Json.Core
         /// </summary>
         public Action<Exception, string>? LoggingErrorHandler { get; set; }
 
-        public ReplicationListenerOptions(string publicationName,
+        public ReplicationListenerOptions(string connectionString,
+                                          string publicationName,
                                           string replicationSlotName,
                                           Action<StringBuilder, StringBuilder, int> messageHandler)
         {
+            ConnectionString = connectionString;
             PublicationName = publicationName;
             ReplicationSlotName = replicationSlotName;
             MessageHandler = messageHandler;
