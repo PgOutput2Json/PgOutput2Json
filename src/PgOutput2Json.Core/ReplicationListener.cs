@@ -32,6 +32,8 @@ namespace PgOutput2Json.Core
 
                     DateTime commitTimeStamp = DateTime.UtcNow;
 
+                    var confirm = true;
+
                     await foreach (var message in conn.StartReplication(slot, replicationOptions, cancellationToken))
                     {
                         if (message is BeginMessage beginMsg)
@@ -40,7 +42,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is InsertMessage insertMsg)
                         {
-                            await WriteTuple(insertMsg.NewRow,
+                            confirm = await WriteTuple(insertMsg.NewRow,
                                              insertMsg.Relation,
                                              "I",
                                              commitTimeStamp,
@@ -49,7 +51,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is UpdateMessage updateMsg)
                         {
-                            await WriteTuple(updateMsg.NewRow,
+                            confirm = await WriteTuple(updateMsg.NewRow,
                                              updateMsg.Relation,
                                              "U",
                                              commitTimeStamp,
@@ -58,7 +60,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is KeyDeleteMessage keyDeleteMsg)
                         {
-                            await WriteTuple(keyDeleteMsg.Key,
+                            confirm = await WriteTuple(keyDeleteMsg.Key,
                                              keyDeleteMsg.Relation,
                                              "D",
                                              commitTimeStamp,
@@ -67,7 +69,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is FullDeleteMessage fullDeleteMsg)
                         {
-                            await WriteTuple(fullDeleteMsg.OldRow,
+                            confirm = await WriteTuple(fullDeleteMsg.OldRow,
                                              fullDeleteMsg.Relation,
                                              "D",
                                              commitTimeStamp,
@@ -78,7 +80,7 @@ namespace PgOutput2Json.Core
                         // Always call SetReplicationStatus() or assign LastAppliedLsn and LastFlushedLsn individually
                         // so that Npgsql can inform the server which WAL files can be removed/recycled.
 
-                        conn.SetReplicationStatus(message.WalEnd);
+                        if (confirm) conn.SetReplicationStatus(message.WalEnd);
                     }
                 }
                 catch (OperationCanceledException)
@@ -101,7 +103,7 @@ namespace PgOutput2Json.Core
             }
         }
 
-        private async Task WriteTuple(ReplicationTuple tuple,
+        private async Task<bool> WriteTuple(ReplicationTuple tuple,
                                       RelationMessage relation,
                                       string changeType,
                                       DateTime commitTimeStamp,
@@ -190,7 +192,7 @@ namespace PgOutput2Json.Core
 
             _jsonBuilder.Append('}');
 
-            _options.MessageHandler.Invoke(_jsonBuilder, _tableNameBuilder, partition);
+            return _options.MessageHandler.Invoke(_jsonBuilder, _tableNameBuilder, partition);
         }
     }
 }

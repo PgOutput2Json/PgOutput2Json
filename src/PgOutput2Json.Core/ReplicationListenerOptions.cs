@@ -5,11 +5,12 @@ namespace PgOutput2Json.Core
     /// <summary>
     /// Handles json message stored in the json StringBuilder. 
     /// StringBuilders contents can be modified in the handler.
+    /// The handler should return true if the message is successfully processed.
     /// </summary>
     /// <param name="json">StringBuilder containing json representation of the changed row.</param>
     /// <param name="tableName">Schema qualified table name</param>
     /// <param name="partition">Partition number in range from 0 to partition count - 1</param>
-    public delegate void MessageHandler(StringBuilder json, StringBuilder tableName, int partition);
+    public delegate bool MessageHandler(StringBuilder json, StringBuilder tableName, int partition);
 
     public delegate void LoggingHandler(string logMessage);
     public delegate void LoggingErrorHandler(Exception ex, string logMessage);

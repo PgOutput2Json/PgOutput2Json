@@ -1,6 +1,8 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using PgOutput2Json.Core;
 
+int count = 0;
+
 var options = new ReplicationListenerOptions("server=localhost;database=repl_test_db;username=replicator;password=replicator", 
     "pub_test", 
     "test_slot", 
@@ -8,6 +10,14 @@ var options = new ReplicationListenerOptions("server=localhost;database=repl_tes
     {
         Console.WriteLine(tableName + "." + partition);
         Console.WriteLine(json);
+
+        if (++count >= 2)
+        {
+            count = 0;
+            return true;
+        }
+
+        return false;
     });
 
 options.Partitions = new Dictionary<string, PartionConfig>
