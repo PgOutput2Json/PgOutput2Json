@@ -7,7 +7,7 @@ namespace Pg2Rabbit.Core
 {
     public class ReplicationListener
     {
-        public static async Task ListenForChanges(CancellationToken cancellationToken)
+        public static async Task ListenForChanges(CancellationToken cancellationToken, bool sendNulls)
         {
             while (true)
             {
@@ -31,20 +31,47 @@ namespace Pg2Rabbit.Core
                         {
                             commitTimeStamp = beginMsg.TransactionCommitTimestamp;
                         }
-
-                        //Console.WriteLine($"Received message type: {message.GetType().Name}");
-
-                        if (message is InsertMessage insertMsg)
+                        else if (message is InsertMessage insertMsg)
                         {
-                            await WriteTuple(stringBuilder, insertMsg.NewRow, insertMsg.Relation, "I", commitTimeStamp);
-
+                            await WriteTuple(stringBuilder,
+                                             insertMsg.NewRow,
+                                             insertMsg.Relation,
+                                             "I",
+                                             commitTimeStamp,
+                                             insertMsg.ServerClock,
+                                             sendNulls);
                         }
-                        if (message is UpdateMessage updateMsg)
+                        else if (message is UpdateMessage updateMsg)
                         {
-                            await WriteTuple(stringBuilder, updateMsg.NewRow, updateMsg.Relation, "U", commitTimeStamp);
+                            await WriteTuple(stringBuilder,
+                                             updateMsg.NewRow,
+                                             updateMsg.Relation,
+                                             "U",
+                                             commitTimeStamp,
+                                             updateMsg.ServerClock,
+                                             sendNulls);
                         }
-                                 
-                        if (message is CommitMessage commitMsg)
+                        else if (message is KeyDeleteMessage keyDeleteMsg)
+                        {
+                            await WriteTuple(stringBuilder,
+                                             keyDeleteMsg.Key,
+                                             keyDeleteMsg.Relation,
+                                             "D",
+                                             commitTimeStamp,
+                                             keyDeleteMsg.ServerClock,
+                                             false);
+                        }
+                        else if (message is FullDeleteMessage fullDeleteMsg)
+                        {
+                            await WriteTuple(stringBuilder,
+                                             fullDeleteMsg.OldRow,
+                                             fullDeleteMsg.Relation,
+                                             "D",
+                                             commitTimeStamp,
+                                             fullDeleteMsg.ServerClock,
+                                             false);
+                        }
+                        else if (message is CommitMessage commitMsg)
                         {
                             Console.WriteLine(stringBuilder.ToString());
                             stringBuilder.Clear();
@@ -79,14 +106,20 @@ namespace Pg2Rabbit.Core
                                              ReplicationTuple tuple,
                                              RelationMessage relation,
                                              string changeType,
-                                             DateTime commitTimeStamp)
+                                             DateTime commitTimeStamp,
+                                             DateTime messageTimeStamp,
+                                             bool sendNulls)
         {
             stringBuilder.Append("{\"_ct\":\"");
             stringBuilder.Append(changeType);
             stringBuilder.Append("\",");
 
-            stringBuilder.Append("\"_ts\":\"");
+            stringBuilder.Append("\"_cts\":\"");
             stringBuilder.Append(commitTimeStamp.Ticks);
+            stringBuilder.Append("\",");
+
+            stringBuilder.Append("\"_mts\":\"");
+            stringBuilder.Append(messageTimeStamp.Ticks);
             stringBuilder.Append("\",");
 
             stringBuilder.Append("\"_re\":\"");
@@ -101,13 +134,15 @@ namespace Pg2Rabbit.Core
             {
                 var col = relation.Columns[i++];
 
-                if (value.Kind == TupleDataKind.Null || value.Kind == TupleDataKind.TextValue)
+                if (value.IsDBNull && !sendNulls) continue;
+
+                if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
                     stringBuilder.Append(",\"");
                     stringBuilder.Append(col.ColumnName);
                     stringBuilder.Append("\":");
 
-                    if (value.Kind == TupleDataKind.Null)
+                    if (value.IsDBNull)
                     {
                         stringBuilder.Append("null");
                     }

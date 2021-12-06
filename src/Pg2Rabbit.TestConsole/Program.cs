@@ -3,4 +3,4 @@ using Pg2Rabbit.Core;
 
 var cancellationTokenSource = new CancellationTokenSource();
 
-await ReplicationListener.ListenForChanges(cancellationTokenSource.Token);
+await ReplicationListener.ListenForChanges(cancellationTokenSource.Token, false);

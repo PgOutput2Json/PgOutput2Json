@@ -49,17 +49,21 @@ namespace Pg2Rabbit.Core
             }
         }
 
-        internal static void WriteByte(StringBuilder stringBuilder, TextReader textReader)
+        internal static void WriteByte(StringBuilder builder, TextReader textReader)
         {
             /* string is "\x54617069727573", start after "\x" */
             textReader.Read();
             textReader.Read();
 
+            builder.Append('"');
+
             int c;
             while ((c = textReader.Read()) != -1)
             {
-                stringBuilder.Append((char)c);
+                builder.Append((char)c);
             }
+
+            builder.Append('"');
         }
 
         private static void EscapeJson(StringBuilder builder, TextReader textReader)
