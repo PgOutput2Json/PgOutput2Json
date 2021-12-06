@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31919.166
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Pg2Rabbit.Core", "Pg2Rabbit.Core\Pg2Rabbit.Core.csproj", "{908FA73B-F97B-4299-B0E7-65C4C276D9C9}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.Core", "PgOutput2Json.Core\PgOutput2Json.Core.csproj", "{908FA73B-F97B-4299-B0E7-65C4C276D9C9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pg2Rabbit.TestConsole", "Pg2Rabbit.TestConsole\Pg2Rabbit.TestConsole.csproj", "{90CDE1E5-29AB-4236-82C9-D080B816091F}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.TestConsole", "PgOutput2Json.TestConsole\PgOutput2Json.TestConsole.csproj", "{90CDE1E5-29AB-4236-82C9-D080B816091F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

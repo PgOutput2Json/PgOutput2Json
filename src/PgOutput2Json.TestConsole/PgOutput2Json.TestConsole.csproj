@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Pg2Rabbit.Core\Pg2Rabbit.Core.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Core\PgOutput2Json.Core.csproj" />
   </ItemGroup>
 
 </Project>
