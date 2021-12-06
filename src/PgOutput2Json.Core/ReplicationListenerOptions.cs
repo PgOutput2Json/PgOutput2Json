@@ -1,9 +1,11 @@
-﻿namespace PgOutput2Json.Core
+﻿using System.Text;
+
+namespace PgOutput2Json.Core
 {
     public class ReplicationListenerOptions
     {
-        public Dictionary<string, RoutingKeyOptions> RoutingKeyColumns { get; set; } 
-            = new Dictionary<string, RoutingKeyOptions>();
+        public Dictionary<string, PartionConfig> Partitions { get; set; } 
+            = new Dictionary<string, PartionConfig>();
 
         /// <summary>
         /// Should nulls be written to JSON output. Default is false.
@@ -25,6 +27,13 @@
         /// The listener will automatically try to reconnect after 10 seconds.
         /// </summary>
         public Action<Exception, string>? LoggingErrorHandler { get; set; }
+
+        /// <summary>
+        /// Called on every change of a database row. 
+        /// The first parameter is json, the second parameter is table name, and the third parameter is partion.
+        /// Partitions are ints from 0 to partition count - 1.
+        /// </summary>
+        public Action<StringBuilder, StringBuilder, int>? MessageHandler { get; set; }
 
     }
 }

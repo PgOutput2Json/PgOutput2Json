@@ -9,7 +9,7 @@ namespace PgOutput2Json.Core
     {
         private readonly ReplicationListenerOptions _options;
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
-        private readonly StringBuilder _routingKeyBuilder = new StringBuilder(256);
+        private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
 
         public ReplicationListener(ReplicationListenerOptions options)
         {
@@ -108,37 +108,35 @@ namespace PgOutput2Json.Core
                                              DateTime messageTimeStamp,
                                              bool sendNulls)
         {
-            _jsonBuilder.Clear();
+            _tableNameBuilder.Clear();
+            _tableNameBuilder.Append(relation.Namespace);
+            _tableNameBuilder.Append('.');
+            _tableNameBuilder.Append(relation.RelationName);
 
+            _jsonBuilder.Clear();
             _jsonBuilder.Append("{\"_ct\":\"");
             _jsonBuilder.Append(changeType);
             _jsonBuilder.Append("\",");
-
             _jsonBuilder.Append("\"_cts\":\"");
             _jsonBuilder.Append(commitTimeStamp.Ticks);
             _jsonBuilder.Append("\",");
-
             _jsonBuilder.Append("\"_mts\":\"");
             _jsonBuilder.Append(messageTimeStamp.Ticks);
             _jsonBuilder.Append("\",");
-
             _jsonBuilder.Append("\"_re\":\"");
             _jsonBuilder.Append(relation.Namespace);
             _jsonBuilder.Append('.');
             _jsonBuilder.Append(relation.RelationName);
             _jsonBuilder.Append('"');
 
-            _routingKeyBuilder.Clear();
-            _routingKeyBuilder.Append(relation.Namespace);
-            _routingKeyBuilder.Append('.');
-            _routingKeyBuilder.Append(relation.RelationName);
-
             var i = 0;
 
-            if (!_options.RoutingKeyColumns.TryGetValue(_routingKeyBuilder.ToString(), out var routingKeyOptions))
+            if (!_options.Partitions.TryGetValue(_tableNameBuilder.ToString(), out var partionConfig))
             {
-                routingKeyOptions = null;
+                partionConfig = null;
             }
+
+            int partition = 0;
 
             await foreach (var value in tuple)
             {
@@ -148,7 +146,7 @@ namespace PgOutput2Json.Core
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
-                    var isKeyCol = routingKeyOptions != null && col.ColumnName == routingKeyOptions.ColumnName;
+                    var isPartitionCol = partionConfig != null && col.ColumnName == partionConfig.ColumnName;
 
                     _jsonBuilder.Append(",\"");
                     _jsonBuilder.Append(col.ColumnName);
@@ -157,36 +155,34 @@ namespace PgOutput2Json.Core
                     if (value.IsDBNull)
                     {
                         _jsonBuilder.Append("null");
-                        if (isKeyCol) _routingKeyBuilder.Append(".0");
                     }
                     else if (value.Kind == TupleDataKind.TextValue)
                     {
                         var type = value.GetPostgresType();
                         var pgOid = (PgOid)type.OID;
 
-                        int hash = 0;
+                        int hash;
 
                         if (pgOid.IsNumber())
                         {
-                            JsonUtils.WriteNumber(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteNumber(_jsonBuilder, value.GetTextReader());
                         }
                         else if (pgOid.IsBoolean())
                         {
-                            JsonUtils.WriteBoolean(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteBoolean(_jsonBuilder, value.GetTextReader());
                         }
                         else if (pgOid.IsByte())
                         {
-                            JsonUtils.WriteByte(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteByte(_jsonBuilder, value.GetTextReader());
                         }
                         else
                         {
-                            JsonUtils.WriteText(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteText(_jsonBuilder, value.GetTextReader());
                         }
 
-                        if (isKeyCol)
+                        if (isPartitionCol)
                         {
-                            _routingKeyBuilder.Append('.');
-                            _routingKeyBuilder.Append(hash % routingKeyOptions!.PartitionCount);
+                            partition = hash % partionConfig!.PartitionCount;
                         }
                     }
                 }
@@ -194,8 +190,7 @@ namespace PgOutput2Json.Core
 
             _jsonBuilder.Append('}');
 
-            Console.WriteLine(_routingKeyBuilder.ToString());    
-            Console.WriteLine(_jsonBuilder.ToString());
+            _options.MessageHandler?.Invoke(_jsonBuilder, _tableNameBuilder, partition);
         }
     }
 }

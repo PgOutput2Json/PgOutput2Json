@@ -4,19 +4,25 @@ namespace PgOutput2Json.Core
 {
     internal static class JsonUtils
     {
-        internal static void WriteText(StringBuilder builder, TextReader textReader)
+        private const int _initHash = 0x12345678;
+
+        internal static int WriteText(StringBuilder builder, TextReader textReader)
         {
             builder.Append('"');
 
-            EscapeJson(builder, textReader);
+            var hash = EscapeJson(builder, textReader);
 
             builder.Append('"');
+
+            return hash;
         }
 
-        internal static void WriteNumber(StringBuilder stringBuilder, TextReader textReader)
+        internal static int WriteNumber(StringBuilder stringBuilder, TextReader textReader)
         {
             // we may have to return to the original length in case of NaN, Infinity, -Infinity...
             var originalLength = stringBuilder.Length;
+
+            int hash = _initHash;
 
             int c;
             while ((c = textReader.Read()) != -1)
@@ -29,27 +35,42 @@ namespace PgOutput2Json.Core
                      || c == 'E'
                      || c == '.')
                 {
+                    hash ^= c;
                     stringBuilder.Append((char)c);
                 }
                 else
                 {
                     stringBuilder.Length = originalLength;
                     stringBuilder.Append("null");
-                    break;
+                    return 0;
                 }
             }
+
+            return hash;
         }
 
-        internal static void WriteBoolean(StringBuilder stringBuilder, TextReader textReader)
+        internal static int WriteBoolean(StringBuilder stringBuilder, TextReader textReader)
         {
+            int hash = 0;
+
             int c;
             if ((c = textReader.Read()) != -1)
             {
-                stringBuilder.Append(((char)c) == 't' ? "true" : "false");
+                if (c == 't')
+                {
+                    hash = 1;
+                    stringBuilder.Append("true");
+                }
+                else
+                {
+                    stringBuilder.Append("false");
+                }
             }
+
+            return hash;
         }
 
-        internal static void WriteByte(StringBuilder builder, TextReader textReader)
+        internal static int WriteByte(StringBuilder builder, TextReader textReader)
         {
             /* string is "\x54617069727573", start after "\x" */
             textReader.Read();
@@ -57,20 +78,28 @@ namespace PgOutput2Json.Core
 
             builder.Append('"');
 
+            int hash = _initHash;
+
             int c;
             while ((c = textReader.Read()) != -1)
             {
+                hash ^= c;
                 builder.Append((char)c);
             }
 
             builder.Append('"');
+            return hash;
         }
 
-        private static void EscapeJson(StringBuilder builder, TextReader textReader)
+        private static int EscapeJson(StringBuilder builder, TextReader textReader)
         {
+            int hash = _initHash;
+
             int c;
             while ((c = textReader.Read()) != -1)
             {
+                hash ^= c;
+
                 switch (c)
                 {
                     case '\b':
@@ -107,6 +136,8 @@ namespace PgOutput2Json.Core
                         break;
                 }
             }
+
+            return hash;
         }
     }
 }
