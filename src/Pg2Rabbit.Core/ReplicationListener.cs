@@ -7,7 +7,7 @@ namespace Pg2Rabbit.Core
 {
     public class ReplicationListener
     {
-        public static async Task ListenForChanges()
+        public static async Task ListenForChanges(CancellationToken cancellationToken)
         {
             while (true)
             {
@@ -23,32 +23,32 @@ namespace Pg2Rabbit.Core
 
                     var stringBuilder = new StringBuilder(256);
 
-                    // The following will loop until the cancellation token is triggered, and will print message types coming from PostgreSQL:
-                    var cancellationTokenSource = new CancellationTokenSource();
+                    DateTime commitTimeStamp = DateTime.UtcNow;
 
-                    await foreach (var message in conn.StartReplication(slot, options, cancellationTokenSource.Token))
+                    await foreach (var message in conn.StartReplication(slot, options, cancellationToken))
                     {
-                        stringBuilder.Clear();
+                        if (message is BeginMessage beginMsg)
+                        {
+                            commitTimeStamp = beginMsg.TransactionCommitTimestamp;
+                        }
 
-                        Console.WriteLine($"Received message type: {message.GetType().Name}");
+                        //Console.WriteLine($"Received message type: {message.GetType().Name}");
 
                         if (message is InsertMessage insertMsg)
                         {
-                            Console.WriteLine($"Insert into {insertMsg.Relation.RelationName}:");
+                            await WriteTuple(stringBuilder, insertMsg.NewRow, insertMsg.Relation, "I", commitTimeStamp);
 
-                            await WriteTuple(stringBuilder, insertMsg.NewRow);
-
-                            Console.WriteLine(stringBuilder.ToString());
                         }
                         if (message is UpdateMessage updateMsg)
                         {
-                            Console.WriteLine($"Update in {updateMsg.Relation.RelationName}:");
-
-                            await WriteTuple(stringBuilder, updateMsg.NewRow);
-
-                            Console.WriteLine(stringBuilder.ToString());
+                            await WriteTuple(stringBuilder, updateMsg.NewRow, updateMsg.Relation, "U", commitTimeStamp);
                         }
                                  
+                        if (message is CommitMessage commitMsg)
+                        {
+                            Console.WriteLine(stringBuilder.ToString());
+                            stringBuilder.Clear();
+                        }
                         // Always call SetReplicationStatus() or assign LastAppliedLsn and LastFlushedLsn individually
                         // so that Npgsql can inform the server which WAL files can be removed/recycled.
 
@@ -57,7 +57,7 @@ namespace Pg2Rabbit.Core
                 }
                 catch (OperationCanceledException)
                 {
-                    // We are reconnecting every X seconds - not sure if needed
+                    break;
                 }
                 catch (Exception ex)
                 {
@@ -75,21 +75,44 @@ namespace Pg2Rabbit.Core
             }
         }
 
-        private static async Task WriteTuple(StringBuilder stringBuilder, ReplicationTuple tuple)
+        private static async Task WriteTuple(StringBuilder stringBuilder,
+                                             ReplicationTuple tuple,
+                                             RelationMessage relation,
+                                             string changeType,
+                                             DateTime commitTimeStamp)
         {
-            stringBuilder.Append("[");
+            stringBuilder.Append("{\"_ct\":\"");
+            stringBuilder.Append(changeType);
+            stringBuilder.Append("\",");
+
+            stringBuilder.Append("\"_ts\":\"");
+            stringBuilder.Append(commitTimeStamp.Ticks);
+            stringBuilder.Append("\",");
+
+            stringBuilder.Append("\"_re\":\"");
+            stringBuilder.Append(relation.Namespace);
+            stringBuilder.Append('.');
+            stringBuilder.Append(relation.RelationName);
+            stringBuilder.Append('"');
+
+            var i = 0;
 
             await foreach (var value in tuple)
             {
-                switch (value.Kind)
-                {
-                    case TupleDataKind.Null:
-                        if (stringBuilder.Length > 1) stringBuilder.Append(',');
-                        stringBuilder.Append("null");
-                        break;
-                    case TupleDataKind.TextValue:
-                        if (stringBuilder.Length > 1) stringBuilder.Append(',');
+                var col = relation.Columns[i++];
 
+                if (value.Kind == TupleDataKind.Null || value.Kind == TupleDataKind.TextValue)
+                {
+                    stringBuilder.Append(",\"");
+                    stringBuilder.Append(col.ColumnName);
+                    stringBuilder.Append("\":");
+
+                    if (value.Kind == TupleDataKind.Null)
+                    {
+                        stringBuilder.Append("null");
+                    }
+                    else if (value.Kind == TupleDataKind.TextValue)
+                    {
                         var type = value.GetPostgresType();
                         var pgOid = (PgOid)type.OID;
 
@@ -109,11 +132,11 @@ namespace Pg2Rabbit.Core
                         {
                             JsonUtils.WriteText(stringBuilder, value.GetTextReader());
                         }
-                        break;
+                    }
                 }
             }
 
-            stringBuilder.Append("]");
+            stringBuilder.Append('}');
         }
     }
 }

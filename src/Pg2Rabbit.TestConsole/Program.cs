@@ -1,6 +1,6 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using Pg2Rabbit.Core;
 
-Console.WriteLine("Hello, World!");
+var cancellationTokenSource = new CancellationTokenSource();
 
-await ReplicationListener.ListenForChanges();
+await ReplicationListener.ListenForChanges(cancellationTokenSource.Token);
