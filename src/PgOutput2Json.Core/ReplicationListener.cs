@@ -27,12 +27,12 @@ namespace PgOutput2Json.Core
 
                     _options.LoggingInfoHandler?.Invoke("Connected to PostgreSQL");
 
-                    var slot = new PgOutputReplicationSlot("test_slot");
-                    var replOptions = new PgOutputReplicationOptions("pub_test", 1);
+                    var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
+                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationName, 1);
 
                     DateTime commitTimeStamp = DateTime.UtcNow;
 
-                    await foreach (var message in conn.StartReplication(slot, replOptions, cancellationToken))
+                    await foreach (var message in conn.StartReplication(slot, replicationOptions, cancellationToken))
                     {
                         if (message is BeginMessage beginMsg)
                         {
@@ -102,11 +102,11 @@ namespace PgOutput2Json.Core
         }
 
         private async Task WriteTuple(ReplicationTuple tuple,
-                                             RelationMessage relation,
-                                             string changeType,
-                                             DateTime commitTimeStamp,
-                                             DateTime messageTimeStamp,
-                                             bool sendNulls)
+                                      RelationMessage relation,
+                                      string changeType,
+                                      DateTime commitTimeStamp,
+                                      DateTime messageTimeStamp,
+                                      bool sendNulls)
         {
             _tableNameBuilder.Clear();
             _tableNameBuilder.Append(relation.Namespace);
@@ -190,7 +190,7 @@ namespace PgOutput2Json.Core
 
             _jsonBuilder.Append('}');
 
-            _options.MessageHandler?.Invoke(_jsonBuilder, _tableNameBuilder, partition);
+            _options.MessageHandler.Invoke(_jsonBuilder, _tableNameBuilder, partition);
         }
     }
 }
