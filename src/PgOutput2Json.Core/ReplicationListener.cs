@@ -8,6 +8,8 @@ namespace PgOutput2Json.Core
     public class ReplicationListener
     {
         private readonly ReplicationListenerOptions _options;
+        private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
+        private readonly StringBuilder _routingKeyBuilder = new StringBuilder(256);
 
         public ReplicationListener(ReplicationListenerOptions options)
         {
@@ -28,8 +30,6 @@ namespace PgOutput2Json.Core
                     var slot = new PgOutputReplicationSlot("test_slot");
                     var replOptions = new PgOutputReplicationOptions("pub_test", 1);
 
-                    var stringBuilder = new StringBuilder(256);
-
                     DateTime commitTimeStamp = DateTime.UtcNow;
 
                     await foreach (var message in conn.StartReplication(slot, replOptions, cancellationToken))
@@ -40,8 +40,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is InsertMessage insertMsg)
                         {
-                            await WriteTuple(stringBuilder,
-                                             insertMsg.NewRow,
+                            await WriteTuple(insertMsg.NewRow,
                                              insertMsg.Relation,
                                              "I",
                                              commitTimeStamp,
@@ -50,8 +49,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is UpdateMessage updateMsg)
                         {
-                            await WriteTuple(stringBuilder,
-                                             updateMsg.NewRow,
+                            await WriteTuple(updateMsg.NewRow,
                                              updateMsg.Relation,
                                              "U",
                                              commitTimeStamp,
@@ -60,8 +58,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is KeyDeleteMessage keyDeleteMsg)
                         {
-                            await WriteTuple(stringBuilder,
-                                             keyDeleteMsg.Key,
+                            await WriteTuple(keyDeleteMsg.Key,
                                              keyDeleteMsg.Relation,
                                              "D",
                                              commitTimeStamp,
@@ -70,19 +67,14 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is FullDeleteMessage fullDeleteMsg)
                         {
-                            await WriteTuple(stringBuilder,
-                                             fullDeleteMsg.OldRow,
+                            await WriteTuple(fullDeleteMsg.OldRow,
                                              fullDeleteMsg.Relation,
                                              "D",
                                              commitTimeStamp,
                                              fullDeleteMsg.ServerClock,
                                              false);
                         }
-                        else if (message is CommitMessage commitMsg)
-                        {
-                            Console.WriteLine(stringBuilder.ToString());
-                            stringBuilder.Clear();
-                        }
+
                         // Always call SetReplicationStatus() or assign LastAppliedLsn and LastFlushedLsn individually
                         // so that Npgsql can inform the server which WAL files can be removed/recycled.
 
@@ -109,33 +101,44 @@ namespace PgOutput2Json.Core
             }
         }
 
-        private static async Task WriteTuple(StringBuilder stringBuilder,
-                                             ReplicationTuple tuple,
+        private async Task WriteTuple(ReplicationTuple tuple,
                                              RelationMessage relation,
                                              string changeType,
                                              DateTime commitTimeStamp,
                                              DateTime messageTimeStamp,
                                              bool sendNulls)
         {
-            stringBuilder.Append("{\"_ct\":\"");
-            stringBuilder.Append(changeType);
-            stringBuilder.Append("\",");
+            _jsonBuilder.Clear();
 
-            stringBuilder.Append("\"_cts\":\"");
-            stringBuilder.Append(commitTimeStamp.Ticks);
-            stringBuilder.Append("\",");
+            _jsonBuilder.Append("{\"_ct\":\"");
+            _jsonBuilder.Append(changeType);
+            _jsonBuilder.Append("\",");
 
-            stringBuilder.Append("\"_mts\":\"");
-            stringBuilder.Append(messageTimeStamp.Ticks);
-            stringBuilder.Append("\",");
+            _jsonBuilder.Append("\"_cts\":\"");
+            _jsonBuilder.Append(commitTimeStamp.Ticks);
+            _jsonBuilder.Append("\",");
 
-            stringBuilder.Append("\"_re\":\"");
-            stringBuilder.Append(relation.Namespace);
-            stringBuilder.Append('.');
-            stringBuilder.Append(relation.RelationName);
-            stringBuilder.Append('"');
+            _jsonBuilder.Append("\"_mts\":\"");
+            _jsonBuilder.Append(messageTimeStamp.Ticks);
+            _jsonBuilder.Append("\",");
+
+            _jsonBuilder.Append("\"_re\":\"");
+            _jsonBuilder.Append(relation.Namespace);
+            _jsonBuilder.Append('.');
+            _jsonBuilder.Append(relation.RelationName);
+            _jsonBuilder.Append('"');
+
+            _routingKeyBuilder.Clear();
+            _routingKeyBuilder.Append(relation.Namespace);
+            _routingKeyBuilder.Append('.');
+            _routingKeyBuilder.Append(relation.RelationName);
 
             var i = 0;
+
+            if (!_options.RoutingKeyColumns.TryGetValue(_routingKeyBuilder.ToString(), out var routingKeyOptions))
+            {
+                routingKeyOptions = null;
+            }
 
             await foreach (var value in tuple)
             {
@@ -145,40 +148,54 @@ namespace PgOutput2Json.Core
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
-                    stringBuilder.Append(",\"");
-                    stringBuilder.Append(col.ColumnName);
-                    stringBuilder.Append("\":");
+                    var isKeyCol = routingKeyOptions != null && col.ColumnName == routingKeyOptions.ColumnName;
+
+                    _jsonBuilder.Append(",\"");
+                    _jsonBuilder.Append(col.ColumnName);
+                    _jsonBuilder.Append("\":");
 
                     if (value.IsDBNull)
                     {
-                        stringBuilder.Append("null");
+                        _jsonBuilder.Append("null");
+                        if (isKeyCol) _routingKeyBuilder.Append(".0");
                     }
                     else if (value.Kind == TupleDataKind.TextValue)
                     {
                         var type = value.GetPostgresType();
                         var pgOid = (PgOid)type.OID;
 
+                        int hash = 0;
+
                         if (pgOid.IsNumber())
                         {
-                            JsonUtils.WriteNumber(stringBuilder, value.GetTextReader());
+                            JsonUtils.WriteNumber(_jsonBuilder, value.GetTextReader());
                         }
                         else if (pgOid.IsBoolean())
                         {
-                            JsonUtils.WriteBoolean(stringBuilder, value.GetTextReader());
+                            JsonUtils.WriteBoolean(_jsonBuilder, value.GetTextReader());
                         }
                         else if (pgOid.IsByte())
                         {
-                            JsonUtils.WriteByte(stringBuilder, value.GetTextReader());
+                            JsonUtils.WriteByte(_jsonBuilder, value.GetTextReader());
                         }
                         else
                         {
-                            JsonUtils.WriteText(stringBuilder, value.GetTextReader());
+                            JsonUtils.WriteText(_jsonBuilder, value.GetTextReader());
+                        }
+
+                        if (isKeyCol)
+                        {
+                            _routingKeyBuilder.Append('.');
+                            _routingKeyBuilder.Append(hash % routingKeyOptions!.PartitionCount);
                         }
                     }
                 }
             }
 
-            stringBuilder.Append('}');
+            _jsonBuilder.Append('}');
+
+            Console.WriteLine(_routingKeyBuilder.ToString());    
+            Console.WriteLine(_jsonBuilder.ToString());
         }
     }
 }

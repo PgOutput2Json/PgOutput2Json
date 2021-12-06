@@ -2,6 +2,9 @@
 {
     public class ReplicationListenerOptions
     {
+        public Dictionary<string, RoutingKeyOptions> RoutingKeyColumns { get; set; } 
+            = new Dictionary<string, RoutingKeyOptions>();
+
         /// <summary>
         /// Should nulls be written to JSON output. Default is false.
         /// </summary>
@@ -22,5 +25,6 @@
         /// The listener will automatically try to reconnect after 10 seconds.
         /// </summary>
         public Action<Exception, string>? LoggingErrorHandler { get; set; }
+
     }
 }
