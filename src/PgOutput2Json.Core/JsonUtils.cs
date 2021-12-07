@@ -6,21 +6,21 @@ namespace PgOutput2Json.Core
     {
         private const int _initHash = 0x12345678;
 
-        internal static int WriteText(StringBuilder builder, TextReader textReader)
+        internal static int WriteText(StringBuilder jsonBuilder, TextReader textReader)
         {
-            builder.Append('"');
+            jsonBuilder.Append('"');
 
-            var hash = EscapeJson(builder, textReader);
+            var hash = EscapeJson(jsonBuilder, textReader);
 
-            builder.Append('"');
+            jsonBuilder.Append('"');
 
             return hash;
         }
 
-        internal static int WriteNumber(StringBuilder stringBuilder, TextReader textReader)
+        internal static int WriteNumber(StringBuilder jsonBuilder, TextReader textReader)
         {
             // we may have to return to the original length in case of NaN, Infinity, -Infinity...
-            var originalLength = stringBuilder.Length;
+            var originalLength = jsonBuilder.Length;
 
             int hash = _initHash;
 
@@ -36,12 +36,12 @@ namespace PgOutput2Json.Core
                      || c == '.')
                 {
                     hash ^= c;
-                    stringBuilder.Append((char)c);
+                    jsonBuilder.Append((char)c);
                 }
                 else
                 {
-                    stringBuilder.Length = originalLength;
-                    stringBuilder.Append("null");
+                    jsonBuilder.Length = originalLength;
+                    jsonBuilder.Append("null");
                     return 0;
                 }
             }
@@ -49,7 +49,7 @@ namespace PgOutput2Json.Core
             return hash;
         }
 
-        internal static int WriteBoolean(StringBuilder stringBuilder, TextReader textReader)
+        internal static int WriteBoolean(StringBuilder jsonBuilder, TextReader textReader)
         {
             int hash = 0;
 
@@ -59,24 +59,24 @@ namespace PgOutput2Json.Core
                 if (c == 't')
                 {
                     hash = 1;
-                    stringBuilder.Append("true");
+                    jsonBuilder.Append("true");
                 }
                 else
                 {
-                    stringBuilder.Append("false");
+                    jsonBuilder.Append("false");
                 }
             }
 
             return hash;
         }
 
-        internal static int WriteByte(StringBuilder builder, TextReader textReader)
+        internal static int WriteByte(StringBuilder jsonBuilder, TextReader textReader)
         {
             /* string is "\x54617069727573", start after "\x" */
             textReader.Read();
             textReader.Read();
 
-            builder.Append('"');
+            jsonBuilder.Append('"');
 
             int hash = _initHash;
 
@@ -84,14 +84,14 @@ namespace PgOutput2Json.Core
             while ((c = textReader.Read()) != -1)
             {
                 hash ^= c;
-                builder.Append((char)c);
+                jsonBuilder.Append((char)c);
             }
 
-            builder.Append('"');
+            jsonBuilder.Append('"');
             return hash;
         }
 
-        private static int EscapeJson(StringBuilder builder, TextReader textReader)
+        private static int EscapeJson(StringBuilder jsonBuilder, TextReader textReader)
         {
             int hash = _initHash;
 
@@ -103,35 +103,35 @@ namespace PgOutput2Json.Core
                 switch (c)
                 {
                     case '\b':
-                        builder.Append("\\b");
+                        jsonBuilder.Append("\\b");
                         break;
                     case '\f':
-                        builder.Append("\\f");
+                        jsonBuilder.Append("\\f");
                         break;
                     case '\n':
-                        builder.Append("\\n");
+                        jsonBuilder.Append("\\n");
                         break;
                     case '\r':
-                        builder.Append("\\r");
+                        jsonBuilder.Append("\\r");
                         break;
                     case '\t':
-                        builder.Append("\\t");
+                        jsonBuilder.Append("\\t");
                         break;
                     case '"':
-                        builder.Append("\\\"");
+                        jsonBuilder.Append("\\\"");
                         break;
                     case '\\':
-                        builder.Append("\\\\");
+                        jsonBuilder.Append("\\\\");
                         break;
                     default:
                         if (c < ' ')
                         {
-                            builder.Append("\\u");
-                            builder.Append(c.ToString("x04"));
+                            jsonBuilder.Append("\\u");
+                            jsonBuilder.Append(c.ToString("x04"));
                         }
                         else
                         {
-                            builder.Append((char)c);
+                            jsonBuilder.Append((char)c);
                         }
                         break;
                 }
