@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PgOutput2Json.Core\PgOutput2Json.Core.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
   </ItemGroup>
 
 </Project>

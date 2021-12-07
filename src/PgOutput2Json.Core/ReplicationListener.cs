@@ -11,6 +11,29 @@ namespace PgOutput2Json.Core
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
 
+        /// <summary>
+        /// Called on every change of a database row. 
+        /// </summary>
+        public event MessageHandler? MessageHandler;
+
+        /// <summary>
+        /// Called when the replication listener sends an informational message.
+        /// </summary>
+        public event LoggingHandler? LoggingInfoHandler;
+
+        /// <summary>
+        /// Called when the replication listener sends a warning message.
+        /// </summary>
+        public event LoggingHandler? LoggingWarnHandler;
+
+        /// <summary>
+        /// Called on error inside replication listener. 
+        /// The listener will automatically try to reconnect after 10 seconds.
+        /// </summary>
+        public event LoggingErrorHandler? LoggingErrorHandler;
+
+        public event CommitHandler? CommitHandler;
+
         public ReplicationListener(ReplicationListenerOptions options)
         {
             _options = options;
@@ -25,17 +48,17 @@ namespace PgOutput2Json.Core
                     await using var conn = new LogicalReplicationConnection(_options.ConnectionString);
                     await conn.Open();
 
-                    _options.LoggingInfoHandler?.Invoke("Connected to PostgreSQL");
+                    LoggingInfoHandler?.Invoke("Connected to PostgreSQL");
 
                     var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationName, 1);
 
                     DateTime commitTimeStamp = DateTime.UtcNow;
 
-                    var confirm = true;
-
                     await foreach (var message in conn.StartReplication(slot, replicationOptions, cancellationToken))
                     {
+                        var confirm = false;
+
                         if (message is BeginMessage beginMsg)
                         {
                             commitTimeStamp = beginMsg.TransactionCommitTimestamp;
@@ -76,6 +99,11 @@ namespace PgOutput2Json.Core
                                              fullDeleteMsg.ServerClock,
                                              false);
                         }
+                        else if (message is CommitMessage commitMsg)
+                        {
+                            CommitHandler?.Invoke();
+                            conn.SetReplicationStatus(message.WalEnd);
+                        }
 
                         // Always call SetReplicationStatus() or assign LastAppliedLsn and LastFlushedLsn individually
                         // so that Npgsql can inform the server which WAL files can be removed/recycled.
@@ -91,11 +119,11 @@ namespace PgOutput2Json.Core
                 {
                     if (ex.Message.StartsWith("55006:"))
                     {
-                        _options.LoggingWarnHandler?.Invoke("Slot taken - waiting for 10 seconds...");
+                        LoggingWarnHandler?.Invoke("Slot taken - waiting for 10 seconds...");
                     }
                     else
                     {
-                        _options.LoggingErrorHandler?.Invoke(ex, "Error in replication listener. Waiting for 10 seconds...");
+                        LoggingErrorHandler?.Invoke(ex, "Error in replication listener. Waiting for 10 seconds...");
                     }
 
                     Thread.Sleep(10000);
@@ -192,7 +220,10 @@ namespace PgOutput2Json.Core
 
             _jsonBuilder.Append('}');
 
-            return _options.MessageHandler.Invoke(_jsonBuilder, _tableNameBuilder, partition);
+            var confirm = true;
+            MessageHandler?.Invoke(_jsonBuilder, _tableNameBuilder, partition, ref confirm);
+
+            return confirm;
         }
     }
 }
