@@ -221,7 +221,10 @@ namespace PgOutput2Json.Core
             _jsonBuilder.Append('}');
 
             var confirm = true;
-            MessageHandler?.Invoke(_jsonBuilder, _tableNameBuilder, partition, ref confirm);
+            MessageHandler?.Invoke(_jsonBuilder.ToString(),
+                                   _tableNameBuilder.ToString(),
+                                   partition,
+                                   ref confirm);
 
             return confirm;
         }

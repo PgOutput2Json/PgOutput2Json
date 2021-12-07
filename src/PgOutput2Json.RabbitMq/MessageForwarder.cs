@@ -41,22 +41,13 @@ namespace PgOutput2Json.RabbitMq
             _listener.MessageHandler -= MessageHandler;
         }
 
-        private void MessageHandler(StringBuilder json, StringBuilder tableName, int partition, ref bool confirm)
+        private void MessageHandler(string json, string tableName, int partition, ref bool confirm)
         {
-            var messageType = tableName.ToString();
+            Console.WriteLine(json);
 
-            tableName.Append('.');
-            tableName.Append(partition);
+            var body = Encoding.UTF8.GetBytes(json);
 
-            var routingKey = tableName.ToString();
-
-            var bodyString = json.ToString();
-
-            Console.WriteLine(bodyString);
-
-            var body = Encoding.UTF8.GetBytes(bodyString);
-
-            _publisher.PublishMessage(body, messageType, routingKey);
+            _publisher.PublishMessage(body, tableName, tableName + "." + partition);
 
             if (++_currentBatchSize >= _batchSize)
             {
