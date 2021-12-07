@@ -161,9 +161,9 @@ namespace PgOutput2Json.Core
 
             var i = 0;
 
-            if (!_options.Partitions.TryGetValue(_tableNameBuilder.ToString(), out var partionConfig))
+            if (!_options.KeyColumns.TryGetValue(_tableNameBuilder.ToString(), out var keyColumn))
             {
-                partionConfig = null;
+                keyColumn = null;
             }
 
             int partition = 0;
@@ -176,7 +176,7 @@ namespace PgOutput2Json.Core
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
-                    var isPartitionCol = partionConfig != null && col.ColumnName == partionConfig.ColumnName;
+                    var isKeyColumn = keyColumn != null && col.ColumnName == keyColumn.ColumnName;
 
                     _jsonBuilder.Append(",\"");
                     _jsonBuilder.Append(col.ColumnName);
@@ -210,9 +210,9 @@ namespace PgOutput2Json.Core
                             hash = JsonUtils.WriteText(_jsonBuilder, value.GetTextReader());
                         }
 
-                        if (isPartitionCol)
+                        if (isKeyColumn)
                         {
-                            partition = hash % partionConfig!.PartitionCount;
+                            partition = hash % keyColumn!.PartitionCount;
                         }
                     }
                 }

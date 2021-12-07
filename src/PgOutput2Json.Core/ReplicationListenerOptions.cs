@@ -6,8 +6,8 @@
         public string PublicationName { get; set; }
         public string ReplicationSlotName { get; set; }
 
-        public Dictionary<string, PartionConfig> Partitions { get; set; } 
-            = new Dictionary<string, PartionConfig>();
+        public Dictionary<string, KeyColumn> KeyColumns { get; set; } 
+            = new Dictionary<string, KeyColumn>();
 
         /// <summary>
         /// Should nulls be written to JSON output. Default is false.

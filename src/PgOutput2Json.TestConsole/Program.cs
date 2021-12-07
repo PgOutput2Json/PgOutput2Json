@@ -7,9 +7,9 @@ var options = new ReplicationListenerOptions(
     "pub_test",
     "test_slot"); 
 
-options.Partitions = new Dictionary<string, PartionConfig>
+options.KeyColumns = new Dictionary<string, KeyColumn>
     {
-        { "public.tab_test", new PartionConfig("id", 5) }
+        { "public.tab_test", new KeyColumn("id", 5) }
     };
 
 var listener = new ReplicationListener(options);
