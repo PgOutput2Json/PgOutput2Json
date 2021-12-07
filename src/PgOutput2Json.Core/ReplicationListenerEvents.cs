@@ -1,6 +1,4 @@
-﻿using System.Text;
-
-namespace PgOutput2Json.Core
+﻿namespace PgOutput2Json.Core
 {
     /// <summary>
     /// Handles json message stored in the json StringBuilder. 
@@ -19,5 +17,5 @@ namespace PgOutput2Json.Core
     public delegate void LoggingHandler(string logMessage);
     public delegate void LoggingErrorHandler(Exception ex, string logMessage);
 
-    public delegate void CommitHandler();
+    public delegate void ConfirmHandler();
 }

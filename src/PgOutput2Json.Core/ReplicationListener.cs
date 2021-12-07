@@ -5,12 +5,24 @@ using System.Text;
 
 namespace PgOutput2Json.Core
 {
-    public class ReplicationListener
+    public sealed class ReplicationListener: IDisposable
     {
         private readonly ReplicationListenerOptions _options;
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
         private readonly StringBuilder _keyColValueBuilder = new StringBuilder(256);
+
+        private readonly Timer _confirmTimer;
+        private readonly TimeSpan _confirmTimerPeriod;
+
+        private readonly object _confirmTimerLock = new object();
+        private volatile bool _confirmTimerRunning;
+        private ulong _walEnd;
+
+        private LogicalReplicationConnection? _connection;
+        private CancellationTokenSource? _cancellationTokenSource;
+            
+        private Exception? _confirmHandlerError;
 
         /// <summary>
         /// Called on every change of a database row. 
@@ -33,11 +45,23 @@ namespace PgOutput2Json.Core
         /// </summary>
         public event LoggingErrorHandler? LoggingErrorHandler;
 
-        public event CommitHandler? CommitHandler;
+        public event ConfirmHandler? ConfirmHandler;
 
         public ReplicationListener(ReplicationListenerOptions options)
+            : this(options, TimeSpan.FromSeconds(5))
+        { 
+        }
+
+        public ReplicationListener(ReplicationListenerOptions options, TimeSpan confirmTimerPeriod)
         {
             _options = options;
+            _confirmTimerPeriod = confirmTimerPeriod;
+            _confirmTimer = new Timer(ConfirmCallback);
+        }
+
+        public void Dispose()
+        {
+            _confirmTimer.TryDispose(LoggingErrorHandler);
         }
 
         public async Task ListenForChanges(CancellationToken cancellationToken)
@@ -46,19 +70,29 @@ namespace PgOutput2Json.Core
             {
                 try
                 {
-                    await using var conn = new LogicalReplicationConnection(_options.ConnectionString);
-                    await conn.Open();
+                    _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                    _connection = new LogicalReplicationConnection(_options.ConnectionString);
+                    _connection.WalReceiverStatusInterval = TimeSpan.FromSeconds(5);
+
+                    await _connection.Open();
 
                     LoggingInfoHandler?.Invoke("Connected to PostgreSQL");
 
                     var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationName, 1);
 
+                    lock (_confirmTimer)
+                    {
+                        _confirmTimer.Change(_confirmTimerPeriod, Timeout.InfiniteTimeSpan);
+                        _confirmTimerRunning = true;
+                    }
+
                     DateTime commitTimeStamp = DateTime.UtcNow;
 
-                    await foreach (var message in conn.StartReplication(slot, replicationOptions, cancellationToken))
+                    await foreach (var message in _connection.StartReplication(slot, replicationOptions, _cancellationTokenSource.Token))
                     {
-                        var confirm = false;
+                        var partition = -1;
 
                         if (message is BeginMessage beginMsg)
                         {
@@ -66,7 +100,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is InsertMessage insertMsg)
                         {
-                            confirm = await WriteTuple(insertMsg.NewRow,
+                            partition = await WriteTuple(insertMsg.NewRow,
                                              insertMsg.Relation,
                                              "I",
                                              commitTimeStamp,
@@ -75,7 +109,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is UpdateMessage updateMsg)
                         {
-                            confirm = await WriteTuple(updateMsg.NewRow,
+                            partition = await WriteTuple(updateMsg.NewRow,
                                              updateMsg.Relation,
                                              "U",
                                              commitTimeStamp,
@@ -84,7 +118,7 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is KeyDeleteMessage keyDeleteMsg)
                         {
-                            confirm = await WriteTuple(keyDeleteMsg.Key,
+                            partition = await WriteTuple(keyDeleteMsg.Key,
                                              keyDeleteMsg.Relation,
                                              "D",
                                              commitTimeStamp,
@@ -93,28 +127,48 @@ namespace PgOutput2Json.Core
                         }
                         else if (message is FullDeleteMessage fullDeleteMsg)
                         {
-                            confirm = await WriteTuple(fullDeleteMsg.OldRow,
+                            partition = await WriteTuple(fullDeleteMsg.OldRow,
                                              fullDeleteMsg.Relation,
                                              "D",
                                              commitTimeStamp,
                                              fullDeleteMsg.ServerClock,
                                              false);
                         }
-                        else if (message is CommitMessage commitMsg)
+
+                        lock (_confirmTimerLock)
                         {
-                            CommitHandler?.Invoke();
-                            conn.SetReplicationStatus(message.WalEnd);
+                            _walEnd = (ulong)message.WalEnd;
+
+                            if (partition >= 0)
+                            {
+                                var confirm = false;
+                                MessageHandler?.Invoke(_jsonBuilder.ToString(),
+                                                       _tableNameBuilder.ToString(),
+                                                       _keyColValueBuilder.ToString(),
+                                                       partition,
+                                                       ref confirm);
+
+                                if (confirm)
+                                {
+                                    _connection.SetReplicationStatus(message.WalEnd);
+                                    _walEnd = 0;
+
+                                    LoggingInfoHandler?.Invoke("Confirmed Postgres listener");
+                                }
+                            }
                         }
-
-                        // Always call SetReplicationStatus() or assign LastAppliedLsn and LastFlushedLsn individually
-                        // so that Npgsql can inform the server which WAL files can be removed/recycled.
-
-                        if (confirm) conn.SetReplicationStatus(message.WalEnd);
                     }
                 }
                 catch (OperationCanceledException)
                 {
-                    break;
+                    if (_confirmHandlerError != null)
+                    {
+                        LoggingErrorHandler?.Invoke(_confirmHandlerError, "Error in IdleCallback. Waiting for 10 seconds...");
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -126,13 +180,69 @@ namespace PgOutput2Json.Core
                     {
                         LoggingErrorHandler?.Invoke(ex, "Error in replication listener. Waiting for 10 seconds...");
                     }
-
-                    Thread.Sleep(10000);
                 }
+
+                StopTimerAndDisposeResources();
+
+                Thread.Sleep(10000);
+            }
+
+            StopTimerAndDisposeResources();
+        }
+
+        private void StopTimerAndDisposeResources()
+        {
+            lock (_confirmTimerLock)
+            {
+                _confirmTimer.Change(Timeout.Infinite, Timeout.Infinite);
+
+                _confirmTimerRunning = false;
+                _walEnd = 0;
+                _confirmHandlerError = null;
+
+                _connection.TryDisposeAsync(LoggingErrorHandler);
+                _connection = null;
+
+                _cancellationTokenSource.TryDispose(LoggingErrorHandler);
+                _cancellationTokenSource = null;
             }
         }
 
-        private async Task<bool> WriteTuple(ReplicationTuple tuple,
+        private void ConfirmCallback(object? state)
+        {
+            lock (_confirmTimerLock)
+            {
+                if (!_confirmTimerRunning) return;
+
+                if (_walEnd > 0)
+                {
+                    try
+                    {
+                        ConfirmHandler?.Invoke();
+                        _connection?.SetReplicationStatus(new NpgsqlTypes.NpgsqlLogSequenceNumber(_walEnd));
+                        _walEnd = 0;
+
+                        LoggingInfoHandler?.Invoke("Confirmed Postgres listener");
+                    }
+                    catch (Exception ex)
+                    {
+                        _confirmHandlerError = ex;
+                        try 
+                        {
+                            _cancellationTokenSource?.Cancel();
+                        }
+                        catch (Exception cancelEx)
+                        {
+                            LoggingErrorHandler?.Invoke(cancelEx, "Error cancelling the listener");
+                        }
+                    }
+                }
+
+                _confirmTimer.Change(_confirmTimerPeriod, Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private async Task<int> WriteTuple(ReplicationTuple tuple,
                                       RelationMessage relation,
                                       string changeType,
                                       DateTime commitTimeStamp,
@@ -232,15 +342,7 @@ namespace PgOutput2Json.Core
             _jsonBuilder.Append('}');
 
             var partition = keyColumn != null ? finalHash % keyColumn.PartitionCount : 0;
-
-            var confirm = true;
-            MessageHandler?.Invoke(_jsonBuilder.ToString(),
-                                   _tableNameBuilder.ToString(),
-                                   _keyColValueBuilder.ToString(),
-                                   partition,
-                                   ref confirm);
-
-            return confirm;
+            return partition;
         }
     }
 }

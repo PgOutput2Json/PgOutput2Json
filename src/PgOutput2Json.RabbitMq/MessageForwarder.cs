@@ -11,6 +11,8 @@ namespace PgOutput2Json.RabbitMq
         private readonly int _batchSize;
         private readonly TimeSpan _confirmTimeout;
 
+        //private readonly Random _rnd = new Random();
+
         private int _currentBatchSize = 0;
 
         public MessageForwarder(ReplicationListener listener,
@@ -23,12 +25,7 @@ namespace PgOutput2Json.RabbitMq
             _batchSize = batchSize;
             _confirmTimeout = TimeSpan.FromSeconds(confirmTimeoutSec);
             _listener.MessageHandler += MessageHandler;
-            _listener.CommitHandler += CommitHandler;
-        }
-
-        private void CommitHandler()
-        {
-            WaitForConfirms();
+            _listener.ConfirmHandler += ConfirmHandler;
         }
 
         public Task Start(CancellationToken cancellationToken)
@@ -39,6 +36,7 @@ namespace PgOutput2Json.RabbitMq
         public void Dispose()
         {
             _listener.MessageHandler -= MessageHandler;
+            _listener.ConfirmHandler -= ConfirmHandler;
         }
 
         private void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm)
@@ -55,10 +53,12 @@ namespace PgOutput2Json.RabbitMq
                 WaitForConfirms();
                 confirm = true;
             }
-            else
-            {
-                confirm = false;
-            }
+        }
+
+        private void ConfirmHandler()
+        {
+            //if (_rnd.Next(100) <= 33) throw new Exception("Fake commit exception");
+            WaitForConfirms();
         }
 
         private void WaitForConfirms()
@@ -68,7 +68,7 @@ namespace PgOutput2Json.RabbitMq
                 _publisher.WaitForConfirmsOrDie(_confirmTimeout);
                 _currentBatchSize = 0;
 
-                //Console.WriteLine("Confirmed");
+                //Console.WriteLine("Confirmed RabbitMQ");
             }
         }
     }

@@ -5,7 +5,7 @@ using PgOutput2Json.Core;
 
 namespace PgOutput2Json.RabbitMq
 {
-    public class MessagePublisher
+    public class MessagePublisher: IDisposable
     {
         public MessagePublisher(string[] hostNames,
                                 string username,

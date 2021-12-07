@@ -12,7 +12,8 @@ options.KeyColumns = new Dictionary<string, KeyColumn>
         { "public.tab_test", new KeyColumn(5, "id", "name" ) }
     };
 
-var listener = new ReplicationListener(options);
+
+using var listener = new ReplicationListener(options);
 
 listener.LoggingInfoHandler += msg => Console.WriteLine(msg);
 listener.LoggingWarnHandler += msg => Console.WriteLine(msg);
@@ -23,10 +24,10 @@ listener.LoggingErrorHandler += (ex, msg) =>
     };
 
 
+using var publisher = new MessagePublisher(new[] { "localhost" }, "guest", "guest");
+
+var forwarder = new MessageForwarder(listener, publisher, 3);
+
 var cancellationTokenSource = new CancellationTokenSource();
-
-var publisher = new MessagePublisher(new[] { "localhost" }, "guest", "guest");
-
-var forwarder = new MessageForwarder(listener, publisher, 100, 2);
 
 await forwarder.Start(cancellationTokenSource.Token);
