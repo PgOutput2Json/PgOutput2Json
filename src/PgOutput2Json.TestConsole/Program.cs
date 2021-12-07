@@ -1,30 +1,30 @@
-﻿// See https://aka.ms/new-console-template for more information
+﻿using Microsoft.Extensions.Logging;
 using PgOutput2Json.Core;
 using PgOutput2Json.RabbitMq;
 
-var options = new ReplicationListenerOptions(
-    "server=localhost;database=repl_test_db;username=replicator;password=replicator",
-    "pub_test",
-    "test_slot");
+using var loggerFactory = LoggerFactory.Create(builder => 
+    builder.AddFilter("PgOutput2Json", LogLevel.Debug)
+           .AddFilter("Microsoft", LogLevel.Warning)
+           .AddSimpleConsole(options =>
+           {
+               options.SingleLine = true;
+               options.TimestampFormat = "hh:mm:ss ";
+           }));
 
-options.KeyColumns = new Dictionary<string, KeyColumn>
+var options = new ReplicationListenerOptions(
+    "server=localhost;database=repl_test_db;username=replicator;password=replicator", "pub_test", "test_slot")
+{
+    KeyColumns = new Dictionary<string, KeyColumn>
     {
         { "public.tab_test", new KeyColumn(5, "id", "name" ) }
-    };
+    }
+};
 
+using var listener = new ReplicationListener(options,
+    logger: loggerFactory.CreateLogger<ReplicationListener>());
 
-using var listener = new ReplicationListener(options);
-
-listener.LoggingInfoHandler += msg => Console.WriteLine(msg);
-listener.LoggingWarnHandler += msg => Console.WriteLine(msg);
-listener.LoggingErrorHandler += (ex, msg) =>
-    {
-        Console.WriteLine(msg);
-        Console.WriteLine(ex.ToString());
-    };
-
-
-using var publisher = new MessagePublisher(new[] { "localhost" }, "guest", "guest");
+using var publisher = new MessagePublisher(new[] { "localhost" }, "guest", "guest", 
+    logger: loggerFactory.CreateLogger<MessagePublisher>());
 
 var forwarder = new MessageForwarder(listener, publisher, 3);
 

@@ -1,6 +1,4 @@
-﻿using System.Text;
-
-using PgOutput2Json.Core;
+﻿using PgOutput2Json.Core;
 
 namespace PgOutput2Json.RabbitMq
 {
@@ -42,11 +40,8 @@ namespace PgOutput2Json.RabbitMq
         private void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm)
         {
             //Console.WriteLine(keyColumnValue);
-            //Console.WriteLine(json);
 
-            var body = Encoding.UTF8.GetBytes(json);
-
-            _publisher.PublishMessage(body, tableName, tableName + "." + partition);
+            _publisher.PublishMessage(json, tableName, tableName + "." + partition);
 
             if (++_currentBatchSize >= _batchSize)
             {
@@ -67,8 +62,6 @@ namespace PgOutput2Json.RabbitMq
             {
                 _publisher.WaitForConfirmsOrDie(_confirmTimeout);
                 _currentBatchSize = 0;
-
-                //Console.WriteLine("Confirmed RabbitMQ");
             }
         }
     }

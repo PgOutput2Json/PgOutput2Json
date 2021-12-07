@@ -1,4 +1,6 @@
-﻿using RabbitMQ.Client;
+﻿using System.Text;
+using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
 using PgOutput2Json.Core;
@@ -14,8 +16,7 @@ namespace PgOutput2Json.RabbitMq
                                 bool declareExchange = true,
                                 string virtualHost = "/",
                                 int port = AmqpTcpEndpoint.UseDefaultPort,
-                                LoggingErrorHandler? errorHandler = null,
-                                LoggingHandler? infoHandler = null)
+                                ILogger<MessagePublisher>? logger = null)
         {
             _connectionFactory = new ConnectionFactory
             {
@@ -32,24 +33,29 @@ namespace PgOutput2Json.RabbitMq
             _hostNames = hostNames;
             _exchangeName = exchangeName;
             _declareExchange = declareExchange;
-            _errorHandler = errorHandler;
-            _infoHandler = infoHandler;
+            _logger = logger;
         }
 
-        public void PublishMessage(ReadOnlyMemory<byte> body, string messageType, string routingKey, bool persistent = true)
+        public void PublishMessage(string body, string messageType, string routingKey, bool persistent = true)
         {
             EnsureModelExists();
+
+            SafeLogDebug(body);
 
             _basicProperties!.Type = messageType;
             _basicProperties.Persistent = persistent;
 
-            _model!.BasicPublish(_exchangeName, routingKey, _basicProperties, body);
+            var bodyBytes = Encoding.UTF8.GetBytes(body);
+
+            _model!.BasicPublish(_exchangeName, routingKey, _basicProperties, bodyBytes);
         }
 
         public void WaitForConfirmsOrDie(TimeSpan timeout)
         {
             if (_model == null) throw new InvalidOperationException("Model is disposed");
             _model.WaitForConfirmsOrDie(timeout);
+
+            SafeLogInfo("Confirmed RabbitMQ");
         }
 
         public virtual void Dispose()
@@ -59,11 +65,11 @@ namespace PgOutput2Json.RabbitMq
 
         private void CloseConnection()
         {
-            _model.TryDispose(_errorHandler);
+            _model.TryDispose(_logger);
             _model = null;
 
-            _connection.TryClose(_errorHandler);
-            _connection.TryDispose(_errorHandler);
+            _connection.TryClose(_logger);
+            _connection.TryDispose(_logger);
             _connection = null;
         }
 
@@ -83,7 +89,7 @@ namespace PgOutput2Json.RabbitMq
             }
             catch (Exception ex)
             {
-                SafeErrorLog(ex, "Could not connect to RabbitMQ server");
+                SafeLogError(ex, "Could not connect to RabbitMQ server");
                 throw;
             }
 
@@ -99,7 +105,7 @@ namespace PgOutput2Json.RabbitMq
                     return;
                 }
 
-                _model.TryDispose(_errorHandler);
+                _model.TryDispose(_logger);
                 _model = null;
             }
 
@@ -119,10 +125,25 @@ namespace PgOutput2Json.RabbitMq
             }
             catch
             {
-                _model.TryDispose(_errorHandler);
+                _model.TryDispose(_logger);
                 _model = null;
 
                 throw;
+            }
+        }
+
+        private void SafeLogDebug(string message)
+        {
+            try
+            {
+                if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug(message);
+
+                }
+            }
+            catch
+            {
             }
         }
 
@@ -130,18 +151,26 @@ namespace PgOutput2Json.RabbitMq
         {
             try
             {
-                _infoHandler?.Invoke(message);
+                if (_logger != null && _logger.IsEnabled(LogLevel.Information))
+                {
+                    _logger.LogInformation(message);
+
+                }
             }
             catch
             {
             }
         }
 
-        private void SafeErrorLog(Exception ex, string message)
+        private void SafeLogError(Exception ex, string message)
         {
             try
             {
-                _errorHandler?.Invoke(ex, message);
+                if (_logger != null && _logger.IsEnabled(LogLevel.Error))
+                {
+                    _logger.LogError(ex, message);
+
+                }
             }
             catch
             {
@@ -150,7 +179,7 @@ namespace PgOutput2Json.RabbitMq
 
         private void ConnectionOnCallbackException(object? sender, CallbackExceptionEventArgs args)
         {
-            SafeErrorLog(args.Exception, "Callback error");
+            SafeLogError(args.Exception, "Callback error");
         }
 
         private void ConnectionOnConnectionShutdown(object? sender, ShutdownEventArgs args)
@@ -175,8 +204,7 @@ namespace PgOutput2Json.RabbitMq
         private readonly string[] _hostNames;
         private readonly string _exchangeName;
         private readonly bool _declareExchange;
+        private readonly ILogger<MessagePublisher>? _logger;
         private readonly ConnectionFactory _connectionFactory;
-        private readonly LoggingErrorHandler? _errorHandler;
-        private readonly LoggingHandler? _infoHandler;
     }
 }

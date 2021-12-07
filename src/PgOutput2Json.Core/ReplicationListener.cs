@@ -1,4 +1,5 @@
-﻿using Npgsql.Replication;
+﻿using Microsoft.Extensions.Logging;
+using Npgsql.Replication;
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
 using System.Text;
@@ -7,6 +8,8 @@ namespace PgOutput2Json.Core
 {
     public sealed class ReplicationListener: IDisposable
     {
+        private readonly ILogger<ReplicationListener>? _logger;
+
         private readonly ReplicationListenerOptions _options;
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
@@ -14,7 +17,6 @@ namespace PgOutput2Json.Core
 
         private readonly Timer _confirmTimer;
         private readonly TimeSpan _confirmTimerPeriod;
-
         private readonly object _confirmTimerLock = new object();
         private volatile bool _confirmTimerRunning;
         private ulong _walEnd;
@@ -30,38 +32,29 @@ namespace PgOutput2Json.Core
         public event MessageHandler? MessageHandler;
 
         /// <summary>
-        /// Called when the replication listener sends an informational message.
+        /// Called periodically (by default every 5 sec) if there are messsages to be confirmed.
         /// </summary>
-        public event LoggingHandler? LoggingInfoHandler;
-
-        /// <summary>
-        /// Called when the replication listener sends a warning message.
-        /// </summary>
-        public event LoggingHandler? LoggingWarnHandler;
-
-        /// <summary>
-        /// Called on error inside replication listener. 
-        /// The listener will automatically try to reconnect after 10 seconds.
-        /// </summary>
-        public event LoggingErrorHandler? LoggingErrorHandler;
-
         public event ConfirmHandler? ConfirmHandler;
 
-        public ReplicationListener(ReplicationListenerOptions options)
-            : this(options, TimeSpan.FromSeconds(5))
+        public ReplicationListener(ReplicationListenerOptions options,
+                                   ILogger<ReplicationListener>? logger = null)
+            : this(options, TimeSpan.FromSeconds(5), logger)
         { 
         }
 
-        public ReplicationListener(ReplicationListenerOptions options, TimeSpan confirmTimerPeriod)
+        public ReplicationListener(ReplicationListenerOptions options,
+                                   TimeSpan confirmTimerPeriod,
+                                   ILogger<ReplicationListener>? logger = null)
         {
             _options = options;
             _confirmTimerPeriod = confirmTimerPeriod;
+            _logger = logger;
             _confirmTimer = new Timer(ConfirmCallback);
         }
 
         public void Dispose()
         {
-            _confirmTimer.TryDispose(LoggingErrorHandler);
+            _confirmTimer.TryDispose(_logger);
         }
 
         public async Task ListenForChanges(CancellationToken cancellationToken)
@@ -77,7 +70,7 @@ namespace PgOutput2Json.Core
 
                     await _connection.Open();
 
-                    LoggingInfoHandler?.Invoke("Connected to PostgreSQL");
+                    SafeLogInfo("Connected to PostgreSQL");
 
                     var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationName, 1);
@@ -153,7 +146,7 @@ namespace PgOutput2Json.Core
                                     _connection.SetReplicationStatus(message.WalEnd);
                                     _walEnd = 0;
 
-                                    LoggingInfoHandler?.Invoke("Confirmed Postgres listener");
+                                    SafeLogInfo("Confirmed PostgreSQL");
                                 }
                             }
                         }
@@ -163,7 +156,7 @@ namespace PgOutput2Json.Core
                 {
                     if (_confirmHandlerError != null)
                     {
-                        LoggingErrorHandler?.Invoke(_confirmHandlerError, "Error in IdleCallback. Waiting for 10 seconds...");
+                        SafeLogError(_confirmHandlerError, "Error in IdleCallback. Waiting for 10 seconds...");
                     }
                     else
                     {
@@ -174,11 +167,11 @@ namespace PgOutput2Json.Core
                 {
                     if (ex.Message.StartsWith("55006:"))
                     {
-                        LoggingWarnHandler?.Invoke("Slot taken - waiting for 10 seconds...");
+                        SafeLogWarn("Slot taken - waiting for 10 seconds...");
                     }
                     else
                     {
-                        LoggingErrorHandler?.Invoke(ex, "Error in replication listener. Waiting for 10 seconds...");
+                        SafeLogError(ex, "Error in replication listener. Waiting for 10 seconds...");
                     }
                 }
 
@@ -200,10 +193,10 @@ namespace PgOutput2Json.Core
                 _walEnd = 0;
                 _confirmHandlerError = null;
 
-                _connection.TryDisposeAsync(LoggingErrorHandler);
+                _connection.TryDisposeAsync(_logger);
                 _connection = null;
 
-                _cancellationTokenSource.TryDispose(LoggingErrorHandler);
+                _cancellationTokenSource.TryDispose(_logger);
                 _cancellationTokenSource = null;
             }
         }
@@ -222,7 +215,7 @@ namespace PgOutput2Json.Core
                         _connection?.SetReplicationStatus(new NpgsqlTypes.NpgsqlLogSequenceNumber(_walEnd));
                         _walEnd = 0;
 
-                        LoggingInfoHandler?.Invoke("Confirmed Postgres listener");
+                        SafeLogInfo("Confirmed PostgreSQL");
                     }
                     catch (Exception ex)
                     {
@@ -233,7 +226,7 @@ namespace PgOutput2Json.Core
                         }
                         catch (Exception cancelEx)
                         {
-                            LoggingErrorHandler?.Invoke(cancelEx, "Error cancelling the listener");
+                            SafeLogError(cancelEx, "Error cancelling the listener");
                         }
                     }
                 }
@@ -343,6 +336,51 @@ namespace PgOutput2Json.Core
 
             var partition = keyColumn != null ? finalHash % keyColumn.PartitionCount : 0;
             return partition;
+        }
+
+        private void SafeLogInfo(string message)
+        {
+            try
+            {
+                if (_logger != null && _logger.IsEnabled(LogLevel.Information))
+                {
+                    _logger.LogInformation(message);
+
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void SafeLogWarn(string message)
+        {
+            try
+            {
+                if (_logger != null && _logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning(message);
+
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void SafeLogError(Exception ex, string message)
+        {
+            try
+            {
+                if (_logger != null && _logger.IsEnabled(LogLevel.Error))
+                {
+                    _logger.LogError(ex, message);
+
+                }
+            }
+            catch
+            {
+            }
         }
     }
 }

@@ -1,12 +1,11 @@
-﻿using RabbitMQ.Client;
-
-using PgOutput2Json.Core;
+﻿using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 
 namespace PgOutput2Json.RabbitMq
 {
     public static class ClosingExtensions
     {
-        public static void TryClose(this IConnection? connection, LoggingErrorHandler? logger)
+        public static void TryClose(this IConnection? connection, ILogger? logger)
         {
             try
             {
@@ -16,7 +15,7 @@ namespace PgOutput2Json.RabbitMq
             {
                 try
                 {
-                    logger?.Invoke(ex, "Error closing RabbitMq connection");
+                    logger?.LogError(ex, "Error closing RabbitMq connection");
                 }
                 catch
                 {

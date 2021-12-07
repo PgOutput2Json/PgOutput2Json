@@ -1,8 +1,10 @@
-﻿namespace PgOutput2Json.Core
+﻿using Microsoft.Extensions.Logging;
+
+namespace PgOutput2Json.Core
 {
     public static class DisposableExtensions
     {
-        public static void TryDispose(this IDisposable? disposable, LoggingErrorHandler? logger)
+        public static void TryDispose(this IDisposable? disposable, ILogger? logger)
         {
             try
             {
@@ -12,7 +14,7 @@
             {
                 try
                 {
-                    logger?.Invoke(ex, "Error disposing a disposable object");
+                    logger?.LogError(ex, "Error disposing a disposable object");
                 }
                 catch
                 {
@@ -20,7 +22,7 @@
             }
         }
 
-        public static ValueTask TryDisposeAsync(this IAsyncDisposable? disposable, LoggingErrorHandler? logger)
+        public static ValueTask TryDisposeAsync(this IAsyncDisposable? disposable, ILogger? logger)
         {
             try
             {
@@ -33,7 +35,7 @@
             {
                 try
                 {
-                    logger?.Invoke(ex, "Error disposing a disposable object");
+                    logger?.LogError(ex, "Error disposing a disposable object");
                 }
                 catch
                 {
