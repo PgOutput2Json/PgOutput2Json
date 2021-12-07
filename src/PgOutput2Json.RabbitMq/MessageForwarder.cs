@@ -41,7 +41,7 @@ namespace PgOutput2Json.RabbitMq
             _listener.MessageHandler -= MessageHandler;
         }
 
-        private void MessageHandler(string json, string tableName, int partition, ref bool confirm)
+        private void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm)
         {
             Console.WriteLine(json);
 

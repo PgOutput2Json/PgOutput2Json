@@ -8,9 +8,13 @@ namespace PgOutput2Json.Core
     /// </summary>
     /// <param name="json">JSON representation of the changed row.</param>
     /// <param name="tableName">Schema qualified table name</param>
+    /// <param name="keyColumnValue">
+    /// The value of the key column, if configured in <see cref="ReplicationListenerOptions.KeyColumns"/>.
+    /// If the key kolumn is not configured, this will be set to empty string.
+    /// </param>
     /// <param name="partition">Partition number in range from 0 to partition count - 1</param>
     /// <param name="confirm">If set to false, the message processing will not be confirmed to the db</param>
-    public delegate void MessageHandler(string json, string tableName, int partition, ref bool confirm);
+    public delegate void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm);
 
     public delegate void LoggingHandler(string logMessage);
     public delegate void LoggingErrorHandler(Exception ex, string logMessage);

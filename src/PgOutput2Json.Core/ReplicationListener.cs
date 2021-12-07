@@ -10,6 +10,7 @@ namespace PgOutput2Json.Core
         private readonly ReplicationListenerOptions _options;
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
+        private readonly StringBuilder _keyColValueBuilder = new StringBuilder(256);
 
         /// <summary>
         /// Called on every change of a database row. 
@@ -159,15 +160,16 @@ namespace PgOutput2Json.Core
             _jsonBuilder.Append(relation.RelationName);
             _jsonBuilder.Append('"');
 
-            var i = 0;
+            _keyColValueBuilder.Clear();
+
+            int finalHash = 0x12345678;
 
             if (!_options.KeyColumns.TryGetValue(_tableNameBuilder.ToString(), out var keyColumn))
             {
                 keyColumn = null;
             }
 
-            int partition = 0;
-
+            var i = 0;
             await foreach (var value in tuple)
             {
                 var col = relation.Columns[i++];
@@ -176,7 +178,19 @@ namespace PgOutput2Json.Core
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
+                    StringBuilder? valueBuilder = null;
+
                     var isKeyColumn = keyColumn != null && col.ColumnName == keyColumn.ColumnName;
+
+                    if (isKeyColumn)
+                    {
+                        valueBuilder = _keyColValueBuilder;
+                        if (valueBuilder.Length > 0)
+                        {
+                            // preparations for multiple key column support in the future
+                            valueBuilder.Append('|');
+                        }
+                    }
 
                     _jsonBuilder.Append(",\"");
                     _jsonBuilder.Append(col.ColumnName);
@@ -195,34 +209,34 @@ namespace PgOutput2Json.Core
 
                         if (pgOid.IsNumber())
                         {
-                            hash = JsonUtils.WriteNumber(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteNumber(_jsonBuilder, valueBuilder, value.GetTextReader());
                         }
                         else if (pgOid.IsBoolean())
                         {
-                            hash = JsonUtils.WriteBoolean(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteBoolean(_jsonBuilder, valueBuilder, value.GetTextReader());
                         }
                         else if (pgOid.IsByte())
                         {
-                            hash = JsonUtils.WriteByte(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteByte(_jsonBuilder, valueBuilder, value.GetTextReader());
                         }
                         else
                         {
-                            hash = JsonUtils.WriteText(_jsonBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteText(_jsonBuilder, valueBuilder, value.GetTextReader());
                         }
 
-                        if (isKeyColumn)
-                        {
-                            partition = hash % keyColumn!.PartitionCount;
-                        }
+                        if (isKeyColumn) finalHash ^= hash;
                     }
                 }
             }
-
+                            
             _jsonBuilder.Append('}');
+
+            var partition = keyColumn != null ? finalHash % keyColumn.PartitionCount : 0;
 
             var confirm = true;
             MessageHandler?.Invoke(_jsonBuilder.ToString(),
                                    _tableNameBuilder.ToString(),
+                                   _keyColValueBuilder.ToString(),
                                    partition,
                                    ref confirm);
 
