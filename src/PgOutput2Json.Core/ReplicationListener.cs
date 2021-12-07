@@ -180,7 +180,7 @@ namespace PgOutput2Json.Core
                 {
                     StringBuilder? valueBuilder = null;
 
-                    var isKeyColumn = keyColumn != null && col.ColumnName == keyColumn.ColumnName;
+                    var isKeyColumn = keyColumn?.ColumnNames.Contains(col.ColumnName) ?? false;
 
                     if (isKeyColumn)
                     {

@@ -43,7 +43,8 @@ namespace PgOutput2Json.RabbitMq
 
         private void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm)
         {
-            Console.WriteLine(json);
+            //Console.WriteLine(keyColumnValue);
+            //Console.WriteLine(json);
 
             var body = Encoding.UTF8.GetBytes(json);
 
@@ -67,7 +68,7 @@ namespace PgOutput2Json.RabbitMq
                 _publisher.WaitForConfirmsOrDie(_confirmTimeout);
                 _currentBatchSize = 0;
 
-                Console.WriteLine("Confirmed");
+                //Console.WriteLine("Confirmed");
             }
         }
     }

@@ -5,11 +5,11 @@ using PgOutput2Json.RabbitMq;
 var options = new ReplicationListenerOptions(
     "server=localhost;database=repl_test_db;username=replicator;password=replicator",
     "pub_test",
-    "test_slot"); 
+    "test_slot");
 
 options.KeyColumns = new Dictionary<string, KeyColumn>
     {
-        { "public.tab_test", new KeyColumn("id", 5) }
+        { "public.tab_test", new KeyColumn(5, "id", "name" ) }
     };
 
 var listener = new ReplicationListener(options);

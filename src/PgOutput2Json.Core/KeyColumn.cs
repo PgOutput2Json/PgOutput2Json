@@ -2,13 +2,18 @@
 {
     public class KeyColumn
     {
-        public string ColumnName { get; private set; }
+        public string[] ColumnNames { get; private set; }
         public int PartitionCount { get; private set; }
 
-        public KeyColumn(string columnName, int partitionCount)
+        public KeyColumn(int partitionCount, params string[] columnNames)
         {
-            ColumnName = columnName;
             PartitionCount = partitionCount;
+            ColumnNames = columnNames;
+        }
+
+        public KeyColumn(params string[] columnNames)
+            : this(1, columnNames)
+        {
         }
     }
 }
