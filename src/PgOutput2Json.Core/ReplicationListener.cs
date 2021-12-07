@@ -345,7 +345,6 @@ namespace PgOutput2Json.Core
                 if (_logger != null && _logger.IsEnabled(LogLevel.Information))
                 {
                     _logger.LogInformation(message);
-
                 }
             }
             catch
@@ -360,7 +359,6 @@ namespace PgOutput2Json.Core
                 if (_logger != null && _logger.IsEnabled(LogLevel.Warning))
                 {
                     _logger.LogWarning(message);
-
                 }
             }
             catch
@@ -375,7 +373,6 @@ namespace PgOutput2Json.Core
                 if (_logger != null && _logger.IsEnabled(LogLevel.Error))
                 {
                     _logger.LogError(ex, message);
-
                 }
             }
             catch

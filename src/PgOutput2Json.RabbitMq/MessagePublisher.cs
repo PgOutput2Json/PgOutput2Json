@@ -139,7 +139,6 @@ namespace PgOutput2Json.RabbitMq
                 if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
                 {
                     _logger.LogDebug(message);
-
                 }
             }
             catch
@@ -154,7 +153,6 @@ namespace PgOutput2Json.RabbitMq
                 if (_logger != null && _logger.IsEnabled(LogLevel.Information))
                 {
                     _logger.LogInformation(message);
-
                 }
             }
             catch
@@ -169,7 +167,6 @@ namespace PgOutput2Json.RabbitMq
                 if (_logger != null && _logger.IsEnabled(LogLevel.Error))
                 {
                     _logger.LogError(ex, message);
-
                 }
             }
             catch
