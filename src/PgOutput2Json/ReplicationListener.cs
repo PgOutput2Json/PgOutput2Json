@@ -165,7 +165,7 @@ namespace PgOutput2Json
                 {
                     if (_confirmHandlerError != null)
                     {
-                        SafeLogError(_confirmHandlerError, "Error in IdleCallback. Waiting for 10 seconds...");
+                        SafeLogError(_confirmHandlerError, $"Error in {nameof(ConfirmCallback)}. Waiting for 10 seconds...");
                     }
                     else
                     {
