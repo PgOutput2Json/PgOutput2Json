@@ -8,4 +8,38 @@ The PgOutput2Json library converts `pgoutput` messages to JSON format which can 
 ⚠️ **PgOutput2Json is in early stages of development. Use at your own risk.**  
 ⚠️ **Npgsql is used for connecting to PostgreSQL. Replication support is new in Npgsql and is considered a bit experimental.** 
 
+## Quick Start
 
+### Setup postgresql.conf
+
+First set the configuration options in `postgresql.conf`:
+```
+wal_level = logical
+```
+The other required settings have default values that are sufficient for a basic setup. **PostgreSQL must be restarted after this change**.
+
+### Create a user that will be used to start the replication
+Login to PostgreSQL with privileges to create users, and execute: 
+```
+CREATE USER pgoutput2json WITH
+	PASSWORD '_your_password_here_'
+	REPLICATION;
+```
+If you will be connecting to the PostgreSQL with this user, from a different machine (non-local connection), don't forget to modify `pg_hba.conf`. If `pg_hba.conf` is modified, you have to SIGHUP the server for the changes to take effect, run `pg_ctl reload`, or execute `SELECT pg_reload_conf()`.
+
+### Create publication
+Connect to the database that holds the tables you want to track, and create a publication that specifies the tables and actions for publishing:
+```
+CREATE PUBLICATION my_publication
+    FOR TABLE my_table1, my_table2
+    WITH (publish = 'insert, update, delete, truncate');
+```
+
+### Create replication slot
+In the same database, create a replication slot, which will hold the state of the replication stream:
+```
+SELECT * FROM pg_create_logical_replication_slot('my_slot', 'pgoutput');
+```
+Make sure you specify `pgoutput` as a second parameter. If your application goes down, the slot persistently records the last data streamed to it, and allows resuming the application at the point where it left off.
+
+⚠️ **Do not forget to drop the slot when you are done testing the Pgoutput2Json library. Otherwise PostgreSQL may not be able to remove/recycle WAL files. Use: `SELECT * FROM pg_drop_replication_slot('my_slot');`**
