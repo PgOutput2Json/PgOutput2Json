@@ -16,7 +16,6 @@ using var pgOutput2Json = PgOutput2JsonBuilder.Create()
     .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
     .WithPgPublications("pub_test")
     .WithPgReplicationSlot("test_slot")
-    .WithPgKeyColumn("public.tab_test", 5, "id", "name")
     .UseRabbitMq(options =>
     {
         options.HostNames = new[] { "localhost" };
