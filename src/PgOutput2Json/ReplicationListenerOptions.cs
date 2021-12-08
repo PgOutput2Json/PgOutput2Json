@@ -9,13 +9,6 @@
         public Dictionary<string, KeyColumn> KeyColumns { get; set; } 
             = new Dictionary<string, KeyColumn>();
 
-        /// <summary>
-        /// Should nulls be written to JSON output. Default is false.
-        /// </summary>
-        public bool WriteNulls { get; set; } = false;
-
-        
-
         public ReplicationListenerOptions(string connectionString,
                                           string replicationSlotName,
                                           params string[] publicationNames)

@@ -12,6 +12,7 @@ namespace PgOutput2Json
         private int _batchSize = 100;
         private int _confirmTimeoutSec = 30;
         private ILoggerFactory? _loggerFactory;
+        private JsonOptions _jsonOptions = new JsonOptions();
 
         public static PgOutput2JsonBuilder Create()
         {
@@ -72,6 +73,12 @@ namespace PgOutput2Json
             return this;
         }
 
+        public PgOutput2JsonBuilder WithJsonOptions(Action<JsonOptions> configureAction)
+        {
+            configureAction.Invoke(_jsonOptions);
+            return this;
+        }
+
         public IPgOutput2Json Build()
         {
             if (string.IsNullOrWhiteSpace(_connectionString)) 
@@ -95,7 +102,7 @@ namespace PgOutput2Json
             var options = new ReplicationListenerOptions(_connectionString, _replicationSlotName, _publicationNames);
             options.KeyColumns = new Dictionary<string, KeyColumn>(_keyColumns);
 
-            var listener = new ReplicationListener(options, _loggerFactory?.CreateLogger<ReplicationListener>());
+            var listener = new ReplicationListener(options, _jsonOptions, _loggerFactory?.CreateLogger<ReplicationListener>());
 
             var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_loggerFactory);
 

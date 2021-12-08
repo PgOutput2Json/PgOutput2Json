@@ -11,6 +11,7 @@ namespace PgOutput2Json
         private readonly ILogger<ReplicationListener>? _logger;
 
         private readonly ReplicationListenerOptions _options;
+        private readonly JsonOptions _jsonOptions;
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
         private readonly StringBuilder _keyColValueBuilder = new StringBuilder(256);
@@ -37,16 +38,19 @@ namespace PgOutput2Json
         public event ConfirmHandler? ConfirmHandler;
 
         public ReplicationListener(ReplicationListenerOptions options,
+                                   JsonOptions jsonOptions,
                                    ILogger<ReplicationListener>? logger = null)
-            : this(options, TimeSpan.FromSeconds(5), logger)
+            : this(options, jsonOptions, TimeSpan.FromSeconds(5), logger)
         { 
         }
 
         public ReplicationListener(ReplicationListenerOptions options,
+                                   JsonOptions jsonOptions,
                                    TimeSpan confirmTimerPeriod,
                                    ILogger<ReplicationListener>? logger = null)
         {
             _options = options;
+            _jsonOptions = jsonOptions;
             _confirmTimerPeriod = confirmTimerPeriod;
             _logger = logger;
             _confirmTimer = new Timer(ConfirmCallback);
@@ -98,7 +102,7 @@ namespace PgOutput2Json
                                              "I",
                                              commitTimeStamp,
                                              insertMsg.ServerClock,
-                                             _options.WriteNulls);
+                                             _jsonOptions.WriteNulls);
                         }
                         else if (message is UpdateMessage updateMsg)
                         {
@@ -107,7 +111,7 @@ namespace PgOutput2Json
                                              "U",
                                              commitTimeStamp,
                                              updateMsg.ServerClock,
-                                             _options.WriteNulls);
+                                             _jsonOptions.WriteNulls);
                         }
                         else if (message is KeyDeleteMessage keyDeleteMsg)
                         {
@@ -250,18 +254,26 @@ namespace PgOutput2Json
             _jsonBuilder.Clear();
             _jsonBuilder.Append("{\"_ct\":\"");
             _jsonBuilder.Append(changeType);
-            _jsonBuilder.Append("\",");
-            _jsonBuilder.Append("\"_cts\":\"");
-            _jsonBuilder.Append(commitTimeStamp.Ticks);
-            _jsonBuilder.Append("\",");
-            _jsonBuilder.Append("\"_mts\":\"");
-            _jsonBuilder.Append(messageTimeStamp.Ticks);
-            _jsonBuilder.Append("\",");
-            _jsonBuilder.Append("\"_re\":\"");
-            _jsonBuilder.Append(relation.Namespace);
-            _jsonBuilder.Append('.');
-            _jsonBuilder.Append(relation.RelationName);
-            _jsonBuilder.Append('"');
+
+            if (_jsonOptions.WriteTimestamps)
+            {
+                _jsonBuilder.Append("\",");
+                _jsonBuilder.Append("\"_cts\":\"");
+                _jsonBuilder.Append(commitTimeStamp.Ticks);
+                _jsonBuilder.Append("\",");
+                _jsonBuilder.Append("\"_mts\":\"");
+                _jsonBuilder.Append(messageTimeStamp.Ticks);
+            }
+
+            if (_jsonOptions.WriteTableNames)
+            {
+                _jsonBuilder.Append("\",");
+                _jsonBuilder.Append("\"_tbl\":\"");
+                _jsonBuilder.Append(relation.Namespace);
+                _jsonBuilder.Append('.');
+                _jsonBuilder.Append(relation.RelationName);
+                _jsonBuilder.Append('"');
+            }
 
             _keyColValueBuilder.Clear();
 
