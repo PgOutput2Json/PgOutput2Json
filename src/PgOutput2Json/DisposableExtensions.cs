@@ -1,4 +1,6 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace PgOutput2Json
 {
@@ -42,7 +44,11 @@ namespace PgOutput2Json
                 }
             }
 
+#if NETSTANDARD2_1
+            return new ValueTask();
+#else
             return ValueTask.CompletedTask;
+#endif
         }
     }
 }

@@ -1,4 +1,6 @@
-﻿namespace PgOutput2Json
+﻿using System;
+
+namespace PgOutput2Json
 {
     public interface IMessagePublisher: IDisposable
     {

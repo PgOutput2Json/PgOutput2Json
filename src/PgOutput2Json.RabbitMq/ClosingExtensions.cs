@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System;
+using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 
 namespace PgOutput2Json.RabbitMq

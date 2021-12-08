@@ -1,8 +1,13 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+using Microsoft.Extensions.Logging;
+
 using Npgsql.Replication;
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
-using System.Text;
 
 namespace PgOutput2Json
 {
@@ -297,7 +302,18 @@ namespace PgOutput2Json
                 {
                     StringBuilder? valueBuilder = null;
 
-                    var isKeyColumn = keyColumn?.ColumnNames.Contains(col.ColumnName) ?? false;
+                    var isKeyColumn = false;
+                    if (keyColumn != null)
+                    {
+                        foreach (var c in keyColumn.ColumnNames)
+                        {
+                            if (c == col.ColumnName)
+                            {
+                                isKeyColumn = true;
+                                break;
+                            }
+                        }
+                    }
 
                     if (isKeyColumn)
                     {

@@ -1,4 +1,6 @@
-﻿namespace PgOutput2Json
+﻿using System.Collections.Generic;
+
+namespace PgOutput2Json
 {
     internal class ReplicationListenerOptions
     {

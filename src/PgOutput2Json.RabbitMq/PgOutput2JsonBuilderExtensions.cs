@@ -1,4 +1,6 @@
-﻿namespace PgOutput2Json.RabbitMq
+﻿using System;
+
+namespace PgOutput2Json.RabbitMq
 {
     public static class PgOutput2JsonBuilderExtensions
     {
