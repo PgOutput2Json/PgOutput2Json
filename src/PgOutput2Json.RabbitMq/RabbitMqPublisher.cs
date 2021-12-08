@@ -67,7 +67,7 @@ namespace PgOutput2Json.RabbitMq
         {
             if (_connection != null) return;
 
-            SafeLogInfo("Connecting...");
+            SafeLogInfo("Connecting to RabbitMQ");
 
             try
             {
@@ -79,11 +79,11 @@ namespace PgOutput2Json.RabbitMq
             }
             catch (Exception ex)
             {
-                SafeLogError(ex, "Could not connect to RabbitMQ server");
+                SafeLogError(ex, "Could not connect to RabbitMQ");
                 throw;
             }
 
-            SafeLogInfo("Connected");
+            SafeLogInfo("Connected to RabbitMQ");
         }
 
         private void EnsureModelExists()
@@ -166,7 +166,7 @@ namespace PgOutput2Json.RabbitMq
 
         private void ConnectionOnConnectionShutdown(object? sender, ShutdownEventArgs args)
         {
-            SafeLogInfo($"Disconnected ({args.ReplyText})");
+            SafeLogInfo($"Disconnected from RabbitMQ ({args.ReplyText})");
         }
 
         private void ConnectionOnConnectionUnblocked(object? sender, EventArgs args)

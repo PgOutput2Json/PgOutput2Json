@@ -185,6 +185,8 @@ namespace PgOutput2Json
             }
 
             StopTimerAndDisposeResources();
+
+            SafeLogInfo("Disconnected from PostgreSQL");
         }
 
         private void StopTimerAndDisposeResources()
