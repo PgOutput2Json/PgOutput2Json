@@ -1,4 +1,4 @@
-﻿namespace PgOutput2Json.Core
+﻿namespace PgOutput2Json
 {
     /// <summary>
     /// Handles json message stored in the json StringBuilder. 

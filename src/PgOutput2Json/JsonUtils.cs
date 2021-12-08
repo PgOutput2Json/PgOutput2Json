@@ -1,6 +1,6 @@
 ﻿using System.Text;
 
-namespace PgOutput2Json.Core
+namespace PgOutput2Json
 {
     internal static class JsonUtils
     {

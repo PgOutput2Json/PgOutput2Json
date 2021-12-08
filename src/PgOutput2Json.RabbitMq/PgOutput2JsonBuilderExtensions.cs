@@ -1,6 +1,4 @@
-﻿using PgOutput2Json.Core;
-
-namespace PgOutput2Json.RabbitMq
+﻿namespace PgOutput2Json.RabbitMq
 {
     public static class PgOutput2JsonBuilderExtensions
     {

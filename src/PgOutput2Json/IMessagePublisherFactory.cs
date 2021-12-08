@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 
-namespace PgOutput2Json.Core
+namespace PgOutput2Json
 {
     public interface IMessagePublisherFactory
     {

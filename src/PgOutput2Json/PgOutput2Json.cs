@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 
-namespace PgOutput2Json.Core
+namespace PgOutput2Json
 {
     internal class PgOutput2Json : IPgOutput2Json
     {

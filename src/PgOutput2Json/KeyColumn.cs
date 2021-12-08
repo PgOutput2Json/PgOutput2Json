@@ -1,4 +1,4 @@
-﻿namespace PgOutput2Json.Core
+﻿namespace PgOutput2Json
 {
     public class KeyColumn
     {

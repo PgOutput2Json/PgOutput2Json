@@ -1,5 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
-using PgOutput2Json.Core;
+using PgOutput2Json;
 using PgOutput2Json.RabbitMq;
 
 using var loggerFactory = LoggerFactory.Create(builder => 

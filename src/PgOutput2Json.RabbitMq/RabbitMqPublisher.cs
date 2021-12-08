@@ -3,8 +3,6 @@ using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
-using PgOutput2Json.Core;
-
 namespace PgOutput2Json.RabbitMq
 {
     public class RabbitMqPublisher: IMessagePublisher

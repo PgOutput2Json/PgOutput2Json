@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using PgOutput2Json.Core;
 
 namespace PgOutput2Json.RabbitMq
 {

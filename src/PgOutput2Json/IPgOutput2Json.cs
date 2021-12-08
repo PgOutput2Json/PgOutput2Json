@@ -1,5 +1,4 @@
-﻿
-namespace PgOutput2Json.Core
+﻿namespace PgOutput2Json
 {
     public interface IPgOutput2Json: IDisposable
     {

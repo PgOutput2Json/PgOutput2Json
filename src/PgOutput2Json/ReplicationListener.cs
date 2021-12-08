@@ -4,7 +4,7 @@ using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
 using System.Text;
 
-namespace PgOutput2Json.Core
+namespace PgOutput2Json
 {
     internal sealed class ReplicationListener: IDisposable
     {
