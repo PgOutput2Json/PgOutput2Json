@@ -6,7 +6,7 @@ namespace PgOutput2Json.Core
     {
         private string? _connectionString;
         private string? _replicationSlotName;
-        private string? _publicationName;
+        private string[]? _publicationNames;
         private Dictionary<string, KeyColumn> _keyColumns = new Dictionary<string, KeyColumn>();
         private IMessagePublisherFactory? _messagePublisherFactory;
         private int _batchSize = 100;
@@ -30,9 +30,9 @@ namespace PgOutput2Json.Core
             return this;
         }
 
-        public PgOutput2JsonBuilder WithPgPublication(string publicationName)
+        public PgOutput2JsonBuilder WithPgPublications(params string[] publicationNames)
         {
-            _publicationName = publicationName;
+            _publicationNames = publicationNames;
             return this;
         }
 
@@ -80,8 +80,8 @@ namespace PgOutput2Json.Core
             if (string.IsNullOrWhiteSpace(_replicationSlotName))
                 throw new ArgumentNullException("PostgreSQL replication slot name must be provided");
 
-            if (string.IsNullOrWhiteSpace(_publicationName))
-                throw new ArgumentNullException("PostgreSQL publication name must be provided");
+            if (_publicationNames == null || _publicationNames.Length == 0)
+                throw new ArgumentNullException("At least one PostgreSQL publication name must be provided");
 
             if (_messagePublisherFactory == null)
                 throw new ArgumentNullException("MessagePublisherFactory must be provided");
@@ -92,7 +92,7 @@ namespace PgOutput2Json.Core
             if (_confirmTimeoutSec <= 0)
                 throw new ArgumentOutOfRangeException("Publishing ConfirmTimeoutSec must be greater than zero");
 
-            var options = new ReplicationListenerOptions(_connectionString, _publicationName, _replicationSlotName);
+            var options = new ReplicationListenerOptions(_connectionString, _replicationSlotName, _publicationNames);
             options.KeyColumns = new Dictionary<string, KeyColumn>(_keyColumns);
 
             var listener = new ReplicationListener(options, _loggerFactory?.CreateLogger<ReplicationListener>());

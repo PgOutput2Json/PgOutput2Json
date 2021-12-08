@@ -3,7 +3,7 @@
     internal class ReplicationListenerOptions
     {
         public string ConnectionString { get; set; }
-        public string PublicationName { get; set; }
+        public string[] PublicationNames { get; set; }
         public string ReplicationSlotName { get; set; }
 
         public Dictionary<string, KeyColumn> KeyColumns { get; set; } 
@@ -17,11 +17,11 @@
         
 
         public ReplicationListenerOptions(string connectionString,
-                                          string publicationName,
-                                          string replicationSlotName)
+                                          string replicationSlotName,
+                                          params string[] publicationNames)
         {
             ConnectionString = connectionString;
-            PublicationName = publicationName;
+            PublicationNames = publicationNames;
             ReplicationSlotName = replicationSlotName;
         }
     }

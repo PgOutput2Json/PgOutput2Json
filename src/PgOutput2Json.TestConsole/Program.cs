@@ -14,7 +14,7 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 using var pgOutput2Json = PgOutput2JsonBuilder.Create()
     .WithLoggerFactory(loggerFactory)
     .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
-    .WithPgPublication("pub_test")
+    .WithPgPublications("pub_test")
     .WithPgReplicationSlot("test_slot")
     .WithPgKeyColumn("public.tab_test", 5, "id", "name")
     .UseRabbitMq(options =>

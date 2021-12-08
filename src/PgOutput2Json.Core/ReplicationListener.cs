@@ -73,7 +73,7 @@ namespace PgOutput2Json.Core
                     SafeLogInfo("Connected to PostgreSQL");
 
                     var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
-                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationName, 1);
+                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, 1);
 
                     lock (_confirmTimer)
                     {
