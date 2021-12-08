@@ -12,10 +12,10 @@
     /// </param>
     /// <param name="partition">Partition number in range from 0 to partition count - 1</param>
     /// <param name="confirm">If set to false, the message processing will not be confirmed to the db</param>
-    public delegate void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm);
+    internal delegate void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm);
 
     /// <summary>
     /// This is called by the listener periodically (5 secs default) if there are messages that should be confirmed
     /// </summary>
-    public delegate void ConfirmHandler();
+    internal delegate void ConfirmHandler();
 }

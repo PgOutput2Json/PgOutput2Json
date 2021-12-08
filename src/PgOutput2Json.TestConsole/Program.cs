@@ -11,23 +11,20 @@ using var loggerFactory = LoggerFactory.Create(builder =>
                options.TimestampFormat = "hh:mm:ss ";
            }));
 
-var options = new ReplicationListenerOptions(
-    "server=localhost;database=repl_test_db;username=replicator;password=replicator", "pub_test", "test_slot")
-{
-    KeyColumns = new Dictionary<string, KeyColumn>
+using var pgOutput2Json = PgOutput2JsonBuilder.Create()
+    .WithLoggerFactory(loggerFactory)
+    .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
+    .WithPgPublication("pub_test")
+    .WithPgReplicationSlot("test_slot")
+    .WithPgKeyColumn("public.tab_test", 5, "id", "name")
+    .UseRabbitMq(options =>
     {
-        { "public.tab_test", new KeyColumn(5, "id", "name" ) }
-    }
-};
-
-using var listener = new ReplicationListener(options,
-    logger: loggerFactory.CreateLogger<ReplicationListener>());
-
-using var publisher = new MessagePublisher(new[] { "localhost" }, "guest", "guest", 
-    logger: loggerFactory.CreateLogger<MessagePublisher>());
-
-var forwarder = new MessageForwarder(listener, publisher, 3);
+        options.HostNames = new[] { "localhost" };
+        options.Username = "guest";
+        options.Password = "guest";
+    })
+    .Build();
 
 var cancellationTokenSource = new CancellationTokenSource();
 
-await forwarder.Start(cancellationTokenSource.Token);
+await pgOutput2Json.Start(cancellationTokenSource.Token);

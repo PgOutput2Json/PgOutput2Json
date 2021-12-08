@@ -6,7 +6,7 @@ using System.Text;
 
 namespace PgOutput2Json.Core
 {
-    public sealed class ReplicationListener: IDisposable
+    internal sealed class ReplicationListener: IDisposable
     {
         private readonly ILogger<ReplicationListener>? _logger;
 

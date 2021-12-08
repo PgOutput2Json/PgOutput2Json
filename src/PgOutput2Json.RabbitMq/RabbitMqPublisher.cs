@@ -7,47 +7,39 @@ using PgOutput2Json.Core;
 
 namespace PgOutput2Json.RabbitMq
 {
-    public class MessagePublisher: IDisposable
+    public class RabbitMqPublisher: IMessagePublisher
     {
-        public MessagePublisher(string[] hostNames,
-                                string username,
-                                string password,
-                                string exchangeName = "pgoutput2json",
-                                bool declareExchange = true,
-                                string virtualHost = "/",
-                                int port = AmqpTcpEndpoint.UseDefaultPort,
-                                ILogger<MessagePublisher>? logger = null)
+        public RabbitMqPublisher(RabbitMqOptions options, ILogger<RabbitMqPublisher>? logger = null)
         {
             _connectionFactory = new ConnectionFactory
             {
-                HostName = hostNames[0],
-                Port = port,
-                UserName = username,
-                Password = password,
-                VirtualHost = virtualHost,
+                HostName = options.HostNames[0],
+                Port = options.Port,
+                UserName = options.Username,
+                Password = options.Password,
+                VirtualHost = options.VirtualHost,
                 AutomaticRecoveryEnabled = true,
                 TopologyRecoveryEnabled = true,
                 RequestedHeartbeat = TimeSpan.FromSeconds(60)
             };
 
-            _hostNames = hostNames;
-            _exchangeName = exchangeName;
-            _declareExchange = declareExchange;
+            _hostNames = options.HostNames;
+            _exchangeName = options.ExchangeName;
             _logger = logger;
         }
 
-        public void PublishMessage(string body, string messageType, string routingKey, bool persistent = true)
+        public void Publish(string json, string tableName, string keyColumnValue, int partition)
         {
             EnsureModelExists();
 
-            SafeLogDebug(body);
+            SafeLogDebug(json);
 
-            _basicProperties!.Type = messageType;
-            _basicProperties.Persistent = persistent;
+            _basicProperties!.Type = tableName;
+            _basicProperties.Persistent = true;
 
-            var bodyBytes = Encoding.UTF8.GetBytes(body);
+            var body = Encoding.UTF8.GetBytes(json);
 
-            _model!.BasicPublish(_exchangeName, routingKey, _basicProperties, bodyBytes);
+            _model!.BasicPublish(_exchangeName, tableName + "." + partition, _basicProperties, body);
         }
 
         public void WaitForConfirmsOrDie(TimeSpan timeout)
@@ -201,7 +193,7 @@ namespace PgOutput2Json.RabbitMq
         private readonly string[] _hostNames;
         private readonly string _exchangeName;
         private readonly bool _declareExchange;
-        private readonly ILogger<MessagePublisher>? _logger;
+        private readonly ILogger<RabbitMqPublisher>? _logger;
         private readonly ConnectionFactory _connectionFactory;
     }
 }

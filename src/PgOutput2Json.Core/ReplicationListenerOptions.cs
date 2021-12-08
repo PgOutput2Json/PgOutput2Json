@@ -1,6 +1,6 @@
 ﻿namespace PgOutput2Json.Core
 {
-    public class ReplicationListenerOptions
+    internal class ReplicationListenerOptions
     {
         public string ConnectionString { get; set; }
         public string PublicationName { get; set; }

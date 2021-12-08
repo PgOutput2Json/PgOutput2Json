@@ -1,26 +1,29 @@
-﻿using PgOutput2Json.Core;
+﻿using Microsoft.Extensions.Logging;
 
-namespace PgOutput2Json.RabbitMq
+namespace PgOutput2Json.Core
 {
-    public class MessageForwarder: IDisposable
+    internal class PgOutput2Json : IPgOutput2Json
     {
         private readonly ReplicationListener _listener;
-        private readonly MessagePublisher _publisher;
+        private readonly IMessagePublisher _publisher;
         private readonly int _batchSize;
+        private readonly ILogger<PgOutput2Json>? _logger;
         private readonly TimeSpan _confirmTimeout;
 
         //private readonly Random _rnd = new Random();
 
         private int _currentBatchSize = 0;
 
-        public MessageForwarder(ReplicationListener listener,
-                                MessagePublisher publisher,
-                                int batchSize = 100,
-                                int confirmTimeoutSec = 30)
+        public PgOutput2Json(ReplicationListener listener,
+                             IMessagePublisher publisher,
+                             int batchSize = 100,
+                             int confirmTimeoutSec = 30,
+                             ILogger<PgOutput2Json>? logger = null)
         {
             _listener = listener;
             _publisher = publisher;
             _batchSize = batchSize;
+            _logger = logger;
             _confirmTimeout = TimeSpan.FromSeconds(confirmTimeoutSec);
             _listener.MessageHandler += MessageHandler;
             _listener.ConfirmHandler += ConfirmHandler;
@@ -35,13 +38,16 @@ namespace PgOutput2Json.RabbitMq
         {
             _listener.MessageHandler -= MessageHandler;
             _listener.ConfirmHandler -= ConfirmHandler;
+
+            _listener.TryDispose(_logger);
+            _publisher.TryDispose(_logger);
         }
 
         private void MessageHandler(string json, string tableName, string keyColumnValue, int partition, ref bool confirm)
         {
             //Console.WriteLine(keyColumnValue);
 
-            _publisher.PublishMessage(json, tableName, tableName + "." + partition);
+            _publisher.Publish(json, tableName, keyColumnValue, partition);
 
             if (++_currentBatchSize >= _batchSize)
             {
