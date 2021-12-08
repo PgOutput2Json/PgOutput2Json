@@ -108,11 +108,6 @@ namespace PgOutput2Json.RabbitMq
                 _model = _connection!.CreateModel();
                 _model.ConfirmSelect(); // enable publisher acknowledgments
 
-                if (_declareExchange)
-                {
-                    _model.ExchangeDeclare(_exchangeName, ExchangeType.Topic, true);
-                }
-
                 _basicProperties = _model.CreateBasicProperties();
             }
             catch
@@ -192,7 +187,6 @@ namespace PgOutput2Json.RabbitMq
 
         private readonly string[] _hostNames;
         private readonly string _exchangeName;
-        private readonly bool _declareExchange;
         private readonly ILogger<RabbitMqPublisher>? _logger;
         private readonly ConnectionFactory _connectionFactory;
     }
