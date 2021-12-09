@@ -338,23 +338,25 @@ namespace PgOutput2Json
                         var type = value.GetPostgresType();
                         var pgOid = (PgOid)type.OID;
 
+                        using var textReader = value.GetTextReader();
+
                         int hash;
 
                         if (pgOid.IsNumber())
                         {
-                            hash = JsonUtils.WriteNumber(_jsonBuilder, valueBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteNumber(_jsonBuilder, valueBuilder, textReader);
                         }
                         else if (pgOid.IsBoolean())
                         {
-                            hash = JsonUtils.WriteBoolean(_jsonBuilder, valueBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteBoolean(_jsonBuilder, valueBuilder, textReader);
                         }
                         else if (pgOid.IsByte())
                         {
-                            hash = JsonUtils.WriteByte(_jsonBuilder, valueBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteByte(_jsonBuilder, valueBuilder, textReader);
                         }
                         else
                         {
-                            hash = JsonUtils.WriteText(_jsonBuilder, valueBuilder, value.GetTextReader());
+                            hash = JsonUtils.WriteText(_jsonBuilder, valueBuilder, textReader);
                         }
 
                         if (isKeyColumn) finalHash ^= hash;
