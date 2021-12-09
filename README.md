@@ -41,7 +41,7 @@ In the same database, create a replication slot, which will hold the state of th
 ```
 SELECT * FROM pg_create_logical_replication_slot('my_slot', 'pgoutput');
 ```
-Make sure you specify `pgoutput` as a second parameter. If your application goes down, the slot persistently records the last data streamed to it, and allows resuming the application at the point where it left off.
+Make sure you specify `pgoutput` as the second parameter. If your application goes down, the slot persistently records the last data streamed to it, and allows resuming the application at the point where it left off.
 
 ⚠️ **Do not forget to drop the slot when you are done testing the Pgoutput2Json library. Otherwise PostgreSQL may not be able to remove/recycle WAL files. Use: `SELECT * FROM pg_drop_replication_slot('my_slot');`**
 
@@ -54,7 +54,7 @@ Create a `durable` `topic` type `exchange` where PgOutput2Json will be pushing J
 Create a `durable` queue named `my_queue` and bind it to the exchange created in the previous step. Use `public.#` as the routing key. That way, it will receive JSON messages for all tables in the `public` schema. **Use different schema name if your tables are in different schema**
 
 ## Create .NET Core Worker Service
-Finally, create a .NET Core Worker Service and add the following package references:
+Finally, create a .NET Core Worker Service and add the following package reference:
 ```
 dotnet add package PgOutput2Json.RabbitMq
 ```
