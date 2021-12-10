@@ -17,7 +17,7 @@ namespace PgOutput2Json.TestWorker
                 .WithLoggerFactory(_loggerFactory)
                 .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
                 .WithPgPublications("pub_test")
-                .WithPgReplicationSlot("test_slot")
+                //.WithPgReplicationSlot("test_slot")
                 .UseRabbitMq(options =>
                 {
                     options.HostNames = new[] { "localhost" };

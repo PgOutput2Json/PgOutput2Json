@@ -108,7 +108,19 @@ namespace PgOutput2Json
 
                     SafeLogInfo("Connected to PostgreSQL");
 
-                    var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
+                    PgOutputReplicationSlot slot;
+
+                    if (_options.ReplicationSlotName != string.Empty)
+                    {
+                        slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
+                    }
+                    else
+                    {
+                        var slotName = $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}";
+                        slot = await _connection.CreatePgOutputReplicationSlot(slotName, true, 
+                            cancellationToken: _cancellationTokenSource.Token);
+                    }
+
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, 1);
 
                     lock (_lock)

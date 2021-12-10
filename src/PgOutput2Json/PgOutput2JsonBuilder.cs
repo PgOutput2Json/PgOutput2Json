@@ -7,7 +7,7 @@ namespace PgOutput2Json
     public class PgOutput2JsonBuilder
     {
         private string? _connectionString;
-        private string? _replicationSlotName;
+        private string _replicationSlotName = string.Empty;
         private string[]? _publicationNames;
         private Dictionary<string, KeyColumn> _keyColumns = new Dictionary<string, KeyColumn>();
         private IMessagePublisherFactory? _messagePublisherFactory;
@@ -85,9 +85,6 @@ namespace PgOutput2Json
         {
             if (string.IsNullOrWhiteSpace(_connectionString)) 
                 throw new ArgumentNullException("PostgreSQL connection string must be provided");
-
-            if (string.IsNullOrWhiteSpace(_replicationSlotName))
-                throw new ArgumentNullException("PostgreSQL replication slot name must be provided");
 
             if (_publicationNames == null || _publicationNames.Length == 0)
                 throw new ArgumentNullException("At least one PostgreSQL publication name must be provided");
