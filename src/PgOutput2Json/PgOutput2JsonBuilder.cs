@@ -64,6 +64,12 @@ namespace PgOutput2Json
             return this;
         }
 
+        public PgOutput2JsonBuilder WithMessageHandler(SimpleMessageHandler messageHandler)
+        {
+            _messagePublisherFactory = new SimpleMessagePublisherFactory(messageHandler);
+            return this;
+        }
+
         public PgOutput2JsonBuilder WithBatchSize(int batchSize)
         {
             _batchSize = batchSize;
