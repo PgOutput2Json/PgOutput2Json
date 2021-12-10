@@ -85,7 +85,7 @@ Run the code, and you should see table names and JSON messages being printed in 
 
 Note that this "quick start" version is working with a **temporary replication slot**. That means it will not see any database changes that were done while the worker was stopped. See section 3. in this document if you want to work with a permanent replication slot.
 
-## 2. Using Rabbit MQ
+## 2. Using RabbitMQ
 
 This document assumes you have a running RabbitMQ instance working on the default port, with the default `guest`/`guest` user allowed from the localhost.
 
