@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace PgOutput2Json
 {
-    internal class PgOutput2Json : IPgOutput2Json
+    internal sealed class PgOutput2Json : IPgOutput2Json
     {
         private readonly ReplicationListener _listener;
         private readonly IMessagePublisher _publisher;
@@ -16,6 +16,7 @@ namespace PgOutput2Json
         //private readonly Random _rnd = new Random();
 
         private int _currentBatchSize = 0;
+        private bool _disposed;
 
         public PgOutput2Json(ReplicationListener listener,
                              IMessagePublisher publisher,
@@ -39,6 +40,9 @@ namespace PgOutput2Json
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+
             _listener.MessageHandler -= MessageHandler;
             _listener.ConfirmHandler -= ConfirmHandler;
 

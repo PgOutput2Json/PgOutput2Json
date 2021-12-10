@@ -21,10 +21,15 @@ namespace PgOutput2Json
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
         private readonly StringBuilder _keyColValueBuilder = new StringBuilder(256);
 
+        private readonly object _lock = new object();
+
         private readonly Timer _confirmTimer;
         private readonly TimeSpan _confirmTimerPeriod;
-        private readonly object _confirmTimerLock = new object();
         private volatile bool _confirmTimerRunning;
+
+        private ManualResetEvent _stoppedEvent = new ManualResetEvent(true);
+        private bool _disposed;
+
         private ulong _walEnd;
 
         private LogicalReplicationConnection? _connection;
@@ -63,11 +68,26 @@ namespace PgOutput2Json
 
         public void Dispose()
         {
+            lock (_lock)
+            {
+                if (_disposed) return;
+                _disposed = true;
+
+                _cancellationTokenSource.TryCancel(_logger);
+            }
+
+            if (!_stoppedEvent.WaitOne(5000))
+            {
+                SafeLogWarn("Timed out waiting for the listener to stop");
+            }
+
             _confirmTimer.TryDispose(_logger);
         }
 
         public async Task ListenForChanges(CancellationToken cancellationToken)
         {
+            _stoppedEvent.Reset();
+
             while (true)
             {
                 try
@@ -84,7 +104,7 @@ namespace PgOutput2Json
                     var slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, 1);
 
-                    lock (_confirmTimer)
+                    lock (_lock)
                     {
                         _confirmTimer.Change(_confirmTimerPeriod, Timeout.InfiniteTimeSpan);
                         _confirmTimerRunning = true;
@@ -137,7 +157,7 @@ namespace PgOutput2Json
                                              false);
                         }
 
-                        lock (_confirmTimerLock)
+                        lock (_lock)
                         {
                             _walEnd = (ulong)message.WalEnd;
 
@@ -191,12 +211,14 @@ namespace PgOutput2Json
 
             StopTimerAndDisposeResources();
 
+            _stoppedEvent.Set();
+
             SafeLogInfo("Disconnected from PostgreSQL");
         }
 
         private void StopTimerAndDisposeResources()
         {
-            lock (_confirmTimerLock)
+            lock (_lock)
             {
                 _confirmTimer.Change(Timeout.Infinite, Timeout.Infinite);
 
@@ -214,9 +236,9 @@ namespace PgOutput2Json
 
         private void ConfirmCallback(object? state)
         {
-            lock (_confirmTimerLock)
+            lock (_lock)
             {
-                if (!_confirmTimerRunning) return;
+                if (_disposed || !_confirmTimerRunning) return;
 
                 if (_walEnd > 0)
                 {
@@ -231,14 +253,7 @@ namespace PgOutput2Json
                     catch (Exception ex)
                     {
                         _confirmHandlerError = ex;
-                        try 
-                        {
-                            _cancellationTokenSource?.Cancel();
-                        }
-                        catch (Exception cancelEx)
-                        {
-                            SafeLogError(cancelEx, "Error cancelling the listener");
-                        }
+                        _cancellationTokenSource.TryCancel(_logger);
                     }
                 }
 

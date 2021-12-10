@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -49,6 +50,24 @@ namespace PgOutput2Json
 #else
             return ValueTask.CompletedTask;
 #endif
+        }
+
+        public static void TryCancel(this CancellationTokenSource? tokenSource, ILogger? logger)
+        {
+            try
+            {
+                tokenSource?.Cancel();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    logger?.LogError(ex, "Error cancelling a token source");
+                }
+                catch
+                {
+                }
+            }
         }
     }
 }
