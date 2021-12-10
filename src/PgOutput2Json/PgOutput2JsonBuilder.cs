@@ -15,6 +15,7 @@ namespace PgOutput2Json
         private int _confirmTimeoutSec = 30;
         private ILoggerFactory? _loggerFactory;
         private JsonOptions _jsonOptions = new JsonOptions();
+        private PartitionFilter? _partitionFilter;
 
         public static PgOutput2JsonBuilder Create()
         {
@@ -48,6 +49,12 @@ namespace PgOutput2Json
         public PgOutput2JsonBuilder WithPgKeyColumn(string tableName, int partitionsCount, params string[] columnNames)
         {
             _keyColumns[tableName] = new KeyColumn(partitionsCount, columnNames);
+            return this;
+        }
+
+        public PgOutput2JsonBuilder WithPartitionFilter(int fromInclusive, int toExclusive)
+        {
+            _partitionFilter = new PartitionFilter(fromInclusive, toExclusive);
             return this;
         }
 
@@ -98,7 +105,7 @@ namespace PgOutput2Json
             if (_confirmTimeoutSec <= 0)
                 throw new ArgumentOutOfRangeException("Publishing ConfirmTimeoutSec must be greater than zero");
 
-            var options = new ReplicationListenerOptions(_connectionString, _replicationSlotName, _publicationNames);
+            var options = new ReplicationListenerOptions(_connectionString, _replicationSlotName, _publicationNames, _partitionFilter);
             options.KeyColumns = new Dictionary<string, KeyColumn>(_keyColumns);
 
             var listener = new ReplicationListener(options, _jsonOptions, _loggerFactory?.CreateLogger<ReplicationListener>());

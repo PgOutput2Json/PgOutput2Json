@@ -422,6 +422,13 @@ namespace PgOutput2Json
             _jsonBuilder.Append('}');
 
             var partition = keyColumn != null ? finalHash % keyColumn.PartitionCount : 0;
+
+            if (_options.PartitionFilter != null 
+                && (partition < _options.PartitionFilter.FromInclusive || partition >= _options.PartitionFilter.ToExclusive))
+            {
+                partition = -1; // this will prevent event from firing
+            }
+
             return partition;
         }
 
