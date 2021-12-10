@@ -86,12 +86,19 @@ namespace PgOutput2Json
 
         public async Task ListenForChanges(CancellationToken cancellationToken)
         {
+            lock (_lock)
+            {
+                if (_disposed) throw new ObjectDisposedException(nameof(ReplicationListener));
+            }
+
             _stoppedEvent.Reset();
 
             while (true)
             {
                 try
                 {
+                    if (cancellationToken.IsCancellationRequested) break;
+
                     _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
                     _connection = new LogicalReplicationConnection(_options.ConnectionString);
@@ -106,6 +113,8 @@ namespace PgOutput2Json
 
                     lock (_lock)
                     {
+                        if (_disposed) break;
+
                         _confirmTimer.Change(_confirmTimerPeriod, Timeout.InfiniteTimeSpan);
                         _confirmTimerRunning = true;
                     }
@@ -206,7 +215,7 @@ namespace PgOutput2Json
 
                 StopTimerAndDisposeResources();
 
-                Thread.Sleep(10000);
+                await Delay(10000, cancellationToken);
             }
 
             StopTimerAndDisposeResources();
@@ -216,11 +225,30 @@ namespace PgOutput2Json
             SafeLogInfo("Disconnected from PostgreSQL");
         }
 
+        private async Task Delay(int time, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(time, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // ignore if task was cancelled 
+            }
+            catch (Exception ex)
+            {
+                SafeLogError(ex, "Error while waiting to reconnect");
+            }
+        }
+
         private void StopTimerAndDisposeResources()
         {
             lock (_lock)
             {
-                _confirmTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                if (!_disposed)
+                {
+                    _confirmTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                }
 
                 _confirmTimerRunning = false;
                 _walEnd = 0;
