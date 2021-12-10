@@ -8,7 +8,7 @@ The PgOutput2Json library converts `pgoutput` messages to JSON format which can 
 ⚠️ **PgOutput2Json is in early stages of development. Use at your own risk.**  
 ⚠️ **[Npgsql](https://github.com/npgsql/npgsql) is used for connecting to PostgreSQL. Replication support is new in Npgsql and is considered a bit experimental.** 
 
-## Setup PostgreSQL
+## 1. Quick Start
 
 ### Configure postgresql.conf
 
@@ -36,25 +36,57 @@ CREATE PUBLICATION my_publication
 ```
 In the C# code examples below, we will assume the database name is `my_database`.
 
-### Create replication slot
-In the same database, create a replication slot, which will hold the state of the replication stream:
+### Create .NET Core Worker Service
+Finally, create a .NET Core Worker Service and add the following package reference:
 ```
-SELECT * FROM pg_create_logical_replication_slot('my_slot', 'pgoutput');
+dotnet add package PgOutput2Json
 ```
-Make sure you specify `pgoutput` as the second parameter. If your application goes down, the slot persistently records the last data streamed to it, and allows resuming the application at the point where it left off.
+Add `using PgOutput2Json;` to the Worker.cs, and use this code in the Worker class:
+```
+public class Worker : BackgroundService
+{
+    private readonly ILoggerFactory _loggerFactory;
 
-⚠️ **Do not forget to drop the slot when you are done testing the Pgoutput2Json library. Otherwise PostgreSQL may not be able to remove/recycle WAL files. Use: `SELECT * FROM pg_drop_replication_slot('my_slot');`**
+    public Worker(ILoggerFactory loggerFactory)
+    {
+        _loggerFactory = loggerFactory;
+    }
 
-## Setup RabbitMQ
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // This code assumes PostgreSQL is on localhost
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()
+            .WithLoggerFactory(_loggerFactory)
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
+            .WithPgPublications("my_publication")
+	    .WithMessageHandler((json, table, key, partition) =>
+            {
+                Console.WriteLine($"{table}: {json}");
+            })
+            .Build();
+
+        await pgOutput2Json.Start(stoppingToken);
+    }
+}
+```
+Run the code, and you should see table names and JSON messages being printed in the console every time you insert, update or delete a row from the tables you specified in the previous step.
+
+Note that this "quick start" version is working with a **temporary replication slot**. That means it will not see any database changes that were done while the worker was stopped. See section 3. in this document if you want to work with a permanent replication slot.
+
+## 2. Using Rabbit MQ
+
+This document assumes you have a running RabbitMQ instance working on the default port, with the default `guest`/`guest` user allowed from local host.
+
+⚠️ First, setup the database, as described in the Quick Start section above.
 
 ### Create topic exchange
-Create a `durable` `topic` type `exchange` where PgOutput2Json will be pushing JSON files. We will assume the name of the exchange is `my_exchange` in the `/` virtual host.
+In RabbitMQ, create a `durable` `topic` type `exchange` where PgOutput2Json will be pushing JSON files. We will assume the name of the exchange is `my_exchange` in the `/` virtual host.
 
 ### Create and bind a queue to hold the JSON messages
 Create a `durable` queue named `my_queue` and bind it to the exchange created in the previous step. Use `public.#` as the routing key. That way, it will receive JSON messages for all tables in the `public` schema. **Use different schema name if your tables are in different schema**
 
-## Create .NET Core Worker Service
-Finally, create a .NET Core Worker Service and add the following package reference:
+### Create .NET Core Worker Service
+Create a .NET Core Worker Service and add the following package reference:
 ```
 dotnet add package PgOutput2Json.RabbitMq
 ```
@@ -77,7 +109,6 @@ public class Worker : BackgroundService
             .WithLoggerFactory(_loggerFactory)
             .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
             .WithPgPublications("my_publication")
-            .WithPgReplicationSlot("my_slot")
             .UseRabbitMq(options =>
             {
                 options.HostNames = new[] { "localhost" };
@@ -92,10 +123,16 @@ public class Worker : BackgroundService
     }
 }
 ```
-Run the code, and with a little luck you should see JSON messages being pushed in the `my_queue` in RabbitMQ. The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
+Run the code, and with a little luck you should see JSON messages being pushed in the `my_queue` in RabbitMQ, when you make change in the tables specified in `my_publication`. The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
 
-## Features
-TODO:
-- Describe JSON and JsonOptions
-- Describe batching feature
-- Describe partition feature
+## 3. Working with permanent replication slots
+TODO
+
+## 4. Batching confirmations to RabbitMQ
+TODO
+
+## 5. Partitions by key
+TODO
+
+## 6. JSON options
+TODO
