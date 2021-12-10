@@ -138,13 +138,13 @@ public class Worker : BackgroundService
 Run the code, and with a little luck you should see JSON messages being pushed in the `my_queue` in RabbitMQ, when you make change in the tables specified in `my_publication`. The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
 
 ## 3. Working with permanent replication slots
-TODO
+TODO (implemented, missing documentation)
 
 ## 4. Batching confirmations to RabbitMQ
-TODO
+TODO (implemented, missing documentation)
 
 ## 5. Partitions by key
-TODO
+TODO (implemented, missing documentation)
 
 ## 6. JSON options
-TODO
+TODO (implemented, missing documentation)
