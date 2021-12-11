@@ -17,14 +17,14 @@ Source code and database table definitions to reproduce the behavior. Include de
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Error messages or screenshots**
+Innermost exception with stack trace. If applicable, add screenshots to help explain your problem.
 
 **Further technical information:**
-- PostgreSQL version
-- .NET version
-- RabbitMQ version (if applicable)
-- OS version
+- PostgreSQL version:
+- .NET version:
+- RabbitMQ version (if applicable):
+- OS version:
 
 **Additional context**
 Add any other context about the problem here.
