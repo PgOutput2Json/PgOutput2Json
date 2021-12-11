@@ -318,20 +318,22 @@ namespace PgOutput2Json
             _jsonBuilder.Clear();
             _jsonBuilder.Append("{\"_ct\":\"");
             _jsonBuilder.Append(changeType);
+            _jsonBuilder.Append('"');
 
             if (_jsonOptions.WriteTimestamps)
             {
-                _jsonBuilder.Append("\",");
+                _jsonBuilder.Append(",");
                 _jsonBuilder.Append("\"_cts\":\"");
                 _jsonBuilder.Append(commitTimeStamp.Ticks);
                 _jsonBuilder.Append("\",");
                 _jsonBuilder.Append("\"_mts\":\"");
                 _jsonBuilder.Append(messageTimeStamp.Ticks);
+                _jsonBuilder.Append('"');
             }
 
             if (_jsonOptions.WriteTableNames)
             {
-                _jsonBuilder.Append("\",");
+                _jsonBuilder.Append(",");
                 _jsonBuilder.Append("\"_tbl\":\"");
                 JsonUtils.EscapeJson(_jsonBuilder, relation.Namespace);
                 _jsonBuilder.Append('.');
