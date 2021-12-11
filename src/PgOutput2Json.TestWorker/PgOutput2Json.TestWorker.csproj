@@ -7,12 +7,14 @@
     <UserSecretsId>dotnet-PgOutput2Json.TestWorker-77B74CBA-E15D-4AC5-BFAF-3F827BF624A3</UserSecretsId>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(Configuration)' != 'Release'">
-    <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
+  <!--
+  <ItemGroup>
+    <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.1.7" />
   </ItemGroup>
+  -->
 
-  <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.1.6" />
+  <ItemGroup>
+    <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -6,9 +6,16 @@ namespace PgOutput2Json.TestWorker
     {
         private readonly ILoggerFactory _loggerFactory;
 
-        public Worker(ILoggerFactory loggerFactory)
+        private readonly int _batchSize;
+        private readonly int _filterFrom;
+        private readonly int _filterTo;
+
+        public Worker(ILoggerFactory loggerFactory, IConfiguration configuration)
         {
             _loggerFactory = loggerFactory;
+            _batchSize = configuration.GetValue<int>("AppSettings:BatchSize");
+            _filterFrom = configuration.GetValue<int>("AppSettings:PartitionFilter:FromInclusive");
+            _filterTo = configuration.GetValue<int>("AppSettings:PartitionFilter:ToExclusive");
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -17,13 +24,20 @@ namespace PgOutput2Json.TestWorker
                 .WithLoggerFactory(_loggerFactory)
                 .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
                 .WithPgPublications("pub_test")
-                //.WithPgReplicationSlot("test_slot")
-                .UseRabbitMq(options =>
+                .WithPgKeyColumn("public.tab_test", 5, "id")
+                .WithJsonOptions(options =>
                 {
-                    options.HostNames = new[] { "localhost" };
-                    options.Username = "guest";
-                    options.Password = "guest";
+                    //options.WriteNulls = true;
+                    //options.WriteTimestamps = true;
+                    //options.WriteTableNames = true;
                 })
+                .WithPartitionFilter(_filterFrom, _filterTo)
+                .WithBatchSize(_batchSize)
+                .WithMessageHandler((json, table, key, partition) =>
+                {
+                    Console.WriteLine($"{table}: {json}");
+                })
+                //.UseRabbitMq()
                 .Build();
 
             await pgOutput2Json.Start(stoppingToken);
