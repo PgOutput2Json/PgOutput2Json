@@ -5,27 +5,25 @@ namespace PgOutput2Json
 {
     internal static class JsonUtils
     {
-        internal static int WriteText(StringBuilder jsonBuilder, StringBuilder? valueBuilder, TextReader textReader)
+        internal static int WriteText(StringBuilder jsonBuilder, string value)
         {
             jsonBuilder.Append('"');
 
-            var hash = EscapeJson(jsonBuilder, valueBuilder, textReader);
+            var hash = EscapeJson(jsonBuilder, value);
 
             jsonBuilder.Append('"');
 
             return hash;
         }
 
-        internal static int WriteNumber(StringBuilder jsonBuilder, StringBuilder? valueBuilder, TextReader textReader)
+        internal static int WriteNumber(StringBuilder jsonBuilder, string value)
         {
             // we may have to return to the original length in case of NaN, Infinity, -Infinity...
             var originalLength = jsonBuilder.Length;
-            var originalValueLength = valueBuilder?.Length ?? 0;
 
             int hash = 0;
 
-            int c;
-            while ((c = textReader.Read()) != -1)
+            foreach (var c in value)
             {
                 // allowed chars "0123456789+-eE."
                 if ((c >= '0' && c <= '9')
@@ -36,19 +34,12 @@ namespace PgOutput2Json
                      || c == '.')
                 {
                     hash ^= c;
-                    jsonBuilder.Append((char)c);
-                    valueBuilder?.Append((char)c);
+                    jsonBuilder.Append(c);
                 }
                 else
                 {
                     jsonBuilder.Length = originalLength;
                     jsonBuilder.Append("null");
-
-                    if (valueBuilder != null)
-                    {
-                        valueBuilder.Length = originalValueLength;
-                    }
-
                     return 0;
                 }
             }
@@ -56,61 +47,44 @@ namespace PgOutput2Json
             return hash;
         }
 
-        internal static int WriteBoolean(StringBuilder jsonBuilder, StringBuilder? valueBuilder, TextReader textReader)
+        internal static int WriteBoolean(StringBuilder jsonBuilder, string value)
         {
-            int hash = 0;
-
-            int c;
-            if ((c = textReader.Read()) != -1)
+            if (value == "t")
             {
-                if (c == 't')
-                {
-                    hash = 1;
-                    jsonBuilder.Append("true");
-                    valueBuilder?.Append("true");
-                }
-                else
-                {
-                    jsonBuilder.Append("false");
-                    valueBuilder?.Append("false");
-                }
+                jsonBuilder.Append("true");
+                return 't';
             }
 
-            return hash;
+            jsonBuilder.Append("false");
+            return 'f';
         }
 
-        internal static int WriteByte(StringBuilder jsonBuilder, StringBuilder? valueBuilder, TextReader textReader)
+        internal static int WriteByte(StringBuilder jsonBuilder, string value)
         {
+            jsonBuilder.Append('"');
+
+            int hash = 0;
+
             /* string is "\x54617069727573", start after "\x" */
-            textReader.Read();
-            textReader.Read();
-
-            jsonBuilder.Append('"');
-
-            int hash = 0;
-
-            int c;
-            while ((c = textReader.Read()) != -1)
+            for (var i = 2; i < value.Length; i++)
             {
+                var c = value[i];
+
                 hash ^= c;
-                jsonBuilder.Append((char)c);
-                valueBuilder?.Append((char)c);
+                jsonBuilder.Append(c);
             }
 
             jsonBuilder.Append('"');
             return hash;
         }
 
-        private static int EscapeJson(StringBuilder jsonBuilder, StringBuilder? valueBuilder, TextReader textReader)
+        public static int EscapeJson(StringBuilder jsonBuilder, string value)
         {
             int hash = 0;
 
-            int c;
-            while ((c = textReader.Read()) != -1)
+            foreach (var c in value)
             {
                 hash ^= c;
-
-                valueBuilder?.Append((char)c);
 
                 switch (c)
                 {
@@ -139,11 +113,11 @@ namespace PgOutput2Json
                         if (c < ' ')
                         {
                             jsonBuilder.Append("\\u");
-                            jsonBuilder.Append(c.ToString("x04"));
+                            jsonBuilder.Append(((int)c).ToString("x04"));
                         }
                         else
                         {
-                            jsonBuilder.Append((char)c);
+                            jsonBuilder.Append(c);
                         }
                         break;
                 }

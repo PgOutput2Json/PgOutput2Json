@@ -333,9 +333,9 @@ namespace PgOutput2Json
             {
                 _jsonBuilder.Append("\",");
                 _jsonBuilder.Append("\"_tbl\":\"");
-                _jsonBuilder.Append(relation.Namespace);
+                JsonUtils.EscapeJson(_jsonBuilder, relation.Namespace);
                 _jsonBuilder.Append('.');
-                _jsonBuilder.Append(relation.RelationName);
+                JsonUtils.EscapeJson(_jsonBuilder, relation.RelationName);
                 _jsonBuilder.Append('"');
             }
 
@@ -362,8 +362,6 @@ namespace PgOutput2Json
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
-                    StringBuilder? valueBuilder = null;
-
                     var isKeyColumn = false;
                     if (keyColumn != null)
                     {
@@ -396,10 +394,12 @@ namespace PgOutput2Json
                         {
                             // this is a hack to skip bytes (dispose does the trick)
                             // otherwise, npgsql throws exception
-                            using var _ = value.GetTextReader();
+                            await value.Get<string>(_cancellationTokenSource!.Token);
                         }
                         continue;
                     }
+
+                    StringBuilder? valueBuilder = null;
 
                     if (isKeyColumn)
                     {
@@ -411,7 +411,7 @@ namespace PgOutput2Json
                     }
 
                     _jsonBuilder.Append(",\"");
-                    _jsonBuilder.Append(col.ColumnName);
+                    JsonUtils.EscapeJson(_jsonBuilder, col.ColumnName);
                     _jsonBuilder.Append("\":");
 
                     if (value.IsDBNull)
@@ -423,25 +423,27 @@ namespace PgOutput2Json
                         var type = value.GetPostgresType();
                         var pgOid = (PgOid)type.OID;
 
-                        using var textReader = value.GetTextReader();
+                        // we know _cancellationTokenSource is not null here since it gets disposed on end of "start" loop
+                        var colValue = await value.Get<string>(_cancellationTokenSource!.Token);
+                        valueBuilder?.Append(colValue);
 
                         int hash;
 
                         if (pgOid.IsNumber())
                         {
-                            hash = JsonUtils.WriteNumber(_jsonBuilder, valueBuilder, textReader);
+                            hash = JsonUtils.WriteNumber(_jsonBuilder, colValue);
                         }
                         else if (pgOid.IsBoolean())
                         {
-                            hash = JsonUtils.WriteBoolean(_jsonBuilder, valueBuilder, textReader);
+                            hash = JsonUtils.WriteBoolean(_jsonBuilder, colValue);
                         }
                         else if (pgOid.IsByte())
                         {
-                            hash = JsonUtils.WriteByte(_jsonBuilder, valueBuilder, textReader);
+                            hash = JsonUtils.WriteByte(_jsonBuilder, colValue);
                         }
                         else
                         {
-                            hash = JsonUtils.WriteText(_jsonBuilder, valueBuilder, textReader);
+                            hash = JsonUtils.WriteText(_jsonBuilder, colValue);
                         }
 
                         if (isKeyColumn) finalHash ^= hash;
