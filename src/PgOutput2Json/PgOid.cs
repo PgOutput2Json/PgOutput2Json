@@ -43,7 +43,20 @@
         TIMETZOID = 1266,
         ZPBITOID = 1560,
         VARBITOID = 1562,
-        NUMERICOID = 1700
+        NUMERICOID = 1700,
+
+        A_BOOLOID = 1000,
+        A_BYTEAOID = 1001,
+        A_INT2OID = 1005,
+        A_INT4OID = 1007,
+        A_INT8OID = 1016,
+        A_OIDOID = 1028,
+        A_FLOAT4OID = 1021,
+        A_FLOAT8OID = 1022,
+        A_NUMERICOID = 1231,
+
+        A_BPCHAROID = 1014,
+        A_VARCHAROID = 1015
     }
 
     internal static class PgOidExtensions
@@ -68,5 +81,42 @@
         {
             return pgOid == PgOid.BYTEAOID;
         }
+
+        public static bool IsArrayOfNumber(this PgOid pgOid)
+        {
+            return pgOid == PgOid.A_INT2OID
+                || pgOid == PgOid.A_INT4OID
+                || pgOid == PgOid.A_INT8OID
+                || pgOid == PgOid.A_OIDOID
+                || pgOid == PgOid.A_FLOAT4OID
+                || pgOid == PgOid.A_FLOAT8OID
+                || pgOid == PgOid.A_NUMERICOID;
+        }
+
+        public static bool IsArrayOfText(this PgOid pgOid)
+        {
+            return pgOid == PgOid.A_BPCHAROID
+                || pgOid == PgOid.A_VARCHAROID;
+        }
+
+        public static bool IsArrayOfBoolean(this PgOid pgOid)
+        {
+            return pgOid == PgOid.A_BOOLOID;
+        }
+
+        public static bool IsArrayOfByte(this PgOid pgOid)
+        {
+            return pgOid == PgOid.A_BYTEAOID;
+        }
+
+        /*
+        public static bool IsArray(this PgOid pgOid)
+        {
+            return IsArrayOfBoolean(pgOid)
+                || IsArrayOfByte(pgOid)
+                || IsArrayOfNumber(pgOid)
+                || IsArrayOfString(pgOid);
+        }
+        */
     }
 }

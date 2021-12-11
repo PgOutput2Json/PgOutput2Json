@@ -335,9 +335,9 @@ namespace PgOutput2Json
             {
                 _jsonBuilder.Append(",");
                 _jsonBuilder.Append("\"_tbl\":\"");
-                JsonUtils.EscapeJson(_jsonBuilder, relation.Namespace);
+                JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
                 _jsonBuilder.Append('.');
-                JsonUtils.EscapeJson(_jsonBuilder, relation.RelationName);
+                JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
                 _jsonBuilder.Append('"');
             }
 
@@ -413,7 +413,7 @@ namespace PgOutput2Json
                     }
 
                     _jsonBuilder.Append(",\"");
-                    JsonUtils.EscapeJson(_jsonBuilder, col.ColumnName);
+                    JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
                     _jsonBuilder.Append("\":");
 
                     if (value.IsDBNull)
@@ -422,8 +422,7 @@ namespace PgOutput2Json
                     }
                     else if (value.Kind == TupleDataKind.TextValue)
                     {
-                        var type = value.GetPostgresType();
-                        var pgOid = (PgOid)type.OID;
+                        var pgOid = (PgOid)col.DataTypeId;
 
                         // we know _cancellationTokenSource is not null here since it gets disposed on end of "start" loop
                         var colValue = await value.Get<string>(_cancellationTokenSource!.Token);
@@ -443,7 +442,23 @@ namespace PgOutput2Json
                         {
                             hash = JsonUtils.WriteByte(_jsonBuilder, colValue);
                         }
-                        else
+                        else if (pgOid.IsArrayOfNumber())
+                        {
+                            hash = JsonUtils.WriteArrayOfNumber(_jsonBuilder, colValue);
+                        }
+                        else if (pgOid.IsArrayOfByte())
+                        {
+                            hash = JsonUtils.WriteArrayOfByte(_jsonBuilder, colValue);
+                        }
+                        else if (pgOid.IsArrayOfBoolean())
+                        {
+                            hash = JsonUtils.WriteArrayOfBoolean(_jsonBuilder, colValue);
+                        }
+                        else if (pgOid.IsArrayOfText())
+                        {
+                            hash = JsonUtils.WriteArrayOfText(_jsonBuilder, colValue);
+                        }
+                        else 
                         {
                             hash = JsonUtils.WriteText(_jsonBuilder, colValue);
                         }
