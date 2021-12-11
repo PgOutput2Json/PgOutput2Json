@@ -10,6 +10,7 @@ namespace PgOutput2Json
         private string _replicationSlotName = string.Empty;
         private string[]? _publicationNames;
         private Dictionary<string, KeyColumn> _keyColumns = new Dictionary<string, KeyColumn>();
+        private Dictionary<string, IReadOnlyList<string>> _columns = new Dictionary<string, IReadOnlyList<string>>();
         private IMessagePublisherFactory? _messagePublisherFactory;
         private int _batchSize = 100;
         private int _confirmTimeoutSec = 30;
@@ -40,15 +41,40 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithPgKeyColumn(string tableName, string keyColumn, int partitionsCount = 1)
+        public PgOutput2JsonBuilder WithPgKeyColumn(string tableName, params string[] keyColumns)
         {
-            _keyColumns[tableName] = new KeyColumn(partitionsCount, keyColumn);
+            WithPgKeyColumn(tableName, 1, keyColumns);
             return this;
         }
 
+        /// <summary>
+        /// Specifies a key column for a table. Values from this column are used to split the table rows
+        /// in partitions. The partitions can be used for routing keys when pushing to a message broker.
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="partitionsCount"></param>
+        /// <param name="columnNames"></param>
+        /// <returns></returns>
         public PgOutput2JsonBuilder WithPgKeyColumn(string tableName, int partitionsCount, params string[] columnNames)
         {
+            if (partitionsCount < 1) throw new ArgumentOutOfRangeException(nameof(partitionsCount));
+            if (columnNames == null) throw new ArgumentNullException(nameof(columnNames));
+            if (columnNames.Length < 1) throw new ArgumentOutOfRangeException(nameof(columnNames), "At least one column must be specified");
+
             _keyColumns[tableName] = new KeyColumn(partitionsCount, columnNames);
+            return this;
+        }
+
+        /// <summary>
+        /// Specifies which table columns to include in the JSON output. 
+        /// If a table is not specified at all, then all columns are included in the output.
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="columnNames"></param>
+        /// <returns></returns>
+        public PgOutput2JsonBuilder WithPgColumns(string tableName, params string[] columnNames)
+        {
+            _columns[tableName] = columnNames;
             return this;
         }
 
@@ -111,8 +137,12 @@ namespace PgOutput2Json
             if (_confirmTimeoutSec <= 0)
                 throw new ArgumentOutOfRangeException("Publishing ConfirmTimeoutSec must be greater than zero");
 
-            var options = new ReplicationListenerOptions(_connectionString, _replicationSlotName, _publicationNames, _partitionFilter);
-            options.KeyColumns = new Dictionary<string, KeyColumn>(_keyColumns);
+            var options = new ReplicationListenerOptions(_connectionString,
+                                                         _replicationSlotName,
+                                                         _publicationNames,
+                                                         _keyColumns,
+                                                         _columns,
+                                                         _partitionFilter);
 
             var listener = new ReplicationListener(options, _jsonOptions, _loggerFactory?.CreateLogger<ReplicationListener>());
 

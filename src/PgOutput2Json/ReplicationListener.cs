@@ -312,6 +312,8 @@ namespace PgOutput2Json
             _tableNameBuilder.Append(relation.Namespace);
             _tableNameBuilder.Append('.');
             _tableNameBuilder.Append(relation.RelationName);
+            
+            var tableName = _tableNameBuilder.ToString();
 
             _jsonBuilder.Clear();
             _jsonBuilder.Append("{\"_ct\":\"");
@@ -341,9 +343,14 @@ namespace PgOutput2Json
 
             int finalHash = 0x12345678;
 
-            if (!_options.KeyColumns.TryGetValue(_tableNameBuilder.ToString(), out var keyColumn))
+            if (!_options.KeyColumns.TryGetValue(tableName, out var keyColumn))
             {
                 keyColumn = null;
+            }
+
+            if (!_options.IncludedColumns.TryGetValue(tableName, out var includedCols))
+            {
+                includedCols = null;
             }
 
             var i = 0;
@@ -370,12 +377,35 @@ namespace PgOutput2Json
                         }
                     }
 
+                    var isIncluded = includedCols == null; // if not specified, included by default
+                    if (includedCols != null)
+                    {
+                        foreach (var c in includedCols)
+                        {
+                            if (c == col.ColumnName)
+                            {
+                                isIncluded = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!isIncluded && !isKeyColumn)
+                    {
+                        if (!value.IsDBNull)
+                        {
+                            // this is a hack to skip bytes (dispose does the trick)
+                            // otherwise, npgsql throws exception
+                            using var _ = value.GetTextReader();
+                        }
+                        continue;
+                    }
+
                     if (isKeyColumn)
                     {
                         valueBuilder = _keyColValueBuilder;
                         if (valueBuilder.Length > 0)
                         {
-                            // preparations for multiple key column support in the future
                             valueBuilder.Append('|');
                         }
                     }
