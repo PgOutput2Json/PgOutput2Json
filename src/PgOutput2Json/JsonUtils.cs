@@ -49,7 +49,7 @@ namespace PgOutput2Json
 
         internal static int WriteBoolean(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
         {
-            if (value == "t")
+            if (value.Length > 0 && value[0] == 't')
             {
                 jsonBuilder.Append("true");
                 return 't';
