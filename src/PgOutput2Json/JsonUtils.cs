@@ -141,8 +141,11 @@ namespace PgOutput2Json
 
                     if (c == '}' || c == ',')
                     {
-                        inValue = false;
-                        jsonBuilder.Append('\"');
+                        if (inValue)
+                        {
+                            inValue = false;
+                            jsonBuilder.Append('\"');
+                        }
                         jsonBuilder.Append(c == '}' ? ']' : c);
                         continue;
                     }
