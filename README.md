@@ -138,7 +138,29 @@ public class Worker : BackgroundService
 Run the code, and with a little luck, you should see JSON messages being pushed in the `my_queue` in RabbitMQ when you make a change in the tables specified in `my_publication`. The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
 
 ## 3. Working with permanent replication slots
-TODO (implemented, missing documentation)
+In the context of logical replication, a slot represents a stream of changes that can be replayed to a client in the order they were made on the origin server. Each slot streams a sequence of changes from a single database.
+
+To create a replication slot, call the `pg_create_logical_replication_slot` function, in the same database that holds the tables being tracked:
+```
+SELECT * FROM pg_create_logical_replication_slot('my_slot', 'pgoutput');
+```
+
+The first parameter is the name of the slot, **that must be unique across all databases in a PostgreSQL cluster**. Make sure you specify `pgoutput` as the second parameter - that specifies the correct logical decoding plugin. 
+
+The current position of each slot is persisted only at checkpoint, so in the case of a crash the slot may return to an earlier log sequence number (LSN), which will then cause recent changes to be sent again when the server restarts. **It is the responsibility of the receiving client to avoid the ill effects from handling the same message more than once**
+
+⚠️ Replication slots persist across crashes and know nothing about the state of their consumer(s). They will prevent removal of required resources even when there is no connection using them. This consumes storage because neither required WAL nor required rows from the system catalogs can be removed by VACUUM as long as they are required by a replication slot. In extreme cases this could cause the database to shut down to prevent transaction ID wraparound. **So if a slot is no longer required it should be dropped. To drop a replication slot, use: `SELECT * FROM pg_drop_replication_slot('my_slot');`**
+
+Once the replication slot is created, to use it, simply specify the name of the slot in the `PgOutput2JsonBuilder`:
+```
+        // ...
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()
+            .WithLoggerFactory(_loggerFactory)
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
+            .WithPgPublications("my_publication")
+	    .WithPgReplicationSlot("my_slot")      // <-- slot specified here
+	    //...
+```
 
 ## 4. Batching confirmations to RabbitMQ
 TODO (implemented, missing documentation)
