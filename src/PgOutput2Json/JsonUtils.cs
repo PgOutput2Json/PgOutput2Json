@@ -16,15 +16,22 @@ namespace PgOutput2Json
             return hash;
         }
 
-        internal static int WriteNumber(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
+        internal static int WriteNumber(StringBuilder jsonBuilder, string value)
+        {
+            return WriteNumber(jsonBuilder, value, 0, value.Length);
+        }
+
+        internal static int WriteNumber(StringBuilder jsonBuilder, string value, int start, int len)
         {
             // we may have to return to the original length in case of NaN, Infinity, -Infinity...
             var originalLength = jsonBuilder.Length;
 
             int hash = 0;
 
-            foreach (var c in value)
+            for (var i = start; i < start + len; i++)
             {
+                var c = value[i];
+
                 // allowed chars "0123456789+-eE."
                 if ((c >= '0' && c <= '9')
                      || c == '+'
@@ -47,9 +54,14 @@ namespace PgOutput2Json
             return hash;
         }
 
-        internal static int WriteBoolean(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
+        internal static int WriteBoolean(StringBuilder jsonBuilder, string value)
         {
-            if (value.Length > 0 && value[0] == 't')
+            return WriteBoolean(jsonBuilder, value, 0, value.Length);
+        }
+
+        internal static int WriteBoolean(StringBuilder jsonBuilder, string value, int start, int len)
+        {
+            if (value.Length > start && value[start] == 't')
             {
                 jsonBuilder.Append("true");
                 return 't';
@@ -59,14 +71,19 @@ namespace PgOutput2Json
             return 'f';
         }
 
-        internal static int WriteByte(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
+        internal static int WriteByte(StringBuilder jsonBuilder, string value)
+        {
+            return WriteByte(jsonBuilder, value, 0, value.Length);
+        }
+
+        internal static int WriteByte(StringBuilder jsonBuilder, string value, int start, int len)
         {
             jsonBuilder.Append('"');
 
             int hash = 0;
 
             /* string is "\x54617069727573", start after "\x" */
-            for (var i = 2; i < value.Length; i++)
+            for (var i = start + 2; i < start + len; i++)
             {
                 var c = value[i];
 
@@ -80,17 +97,17 @@ namespace PgOutput2Json
 
         internal static int WriteArrayOfNumber(StringBuilder jsonBuilder, string value)
         {
-            return WriteSimpleArray(jsonBuilder, value, (b, v, s, l) => WriteNumber(b, v.AsSpan(s, l)));
+            return WriteSimpleArray(jsonBuilder, value, WriteNumber);
         }
 
         internal static int WriteArrayOfByte(StringBuilder jsonBuilder, string value)
         {
-            return WriteSimpleArray(jsonBuilder, value, (b, v, s, l) => WriteByte(b, v.AsSpan(s, l)));
+            return WriteSimpleArray(jsonBuilder, value, WriteByte);
         }
 
         internal static int WriteArrayOfBoolean(StringBuilder jsonBuilder, string value)
         {
-            return WriteSimpleArray(jsonBuilder, value, (b, v, s, l) => WriteBoolean(b, v.AsSpan(s, l)));
+            return WriteSimpleArray(jsonBuilder, value, WriteBoolean);
         }
 
         internal static int WriteArrayOfText(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
