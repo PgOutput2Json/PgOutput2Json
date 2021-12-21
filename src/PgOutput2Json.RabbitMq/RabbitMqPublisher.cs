@@ -22,8 +22,7 @@ namespace PgOutput2Json.RabbitMq
                 RequestedHeartbeat = TimeSpan.FromSeconds(60)
             };
 
-            _hostNames = options.HostNames;
-            _exchangeName = options.ExchangeName;
+            _options = options;
             _logger = logger;
         }
 
@@ -33,12 +32,17 @@ namespace PgOutput2Json.RabbitMq
 
             SafeLogDebug(json);
 
+            if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
+            {
+                persistent = _options.UsePersistentMessagesByDefault;
+            }
+
             _basicProperties!.Type = tableName;
-            _basicProperties.Persistent = true;
+            _basicProperties.Persistent = persistent;
 
             var body = Encoding.UTF8.GetBytes(json);
 
-            _model!.BasicPublish(_exchangeName, tableName + "." + partition, _basicProperties, body);
+            _model!.BasicPublish(_options.ExchangeName, tableName + "." + partition, _basicProperties, body);
         }
 
         public void WaitForConfirmsOrDie(TimeSpan timeout)
@@ -72,7 +76,7 @@ namespace PgOutput2Json.RabbitMq
 
             try
             {
-                _connection = _connectionFactory.CreateConnection(_hostNames);
+                _connection = _connectionFactory.CreateConnection(_options.HostNames);
                 _connection.CallbackException += ConnectionOnCallbackException;
                 _connection.ConnectionBlocked += ConnectionOnConnectionBlocked;
                 _connection.ConnectionUnblocked += ConnectionOnConnectionUnblocked;
@@ -184,8 +188,7 @@ namespace PgOutput2Json.RabbitMq
         private IModel? _model;
         private IBasicProperties? _basicProperties;
 
-        private readonly string[] _hostNames;
-        private readonly string _exchangeName;
+        private readonly RabbitMqOptions _options;
         private readonly ILogger<RabbitMqPublisher>? _logger;
         private readonly ConnectionFactory _connectionFactory;
     }
