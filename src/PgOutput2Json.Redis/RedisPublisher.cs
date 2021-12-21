@@ -26,7 +26,7 @@ namespace PgOutput2Json.Redis
 
             try
             {
-                var task = _redis!.GetSubscriber().PublishAsync(tableName, json);
+                var task = _redis!.GetSubscriber().PublishAsync(tableName + "." + partition, json);
                 _publishedTasks.Add(task);
             }
             catch 
@@ -43,9 +43,10 @@ namespace PgOutput2Json.Redis
             try
             {
                 Task.WaitAll(_publishedTasks.ToArray());
-                DisposeTasks();
 
                 SafeLogInfo($"{_publishedTasks.Count} async Redis operations completed");
+
+                DisposeTasks();
             }
             catch
             {
