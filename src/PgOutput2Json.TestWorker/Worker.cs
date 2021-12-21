@@ -1,4 +1,5 @@
 using PgOutput2Json.RabbitMq;
+using PgOutput2Json.Redis;
 
 namespace PgOutput2Json.TestWorker
 {
@@ -25,6 +26,7 @@ namespace PgOutput2Json.TestWorker
                 .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
                 .WithPgPublications("pub_test")
                 .WithPgKeyColumn("public.tab_test", 5, "id")
+                .WithBatchSize(250)
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;
@@ -37,7 +39,14 @@ namespace PgOutput2Json.TestWorker
                 {
                     Console.WriteLine($"{table}: {json}");
                 })
-                //.UseRabbitMq()
+                //.UseRabbitMq(options =>
+                //{
+                //    options.UsePersistentMessagesByDefault = false;
+                //})
+                .UseRedis(options =>
+                {
+                    options.EndPoints.Add("localhost:6379");
+                })
                 .Build();
 
             await pgOutput2Json.Start(stoppingToken);

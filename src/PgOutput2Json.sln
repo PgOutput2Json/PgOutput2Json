@@ -9,7 +9,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.RabbitMq", "P
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.TestWorker", "PgOutput2Json.TestWorker\PgOutput2Json.TestWorker.csproj", "{284658BA-EF68-4AF8-AF37-7DFDF5EB339C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.Tests", "PgOutput2Json.Tests\PgOutput2Json.Tests.csproj", "{5D013757-D924-4C18-B9FA-84670D0CFE85}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.Tests", "PgOutput2Json.Tests\PgOutput2Json.Tests.csproj", "{5D013757-D924-4C18-B9FA-84670D0CFE85}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.Redis", "PgOutput2Json.Redis\PgOutput2Json.Redis.csproj", "{2B6B330F-101B-4F63-9590-F10D2249491A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -33,6 +35,10 @@ Global
 		{5D013757-D924-4C18-B9FA-84670D0CFE85}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5D013757-D924-4C18-B9FA-84670D0CFE85}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5D013757-D924-4C18-B9FA-84670D0CFE85}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2B6B330F-101B-4F63-9590-F10D2249491A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2B6B330F-101B-4F63-9590-F10D2249491A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2B6B330F-101B-4F63-9590-F10D2249491A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2B6B330F-101B-4F63-9590-F10D2249491A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

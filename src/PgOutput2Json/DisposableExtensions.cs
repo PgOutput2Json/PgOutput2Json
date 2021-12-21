@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,29 @@ namespace PgOutput2Json
                 }
                 catch
                 {
+                }
+            }
+        }
+
+        public static void TryDispose(this IEnumerable<IDisposable>? disposables, ILogger? logger)
+        {
+            if (disposables == null) return;
+
+            foreach (var disposable in disposables)
+            {
+                try
+                {
+                    disposable?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        logger?.LogError(ex, "Error disposing a disposable object");
+                    }
+                    catch
+                    {
+                    }
                 }
             }
         }

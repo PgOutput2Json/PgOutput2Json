@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Redis\PgOutput2Json.Redis.csproj" />
   </ItemGroup>
 
   <ItemGroup>
