@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net6.0;netstandard2.1</TargetFrameworks>
+    <TargetFrameworks>net7.0;netstandard2.1</TargetFrameworks>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
 	<Version>0.1.10</Version>
@@ -34,7 +34,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.0" />
-    <PackageReference Include="Npgsql" Version="6.0.1" />
+    <PackageReference Include="Npgsql" Version="7.0.1" />
   </ItemGroup>
 
 </Project>
