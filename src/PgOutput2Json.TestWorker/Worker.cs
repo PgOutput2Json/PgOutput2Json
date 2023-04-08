@@ -5,27 +5,41 @@ namespace PgOutput2Json.TestWorker
 {
     public class Worker : BackgroundService
     {
+        private class PartitionInfo
+        {
+            public string? Table { get; set; }
+            public int? PartitionCount { get; set; }
+            public string[]? Columns { get; set; }
+        };
+
         private readonly ILoggerFactory _loggerFactory;
 
         private readonly int _batchSize;
         private readonly int _filterFrom;
         private readonly int _filterTo;
+        private readonly string[] _publicationNames;
+        private readonly string? _connectionString;
+        private readonly PartitionInfo[] _partitions;
 
         public Worker(ILoggerFactory loggerFactory, IConfiguration configuration)
         {
             _loggerFactory = loggerFactory;
-            _batchSize = configuration.GetValue<int>("AppSettings:BatchSize");
-            _filterFrom = configuration.GetValue<int>("AppSettings:PartitionFilter:FromInclusive");
-            _filterTo = configuration.GetValue<int>("AppSettings:PartitionFilter:ToExclusive");
+            _connectionString = configuration.GetConnectionString("PublicationDatabase");
+            _publicationNames = configuration.GetSection("AppSettings:PublicationNames").Get<string[]>() ?? Array.Empty<string>();
+            _batchSize = configuration.GetSection("AppSettings:BatchSize").Get<int>();
+            _filterFrom = configuration.GetSection("AppSettings:PartitionFilter:FromInclusive").Get<int>();
+            _filterTo = configuration.GetSection("AppSettings:PartitionFilter:ToExclusive").Get<int>();
+            _partitions = configuration.GetSection("AppSettings:Partitions").Get<PartitionInfo[]>() ?? Array.Empty<PartitionInfo>();
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var pgOutput2Json = PgOutput2JsonBuilder.Create()
+            if (_connectionString == null) throw new Exception("Missing connection string");
+
+            var builder = PgOutput2JsonBuilder.Create()
                 .WithLoggerFactory(_loggerFactory)
-                .WithPgConnectionString("server=localhost;database=repl_test_db;username=replicator;password=replicator")
-                .WithPgPublications("pub_test")
-                .WithPgKeyColumn("public.tab_test", 5, "id")
+                .WithPgConnectionString(_connectionString)
+                .WithPgPublications(_publicationNames)
                 .WithBatchSize(250)
                 .WithJsonOptions(options =>
                 {
@@ -43,11 +57,30 @@ namespace PgOutput2Json.TestWorker
                 //{
                 //    options.UsePersistentMessagesByDefault = false;
                 //})
-                .UseRedis(options =>
+                //.UseRedis(options =>
+                //{
+                //    options.EndPoints.Add("localhost:6379");
+                //})
+                ;
+
+            foreach (var partition in _partitions ?? Array.Empty<PartitionInfo>())
+            {
+                if (string.IsNullOrEmpty(partition.Table) || partition.Columns == null || partition.Columns.Length == 0)
                 {
-                    options.EndPoints.Add("localhost:6379");
-                })
-                .Build();
+                    throw new Exception("Invalid partition definition - missing table name or columns");
+                }
+
+                if (partition.PartitionCount.HasValue)
+                {
+                    builder.WithPgKeyColumn(partition.Table, partition.PartitionCount.Value, partition.Columns);
+                }
+                else
+                {
+                    builder.WithPgKeyColumn(partition.Table, partition.Columns);
+                }
+            }
+
+            using var pgOutput2Json = builder.Build();
 
             await pgOutput2Json.Start(stoppingToken);
         }
