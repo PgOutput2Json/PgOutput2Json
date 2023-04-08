@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <PackageReference Include="PgOutput2Json" Version="0.1.10" />
+    <PackageReference Include="PgOutput2Json" Version="0.2.0" />
   </ItemGroup>
 
   <ItemGroup>
