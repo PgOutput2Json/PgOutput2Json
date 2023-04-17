@@ -3,6 +3,14 @@ using PgOutput2Json.Redis;
 
 namespace PgOutput2Json.TestWorker
 {
+    /// <summary>
+    /// For this code to work it is expected that:
+    /// - the PostgreSQL cluster is running with wal_level = logical
+    /// - the connection string in the appsettings.json points to an existing PostgreSQL database, with the correct username and password
+    /// - a publication is created for the tables that are to be tracked, and the name of the publication matches the one in the appsettings.json
+    /// 
+    /// For more detailed information please refer to the readme file at https://github.com/PgOutput2Json/PgOutput2Json
+    /// </summary>
     public class Worker : BackgroundService
     {
         private class PartitionInfo
