@@ -1,6 +1,3 @@
-using PgOutput2Json.RabbitMq;
-using PgOutput2Json.Redis;
-
 namespace PgOutput2Json.TestWorker
 {
     /// <summary>
