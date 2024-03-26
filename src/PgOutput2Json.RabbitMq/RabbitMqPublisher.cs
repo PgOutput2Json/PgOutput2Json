@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -8,6 +10,8 @@ namespace PgOutput2Json.RabbitMq
 {
     public class RabbitMqPublisher: IMessagePublisher
     {
+        private int _batchCount = 0;
+
         public RabbitMqPublisher(RabbitMqOptions options, ILogger<RabbitMqPublisher>? logger = null)
         {
             _connectionFactory = new ConnectionFactory
@@ -26,31 +30,47 @@ namespace PgOutput2Json.RabbitMq
             _logger = logger;
         }
 
-        public void Publish(string json, string tableName, string keyColumnValue, int partition)
+        public bool Publish(string json, string tableName, string keyColumnValue, int partition)
         {
             EnsureModelExists();
 
-            SafeLogDebug(json);
-
-            if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
+            try
             {
-                persistent = _options.UsePersistentMessagesByDefault;
+                SafeLogDebug(json);
+
+                if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
+                {
+                    persistent = _options.UsePersistentMessagesByDefault;
+                }
+
+                _basicProperties!.Type = tableName;
+                _basicProperties.Persistent = persistent;
+
+                var body = Encoding.UTF8.GetBytes(json);
+
+                _model!.BasicPublish(_options.ExchangeName, tableName + "." + partition, _basicProperties, body);
+
+                if (++_batchCount >= 100)
+                {
+                    ForceConfirm();
+                    return true;
+                }
+
+                return false;
             }
-
-            _basicProperties!.Type = tableName;
-            _basicProperties.Persistent = persistent;
-
-            var body = Encoding.UTF8.GetBytes(json);
-
-            _model!.BasicPublish(_options.ExchangeName, tableName + "." + partition, _basicProperties, body);
+            catch
+            {
+                CloseConnection();
+                throw;
+            }
         }
 
-        public void WaitForConfirmsOrDie(TimeSpan timeout)
+        public void ForceConfirm()
         {
-            if (_model == null) throw new InvalidOperationException("Model is disposed");
-            _model.WaitForConfirmsOrDie(timeout);
+            EnsureModelExists();
 
-            SafeLogInfo("Confirmed RabbitMQ");
+            _model!.WaitForConfirmsOrDie(TimeSpan.FromSeconds(20));
+            _batchCount = 0;
         }
 
         public virtual void Dispose()

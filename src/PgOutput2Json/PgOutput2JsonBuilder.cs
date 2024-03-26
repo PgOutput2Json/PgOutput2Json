@@ -144,11 +144,9 @@ namespace PgOutput2Json
                                                          _columns,
                                                          _partitionFilter);
 
-            var listener = new ReplicationListener(options, _jsonOptions, _loggerFactory?.CreateLogger<ReplicationListener>());
+            var listener = new ReplicationListener(_messagePublisherFactory, options, _jsonOptions, _loggerFactory);
 
-            var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_loggerFactory);
-
-            var pgOutput2Json = new PgOutput2Json(listener, messagePublisher, _batchSize, _confirmTimeoutSec);
+            var pgOutput2Json = new PgOutput2Json(listener, _loggerFactory);
 
             return pgOutput2Json;
         }

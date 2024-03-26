@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using System;
 
 namespace PgOutput2Json
 {
@@ -31,14 +30,16 @@ namespace PgOutput2Json
             _logger = logger;
         }
 
-        public void Publish(string json, string tableName, string keyColumnValue, int partition)
+        public bool Publish(string json, string tableName, string keyColumnValue, int partition)
         {
             _logger?.LogDebug("Message for {Table}: {Json}", tableName, json);
 
             _messageHandler.Invoke(json, tableName, keyColumnValue, partition);
+
+            return true;
         }
 
-        public void WaitForConfirmsOrDie(TimeSpan timeout)
+        public void ForceConfirm()
         {
         }
 
