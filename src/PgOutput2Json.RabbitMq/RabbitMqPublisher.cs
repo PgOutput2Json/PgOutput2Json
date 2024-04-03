@@ -34,8 +34,6 @@ namespace PgOutput2Json.RabbitMq
 
             try
             {
-                SafeLogDebug(json);
-
                 if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
                 {
                     persistent = _options.UsePersistentMessagesByDefault;
@@ -44,9 +42,13 @@ namespace PgOutput2Json.RabbitMq
                 _basicProperties!.Type = tableName;
                 _basicProperties.Persistent = persistent;
 
+                var routingKey = tableName + "." + partition;
+
+                SafeLogDebug($"Publishing to Exchange={_options.ExchangeName}, RoutingKey={routingKey}, Body={json}");
+
                 var body = Encoding.UTF8.GetBytes(json);
 
-                _model!.BasicPublish(_options.ExchangeName, tableName + "." + partition, _basicProperties, body);
+                _model!.BasicPublish(_options.ExchangeName, routingKey, _basicProperties, body);
 
                 if (++_batchCount >= 100)
                 {
