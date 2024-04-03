@@ -20,14 +20,25 @@ namespace PgOutput2Json.Redis
             CloseConnection();
         }
 
-        public void Publish(string json, string tableName, string keyColumnValue, int partition)
+        public bool Publish(string json, string tableName, string keyColumnValue, int partition)
         {
             EnsureConnection();
 
             try
             {
-                var task = _redis!.GetSubscriber().PublishAsync(tableName + "." + partition, json);
+                var channel = RedisChannel.Literal($"{tableName}.{partition}");
+
+                var task = _redis!.GetSubscriber().PublishAsync(channel, json);
+
                 _publishedTasks.Add(task);
+
+                if (_publishedTasks.Count >= 100)
+                {
+                    ForceConfirm();
+                    return true;
+                }
+
+                return false;
             }
             catch 
             {
@@ -36,13 +47,13 @@ namespace PgOutput2Json.Redis
             }
         }
 
-        public void WaitForConfirmsOrDie(TimeSpan timeout)
+        public void ForceConfirm()
         {
             if (_publishedTasks.Count == 0) return;
 
             try
             {
-                Task.WaitAll(_publishedTasks.ToArray());
+                Task.WaitAll(_publishedTasks.ToArray(), TimeSpan.FromSeconds(20));
 
                 SafeLogInfo($"{_publishedTasks.Count} async Redis operations completed");
 
