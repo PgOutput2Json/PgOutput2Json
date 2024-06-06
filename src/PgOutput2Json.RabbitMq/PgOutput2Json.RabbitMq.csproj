@@ -4,7 +4,7 @@
     <TargetFrameworks>net6.0;net7.0;net8.0;netstandard2.1;</TargetFrameworks>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.8.0</Version>
+    <Version>0.8.1</Version>
     <RepositoryUrl>https://github.com/PgOutput2Json/PgOutput2Json</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Authors>PgOutput2Json</Authors>
