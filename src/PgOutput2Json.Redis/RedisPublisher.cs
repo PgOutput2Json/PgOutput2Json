@@ -64,8 +64,6 @@ namespace PgOutput2Json.Redis
 
             await _redis.TryDisposeAsync(_logger)
                 .ConfigureAwait(false);
-
-            _redis = null;
         }
 
         private ConnectionMultiplexer? _redis;
