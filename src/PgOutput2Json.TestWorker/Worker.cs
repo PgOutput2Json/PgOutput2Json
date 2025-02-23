@@ -61,10 +61,10 @@ namespace PgOutput2Json.TestWorker
                 })
                 //.UseRabbitMq(options =>
                 //{
-                //    options.HostNames = new[] { "localhost" };
-                //    options.Username = "guest";
-                //    options.Password = "guest";
-                //    options.VirtualHost = "/";
+                //    options.HostNames.Add("localhost");
+                //    options.ConnectionFactory.UserName = "guest";
+                //    options.ConnectionFactory.Password = "guest";
+                //    options.ConnectionFactory.VirtualHost = "/";
                 //    options.ExchangeName = "my_exchange";
                 //    options.UsePersistentMessagesByDefault = false;
 

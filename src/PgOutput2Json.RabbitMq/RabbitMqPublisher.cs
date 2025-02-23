@@ -11,20 +11,8 @@ namespace PgOutput2Json.RabbitMq
 {
     public class RabbitMqPublisher: IMessagePublisher
     {
-        public RabbitMqPublisher(RabbitMqOptions options, ILogger<RabbitMqPublisher>? logger = null)
+        public RabbitMqPublisher(RabbitMqPublisherOptions options, ILogger<RabbitMqPublisher>? logger = null)
         {
-            _connectionFactory = new ConnectionFactory
-            {
-                HostName = options.HostNames[0],
-                Port = options.Port,
-                UserName = options.Username,
-                Password = options.Password,
-                VirtualHost = options.VirtualHost,
-                AutomaticRecoveryEnabled = true,
-                TopologyRecoveryEnabled = true,
-                RequestedHeartbeat = TimeSpan.FromSeconds(60)
-            };
-
             _options = options;
             _logger = logger;
         }
@@ -34,7 +22,8 @@ namespace PgOutput2Json.RabbitMq
             var channel = await EnsureConnection(token)
                 .ConfigureAwait(false);
 
-            if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
+            if (_options.PersistencyConfigurationByTable.Count == 0 
+                || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
             {
                 persistent = _options.UsePersistentMessagesByDefault;
             }
@@ -91,7 +80,7 @@ namespace PgOutput2Json.RabbitMq
 
             _logger.SafeLogInfo("Connecting to RabbitMQ");
 
-            _connection = await _connectionFactory.CreateConnectionAsync(_options.HostNames, token)
+            _connection = await _options.ConnectionFactory.CreateConnectionAsync(_options.HostNames, token)
                 .ConfigureAwait(false);
 
             _connection.CallbackExceptionAsync += ConnectionOnCallbackException;
@@ -154,9 +143,8 @@ namespace PgOutput2Json.RabbitMq
         private IConnection? _connection;
         private IChannel? _channel;
 
-        private readonly RabbitMqOptions _options;
+        private readonly RabbitMqPublisherOptions _options;
         private readonly ILogger<RabbitMqPublisher>? _logger;
-        private readonly ConnectionFactory _connectionFactory;
 
         private readonly List<ValueTask> _pendingTasks = new List<ValueTask>();
     }

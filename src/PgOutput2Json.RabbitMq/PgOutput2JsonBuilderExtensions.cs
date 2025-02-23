@@ -5,11 +5,16 @@ namespace PgOutput2Json.RabbitMq
     public static class PgOutput2JsonBuilderExtensions
     {
         public static PgOutput2JsonBuilder UseRabbitMq(this PgOutput2JsonBuilder builder, 
-            Action<RabbitMqOptions>? configureAction = null)
+            Action<RabbitMqPublisherOptions>? configureAction = null)
         {
-            var options = new RabbitMqOptions();
+            var options = new RabbitMqPublisherOptions();
 
             configureAction?.Invoke(options);
+
+            if (options.HostNames.Count == 0)
+            {
+                options.HostNames.Add(options.ConnectionFactory.HostName);
+            }
 
             builder.WithMessagePublisherFactory(new RabbitMqPublisherFactory(options));
 

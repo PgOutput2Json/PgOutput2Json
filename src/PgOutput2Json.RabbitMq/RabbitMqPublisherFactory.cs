@@ -4,9 +4,9 @@ namespace PgOutput2Json.RabbitMq
 {
     internal class RabbitMqPublisherFactory : IMessagePublisherFactory
     {
-        private readonly RabbitMqOptions _options;
+        private readonly RabbitMqPublisherOptions _options;
 
-        public RabbitMqPublisherFactory(RabbitMqOptions options)
+        public RabbitMqPublisherFactory(RabbitMqPublisherOptions options)
         {
             _options = options;
         }
