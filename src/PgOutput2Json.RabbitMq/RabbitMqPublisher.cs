@@ -31,7 +31,7 @@ namespace PgOutput2Json.RabbitMq
 
         public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var channel = await ConnectAsync(token)
+            var channel = await EnsureConnection(token)
                 .ConfigureAwait(false);
 
             if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
@@ -65,17 +65,27 @@ namespace PgOutput2Json.RabbitMq
         {
             _pendingTasks.Clear();
 
-            _channel.TryDispose(_logger);
-            _channel = null;
-
-            await _connection.TryCloseAsync(_logger)
+            await _channel.TryDisposeAsync(_logger)
                 .ConfigureAwait(false);
 
-            _connection.TryDispose(_logger);
-            _connection = null;
+            if (_connection != null)
+            {
+                try
+                {
+                    await _connection.CloseAsync()
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.SafeLogError(ex, "Error closing RabbitMq connection");
+                }
+            }
+
+            await _connection.TryDisposeAsync(_logger)
+                .ConfigureAwait(false);
         }
 
-        private async ValueTask<IChannel> ConnectAsync(CancellationToken token)
+        private async ValueTask<IChannel> EnsureConnection(CancellationToken token)
         {
             if (_channel != null) return _channel;
 
@@ -91,11 +101,11 @@ namespace PgOutput2Json.RabbitMq
 
             _logger.SafeLogInfo("Connected to RabbitMQ");
 
-            _channel = await _connection!.CreateChannelAsync(new CreateChannelOptions(
+            _channel = await _connection.CreateChannelAsync(new CreateChannelOptions(
                 publisherConfirmationsEnabled: true,
                 publisherConfirmationTrackingEnabled: true,
                 outstandingPublisherConfirmationsRateLimiter: new ThrottlingRateLimiter(_options.BatchSize * 2)
-            ))
+            ), token)
                 .ConfigureAwait(false);
 
             return _channel;
