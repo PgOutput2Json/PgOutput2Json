@@ -18,8 +18,6 @@ namespace PgOutput2Json.RabbitMq
             Password = "guest",
             VirtualHost = "/",
             Port = AmqpTcpEndpoint.UseDefaultPort,
-            AutomaticRecoveryEnabled = true,
-            TopologyRecoveryEnabled = true,
             RequestedHeartbeat = TimeSpan.FromSeconds(60),
         };
 

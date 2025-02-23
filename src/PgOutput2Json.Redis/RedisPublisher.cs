@@ -22,7 +22,7 @@ namespace PgOutput2Json.Redis
 
             var channel = RedisChannel.Literal($"{tableName}.{partition}");
 
-            var task = _redis!.GetSubscriber().PublishAsync(channel, json);
+            var task = _redis.GetSubscriber().PublishAsync(channel, json);
 
             _publishedTasks.Add(task);
 
