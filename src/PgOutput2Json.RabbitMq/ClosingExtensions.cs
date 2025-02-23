@@ -4,7 +4,7 @@ using RabbitMQ.Client;
 
 namespace PgOutput2Json.RabbitMq
 {
-    public static class ClosingExtensions
+    static class ClosingExtensions
     {
         public static void TryClose(this IConnection? connection, ILogger? logger)
         {
