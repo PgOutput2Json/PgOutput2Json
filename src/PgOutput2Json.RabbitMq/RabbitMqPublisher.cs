@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -8,8 +11,6 @@ namespace PgOutput2Json.RabbitMq
 {
     public class RabbitMqPublisher: IMessagePublisher
     {
-        private int _batchCount = 0;
-
         public RabbitMqPublisher(RabbitMqOptions options, ILogger<RabbitMqPublisher>? logger = null)
         {
             _connectionFactory = new ConnectionFactory
@@ -28,188 +29,125 @@ namespace PgOutput2Json.RabbitMq
             _logger = logger;
         }
 
-        public bool Publish(string json, string tableName, string keyColumnValue, int partition)
+        public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            EnsureModelExists();
+            var channel = await ConnectAsync(token)
+                .ConfigureAwait(false);
 
-            try
+            if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
             {
-                if (_options.HostNames.Length == 0 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
-                {
-                    persistent = _options.UsePersistentMessagesByDefault;
-                }
-
-                _basicProperties!.Type = tableName;
-                _basicProperties.Persistent = persistent;
-
-                var routingKey = tableName + "." + partition;
-
-                SafeLogDebug($"Publishing to Exchange={_options.ExchangeName}, RoutingKey={routingKey}, Body={json}");
-
-                var body = Encoding.UTF8.GetBytes(json);
-
-                _model!.BasicPublish(_options.ExchangeName, routingKey, _basicProperties, body);
-
-                if (++_batchCount >= 100)
-                {
-                    ForceConfirm();
-                    return true;
-                }
-
-                return false;
+                persistent = _options.UsePersistentMessagesByDefault;
             }
-            catch
-            {
-                CloseConnection();
-                throw;
-            }
+
+            var routingKey = tableName + "." + partition;
+
+            _logger.SafeLogDebug($"Publishing to Exchange={_options.ExchangeName}, RoutingKey={routingKey}, Body={json}");
+
+            var body = Encoding.UTF8.GetBytes(json);
+
+            var basicProperties = new BasicProperties { Type = tableName, Persistent = persistent };
+
+            var task = channel.BasicPublishAsync(_options.ExchangeName, routingKey, false, basicProperties, body, token);
+
+            _pendingTasks.Add(task);
+
+            return await MaybeAwaitPublishes()
+                .ConfigureAwait(false);
         }
 
-        public void ForceConfirm()
+        public async Task ForceConfirmAsync(CancellationToken token)
         {
-            EnsureModelExists();
-
-            _model!.WaitForConfirmsOrDie(TimeSpan.FromSeconds(20));
-            _batchCount = 0;
+            await MaybeAwaitPublishes(force: true)
+                .ConfigureAwait(false);
         }
 
-        public virtual void Dispose()
+        public virtual async ValueTask DisposeAsync()
         {
-            CloseConnection();
-        }
+            _pendingTasks.Clear();
 
-        private void CloseConnection()
-        {
-            _model.TryDispose(_logger);
-            _model = null;
+            _channel.TryDispose(_logger);
+            _channel = null;
 
-            _connection.TryClose(_logger);
+            await _connection.TryCloseAsync(_logger)
+                .ConfigureAwait(false);
+
             _connection.TryDispose(_logger);
             _connection = null;
         }
 
-        private void EnsureConnectionExists()
+        private async ValueTask<IChannel> ConnectAsync(CancellationToken token)
         {
-            if (_connection != null) return;
+            if (_channel != null) return _channel;
 
-            SafeLogInfo("Connecting to RabbitMQ");
+            _logger.SafeLogInfo("Connecting to RabbitMQ");
 
-            try
-            {
-                _connection = _connectionFactory.CreateConnection(_options.HostNames);
-                _connection.CallbackException += ConnectionOnCallbackException;
-                _connection.ConnectionBlocked += ConnectionOnConnectionBlocked;
-                _connection.ConnectionUnblocked += ConnectionOnConnectionUnblocked;
-                _connection.ConnectionShutdown += ConnectionOnConnectionShutdown;
-            }
-            catch (Exception ex)
-            {
-                SafeLogError(ex, "Could not connect to RabbitMQ");
-                throw;
-            }
+            _connection = await _connectionFactory.CreateConnectionAsync(_options.HostNames, token)
+                .ConfigureAwait(false);
 
-            SafeLogInfo("Connected to RabbitMQ");
+            _connection.CallbackExceptionAsync += ConnectionOnCallbackException;
+            _connection.ConnectionBlockedAsync += ConnectionOnConnectionBlocked;
+            _connection.ConnectionUnblockedAsync += ConnectionOnConnectionUnblocked;
+            _connection.ConnectionShutdownAsync += ConnectionOnConnectionShutdown;
+
+            _logger.SafeLogInfo("Connected to RabbitMQ");
+
+            _channel = await _connection!.CreateChannelAsync(new CreateChannelOptions(
+                publisherConfirmationsEnabled: true,
+                publisherConfirmationTrackingEnabled: true,
+                outstandingPublisherConfirmationsRateLimiter: new ThrottlingRateLimiter(_options.BatchSize * 2)
+            ))
+                .ConfigureAwait(false);
+
+            return _channel;
         }
 
-        private void EnsureModelExists()
+        private async ValueTask<bool> MaybeAwaitPublishes(bool force = false)
         {
-            if (_model != null)
+            if (!force && _pendingTasks.Count < _options.BatchSize)
             {
-                if (_model.IsOpen)
-                {
-                    return;
-                }
-
-                _model.TryDispose(_logger);
-                _model = null;
+                return false;
             }
 
-            try
+            foreach (var pt in _pendingTasks)
             {
-                EnsureConnectionExists();
-
-                _model = _connection!.CreateModel();
-                _model.ConfirmSelect(); // enable publisher acknowledgments
-
-                _basicProperties = _model.CreateBasicProperties();
+                await pt.ConfigureAwait(false);
             }
-            catch
-            {
-                _model.TryDispose(_logger);
-                _model = null;
 
-                throw;
-            }
+            _pendingTasks.Clear();
+            return true;
         }
 
-        private void SafeLogDebug(string message)
+        private Task ConnectionOnCallbackException(object? sender, CallbackExceptionEventArgs args)
         {
-            try
-            {
-                if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
-                {
-                    _logger.LogDebug(message);
-                }
-            }
-            catch
-            {
-            }
+            _logger.SafeLogError(args.Exception, "Callback error");
+            return Task.CompletedTask;
         }
 
-        private void SafeLogInfo(string message)
+        private Task ConnectionOnConnectionShutdown(object? sender, ShutdownEventArgs args)
         {
-            try
-            {
-                if (_logger != null && _logger.IsEnabled(LogLevel.Information))
-                {
-                    _logger.LogInformation(message);
-                }
-            }
-            catch
-            {
-            }
+            _logger.SafeLogInfo($"Disconnected from RabbitMQ ({args.ReplyText})");
+            return Task.CompletedTask;
         }
 
-        private void SafeLogError(Exception ex, string message)
+        private Task ConnectionOnConnectionUnblocked(object? sender, AsyncEventArgs args)
         {
-            try
-            {
-                if (_logger != null && _logger.IsEnabled(LogLevel.Error))
-                {
-                    _logger.LogError(ex, message);
-                }
-            }
-            catch
-            {
-            }
+            _logger.SafeLogInfo($"Connection unblocked");
+            return Task.CompletedTask;
         }
 
-        private void ConnectionOnCallbackException(object? sender, CallbackExceptionEventArgs args)
+        private Task ConnectionOnConnectionBlocked(object? sender, ConnectionBlockedEventArgs args)
         {
-            SafeLogError(args.Exception, "Callback error");
-        }
-
-        private void ConnectionOnConnectionShutdown(object? sender, ShutdownEventArgs args)
-        {
-            SafeLogInfo($"Disconnected from RabbitMQ ({args.ReplyText})");
-        }
-
-        private void ConnectionOnConnectionUnblocked(object? sender, EventArgs args)
-        {
-            SafeLogInfo($"Connection unblocked");
-        }
-
-        private void ConnectionOnConnectionBlocked(object? sender, ConnectionBlockedEventArgs args)
-        {
-            SafeLogInfo($"Connection blocked");
+            _logger.SafeLogInfo($"Connection blocked");
+            return Task.CompletedTask;
         }
 
         private IConnection? _connection;
-        private IModel? _model;
-        private IBasicProperties? _basicProperties;
+        private IChannel? _channel;
 
         private readonly RabbitMqOptions _options;
         private readonly ILogger<RabbitMqPublisher>? _logger;
         private readonly ConnectionFactory _connectionFactory;
+
+        private readonly List<ValueTask> _pendingTasks = new List<ValueTask>();
     }
 }

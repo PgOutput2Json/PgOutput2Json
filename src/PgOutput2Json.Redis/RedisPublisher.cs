@@ -1,5 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -15,78 +15,41 @@ namespace PgOutput2Json.Redis
             _logger = logger;
         }
 
-        public void Dispose()
+        public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            CloseConnection();
+            _redis ??= await ConnectionMultiplexer.ConnectAsync(_options)
+                .ConfigureAwait(false);
+
+            var channel = RedisChannel.Literal($"{tableName}.{partition}");
+
+            var task = _redis!.GetSubscriber().PublishAsync(channel, json);
+
+            _publishedTasks.Add(task);
+
+            return await MaybeAwaitPublishes()
+                .ConfigureAwait(false);
         }
 
-        public bool Publish(string json, string tableName, string keyColumnValue, int partition)
+        public async Task ForceConfirmAsync(CancellationToken token)
         {
-            EnsureConnection();
+            await MaybeAwaitPublishes(true)
+                .ConfigureAwait(false);
+        }
 
-            try
+        private async Task<bool> MaybeAwaitPublishes(bool force = false)
+        {
+            if (!force && _publishedTasks.Count < 100)
             {
-                var channel = RedisChannel.Literal($"{tableName}.{partition}");
-
-                var task = _redis!.GetSubscriber().PublishAsync(channel, json);
-
-                _publishedTasks.Add(task);
-
-                if (_publishedTasks.Count >= 100)
-                {
-                    ForceConfirm();
-                    return true;
-                }
-
                 return false;
             }
-            catch 
+
+            foreach (var pt in _publishedTasks)
             {
-                CloseConnection();
-                throw;
+                await pt.ConfigureAwait(false);
             }
-        }
 
-        public void ForceConfirm()
-        {
-            if (_publishedTasks.Count == 0) return;
-
-            try
-            {
-                Task.WaitAll(_publishedTasks.ToArray(), TimeSpan.FromSeconds(20));
-
-                SafeLogInfo($"{_publishedTasks.Count} async Redis operations completed");
-
-                DisposeTasks();
-            }
-            catch
-            {
-                CloseConnection();
-                throw;
-            }
-        }
-
-        private void EnsureConnection()
-        {
-            if (_redis != null) return;
-
-            try
-            {
-                _redis = ConnectionMultiplexer.Connect(_options);
-            }
-            catch
-            {
-                CloseConnection();
-                throw;
-            }
-        }
-
-        private void CloseConnection()
-        {
             DisposeTasks();
-
-            _redis.TryDispose(_logger);
-            _redis = null;
+            return true;
         }
 
         private void DisposeTasks()
@@ -95,15 +58,14 @@ namespace PgOutput2Json.Redis
             _publishedTasks.Clear();
         }
 
-        private void SafeLogInfo(string message)
+        public virtual async ValueTask DisposeAsync()
         {
-            try
-            {
-                _logger?.LogInformation(message);
-            }
-            catch
-            {
-            }
+            DisposeTasks();
+
+            await _redis.TryDisposeAsync(_logger)
+                .ConfigureAwait(false);
+
+            _redis = null;
         }
 
         private ConnectionMultiplexer? _redis;

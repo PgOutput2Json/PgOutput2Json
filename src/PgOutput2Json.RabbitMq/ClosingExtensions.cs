@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 
@@ -6,11 +7,14 @@ namespace PgOutput2Json.RabbitMq
 {
     static class ClosingExtensions
     {
-        public static void TryClose(this IConnection? connection, ILogger? logger)
+        public static async ValueTask TryCloseAsync(this IConnection? connection, ILogger? logger)
         {
+            if (connection == null) return;
+
             try
             {
-                connection?.Close();
+                await connection.CloseAsync()
+                    .ConfigureAwait(false);
             }
             catch (Exception ex)
             {

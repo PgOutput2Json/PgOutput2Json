@@ -55,19 +55,19 @@ namespace PgOutput2Json.TestWorker
                     //options.WriteTimestamps = true;
                     //options.WriteTableNames = true;
                 })
-                .WithMessageHandler((json, table, key, partition) =>
-                {
-                    Console.WriteLine($"{table}: {json}");
-                })
-                //.UseRabbitMq(options =>
+                //.WithMessageHandler((json, table, key, partition) =>
                 //{
-                //    options.HostNames = new[] { "localhost" };
-                //    options.Username = "guest";
-                //    options.Password = "guest";
-                //    options.VirtualHost = "/";
-                //    options.ExchangeName = "my_exchange";
-                //    options.UsePersistentMessagesByDefault = false;
+                //    Console.WriteLine($"{table}: {json}");
                 //})
+                .UseRabbitMq(options =>
+                {
+                    options.HostNames = new[] { "localhost" };
+                    options.Username = "guest";
+                    options.Password = "guest";
+                    options.VirtualHost = "/";
+                    options.ExchangeName = "my_exchange";
+                    options.UsePersistentMessagesByDefault = false;
+                })
                 //.UseRedis(options =>
                 //{
                 //    options.EndPoints.Add("localhost:6379");

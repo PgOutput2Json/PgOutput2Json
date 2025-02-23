@@ -24,6 +24,8 @@ namespace PgOutput2Json
 
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
+        private readonly AsyncLock _lock = new AsyncLock();
+
         public ReplicationListener(IMessagePublisherFactory messagePublisherFactory,
                                    ReplicationListenerOptions options,
                                    JsonOptions jsonOptions,
@@ -44,115 +46,136 @@ namespace PgOutput2Json
                 var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_loggerFactory);
                 try
                 {
-                    await using var connection = new LogicalReplicationConnection(_options.ConnectionString);
-
-                    connection.WalReceiverStatusInterval = TimeSpan.FromSeconds(5);
-
-                    await connection.Open(cancellationToken);
-
-                    SafeLogInfo("Connected to PostgreSQL");
-
-                    PgOutputReplicationSlot slot;
-
-                    if (_options.ReplicationSlotName != string.Empty)
+                    var connection = new LogicalReplicationConnection(_options.ConnectionString);
+                    await using (connection.ConfigureAwait(false))
                     {
-                        slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
-                    }
-                    else
-                    {
-                        var slotName = $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}";
-                        slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken);
-                    }
+                        connection.WalReceiverStatusInterval = TimeSpan.FromSeconds(5);
 
-                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, 1);
+                        await connection.Open(cancellationToken)
+                            .ConfigureAwait(false);
 
-                    DateTime commitTimeStamp = DateTime.UtcNow;
+                        _logger.SafeLogInfo("Connected to PostgreSQL");
 
-                    NpgsqlLogSequenceNumber? lastWalEnd = null;
+                        PgOutputReplicationSlot slot;
 
-                    using var forceConfirmTimer = new Timer((_) =>
-                    {
-                        if (!lastWalEnd.HasValue) return;
-                        
-                        lock (messagePublisher)
+                        if (_options.ReplicationSlotName != string.Empty)
                         {
-                            messagePublisher.ForceConfirm();
-
-                            connection.SetReplicationStatus(lastWalEnd.Value);
-                            lastWalEnd = null;
+                            slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                         }
-                    });
-
-                    await foreach (var message in connection.StartReplication(slot, replicationOptions, cancellationToken))
-                    {
-                        lastWalEnd = message.WalEnd;
-
-                        var partition = -1;
-
-                        if (message is BeginMessage beginMsg)
+                        else
                         {
-                            commitTimeStamp = beginMsg.TransactionCommitTimestamp;
-                        }
-                        else if (message is InsertMessage insertMsg)
-                        {
-                            partition = await WriteTuple(insertMsg.NewRow,
-                                             insertMsg.Relation,
-                                             "I",
-                                             commitTimeStamp,
-                                             insertMsg.ServerClock,
-                                             _jsonOptions.WriteNulls,
-                                             cancellationToken);
-                        }
-                        else if (message is UpdateMessage updateMsg)
-                        {
-                            partition = await WriteTuple(updateMsg.NewRow,
-                                             updateMsg.Relation,
-                                             "U",
-                                             commitTimeStamp,
-                                             updateMsg.ServerClock,
-                                             _jsonOptions.WriteNulls,
-                                             cancellationToken);
-                        }
-                        else if (message is KeyDeleteMessage keyDeleteMsg)
-                        {
-                            partition = await WriteTuple(keyDeleteMsg.Key,
-                                             keyDeleteMsg.Relation,
-                                             "D",
-                                             commitTimeStamp,
-                                             keyDeleteMsg.ServerClock,
-                                             false,
-                                             cancellationToken);
-                        }
-                        else if (message is FullDeleteMessage fullDeleteMsg)
-                        {
-                            partition = await WriteTuple(fullDeleteMsg.OldRow,
-                                             fullDeleteMsg.Relation,
-                                             "D",
-                                             commitTimeStamp,
-                                             fullDeleteMsg.ServerClock,
-                                             false,
-                                             cancellationToken);
+                            var slotName = $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}";
+                            slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
+                                .ConfigureAwait(false);
                         }
 
-                        if (partition >= 0)
+                        var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, 1);
+
+                        DateTime commitTimeStamp = DateTime.UtcNow;
+
+                        NpgsqlLogSequenceNumber? lastWalEnd = null;
+
+                        using var cts = new CancellationTokenSource();
+                        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
+
+                        using var forceConfirmTimer = new Timer(async (_) =>
                         {
-                            lock (messagePublisher)
+                            if (!lastWalEnd.HasValue) return;
+
+                            try
                             {
-                                var confirm = messagePublisher
-                                    .Publish(_jsonBuilder.ToString(), _tableNameBuilder.ToString(), _keyColValueBuilder.ToString(), partition);
-
-                                if (confirm)
+                                using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                                 {
-                                    forceConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                                    await messagePublisher.ForceConfirmAsync(cancellationToken)
+                                        .ConfigureAwait(false);
 
-                                    connection.SetReplicationStatus(message.WalEnd);
+                                    connection.SetReplicationStatus(lastWalEnd.Value);
                                     lastWalEnd = null;
-
-                                    SafeLogInfo("Confirmed PostgreSQL");   
                                 }
-                                else
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
+                                cts.Cancel();
+                            }
+                        });
+
+                        await foreach (var message in connection.StartReplication(slot, replicationOptions, linkedCts.Token)
+                            .ConfigureAwait(false))
+                        {
+                            lastWalEnd = message.WalEnd;
+
+                            var partition = -1;
+
+                            if (message is BeginMessage beginMsg)
+                            {
+                                commitTimeStamp = beginMsg.TransactionCommitTimestamp;
+                            }
+                            else if (message is InsertMessage insertMsg)
+                            {
+                                partition = await WriteTuple(insertMsg.NewRow,
+                                                 insertMsg.Relation,
+                                                 "I",
+                                                 commitTimeStamp,
+                                                 insertMsg.ServerClock,
+                                                 _jsonOptions.WriteNulls,
+                                                 linkedCts.Token)
+                                    .ConfigureAwait(false);
+                            }
+                            else if (message is UpdateMessage updateMsg)
+                            {
+                                partition = await WriteTuple(updateMsg.NewRow,
+                                                 updateMsg.Relation,
+                                                 "U",
+                                                 commitTimeStamp,
+                                                 updateMsg.ServerClock,
+                                                 _jsonOptions.WriteNulls,
+                                                 linkedCts.Token)
+                                    .ConfigureAwait(false);
+                            }
+                            else if (message is KeyDeleteMessage keyDeleteMsg)
+                            {
+                                partition = await WriteTuple(keyDeleteMsg.Key,
+                                                 keyDeleteMsg.Relation,
+                                                 "D",
+                                                 commitTimeStamp,
+                                                 keyDeleteMsg.ServerClock,
+                                                 false,
+                                                 linkedCts.Token)
+                                    .ConfigureAwait(false);
+                            }
+                            else if (message is FullDeleteMessage fullDeleteMsg)
+                            {
+                                partition = await WriteTuple(fullDeleteMsg.OldRow,
+                                                 fullDeleteMsg.Relation,
+                                                 "D",
+                                                 commitTimeStamp,
+                                                 fullDeleteMsg.ServerClock,
+                                                 false,
+                                                 linkedCts.Token)
+                                    .ConfigureAwait(false);
+                            }
+
+                            if (partition >= 0)
+                            {
+                                using (await _lock.LockAsync(linkedCts.Token).ConfigureAwait(false))
                                 {
-                                    forceConfirmTimer.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+                                    var confirm = await messagePublisher.PublishAsync(_jsonBuilder.ToString(), _tableNameBuilder.ToString(), _keyColValueBuilder.ToString(), partition, linkedCts.Token)
+                                        .ConfigureAwait(false);
+
+                                    if (confirm)
+                                    {
+                                        forceConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+                                        connection.SetReplicationStatus(message.WalEnd);
+                                        lastWalEnd = null;
+
+                                        _logger.SafeLogInfo("Confirmed PostgreSQL");
+                                    }
+                                    else
+                                    {
+                                        forceConfirmTimer.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+                                    }
                                 }
                             }
                         }
@@ -166,29 +189,32 @@ namespace PgOutput2Json
                 {
                     if (ex.Message.StartsWith("55006:"))
                     {
-                        SafeLogWarn("Slot taken - waiting for 10 seconds...");
+                        _logger.SafeLogWarn("Slot taken - waiting for 10 seconds...");
                     }
                     else
                     {
-                        SafeLogError(ex, "Error in replication listener. Waiting for 10 seconds...");
+                        _logger.SafeLogError(ex, "Error in replication listener. Waiting for 10 seconds...");
                     }
                 }
                 finally
                 {
-                    messagePublisher.TryDispose(_logger);
+                    await messagePublisher.TryDisposeAsync(_logger)
+                        .ConfigureAwait(false);
                 }
 
-                await Delay(10000, cancellationToken);
+                await Delay(10_000, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
-            SafeLogInfo("Disconnected from PostgreSQL");
+            _logger.SafeLogInfo("Disconnected from PostgreSQL");
         }
 
         private async Task Delay(int time, CancellationToken cancellationToken)
         {
             try
             {
-                await Task.Delay(time, cancellationToken);
+                await Task.Delay(time, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -196,7 +222,7 @@ namespace PgOutput2Json
             }
             catch (Exception ex)
             {
-                SafeLogError(ex, "Error while waiting to reconnect");
+                _logger.SafeLogError(ex, "Error while waiting to reconnect");
             }
         }
 
@@ -256,7 +282,8 @@ namespace PgOutput2Json
             }
 
             var i = 0;
-            await foreach (var value in tuple)
+
+            await foreach (var value in tuple.ConfigureAwait(false))
             {
                 var col = relation.Columns[i++];
 
@@ -296,7 +323,8 @@ namespace PgOutput2Json
                         {
                             // this is a hack to skip bytes (dispose does the trick)
                             // otherwise, npgsql throws exception
-                            await value.Get<string>(cancellationToken);
+                            await value.Get<string>(cancellationToken)
+                                .ConfigureAwait(false);
                         }
                         continue;
                     }
@@ -324,7 +352,9 @@ namespace PgOutput2Json
                     {
                         var pgOid = (PgOid)col.DataTypeId;
 
-                        var colValue = await value.Get<string>(cancellationToken);
+                        var colValue = await value.Get<string>(cancellationToken)
+                            .ConfigureAwait(false);
+
                         valueBuilder?.Append(colValue);
 
                         int hash;
@@ -378,48 +408,6 @@ namespace PgOutput2Json
             }
 
             return partition;
-        }
-
-        private void SafeLogInfo(string message)
-        {
-            try
-            {
-                if (_logger != null && _logger.IsEnabled(LogLevel.Information))
-                {
-                    _logger.LogInformation(message);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        private void SafeLogWarn(string message)
-        {
-            try
-            {
-                if (_logger != null && _logger.IsEnabled(LogLevel.Warning))
-                {
-                    _logger.LogWarning(message);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        private void SafeLogError(Exception ex, string message)
-        {
-            try
-            {
-                if (_logger != null && _logger.IsEnabled(LogLevel.Error))
-                {
-                    _logger.LogError(ex, message);
-                }
-            }
-            catch
-            {
-            }
         }
     }
 }

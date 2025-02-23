@@ -69,11 +69,7 @@ namespace PgOutput2Json
                 }
             }
 
-#if NETSTANDARD2_1
-            return new ValueTask();
-#else
             return ValueTask.CompletedTask;
-#endif
         }
 
         public static void TryCancel(this CancellationTokenSource? tokenSource, ILogger? logger)

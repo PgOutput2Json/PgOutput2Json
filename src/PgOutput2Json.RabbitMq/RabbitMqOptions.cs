@@ -5,12 +5,13 @@ namespace PgOutput2Json.RabbitMq
 {
     public class RabbitMqOptions
     {
-        public string[] HostNames { get; set; } = new string[] { "localhost" };
+        public string[] HostNames { get; set; } = { "localhost" };
         public string Username { get; set; } = "guest";
         public string Password { get; set; } = "guest";
         public string ExchangeName { get; set; } = "pgoutput2json";
         public string VirtualHost { get; set; } = "/";
         public int Port { get; set; } = AmqpTcpEndpoint.UseDefaultPort;
+        public int BatchSize { get; set; } = 100;
 
         /// <summary>
         /// Specify if persistent messages should be used if there is no specific configuration

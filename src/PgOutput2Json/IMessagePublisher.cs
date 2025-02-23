@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace PgOutput2Json
 {
-    public interface IMessagePublisher: IDisposable
+    public interface IMessagePublisher: IAsyncDisposable
     {
-        bool Publish(string json, string tableName, string keyColumnValue, int partition);
-        void ForceConfirm();
+        Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token);
+        Task ForceConfirmAsync(CancellationToken token);
     }
 }
