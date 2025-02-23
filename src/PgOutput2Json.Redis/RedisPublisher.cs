@@ -17,7 +17,7 @@ namespace PgOutput2Json.Redis
 
         public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Options)
+            _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
 
             var channel = RedisChannel.Literal($"{tableName}.{partition}");
