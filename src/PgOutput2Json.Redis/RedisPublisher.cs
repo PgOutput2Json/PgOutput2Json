@@ -9,7 +9,7 @@ namespace PgOutput2Json.Redis
 {
     public class RedisPublisher : IMessagePublisher
     {
-        public RedisPublisher(ConfigurationOptions options, ILogger<RedisPublisher>? logger = null)
+        public RedisPublisher(RedisPublisherOptions options, ILogger<RedisPublisher>? logger = null)
         {
             _options = options;
             _logger = logger;
@@ -17,7 +17,7 @@ namespace PgOutput2Json.Redis
 
         public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            _redis ??= await ConnectionMultiplexer.ConnectAsync(_options)
+            _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Options)
                 .ConfigureAwait(false);
 
             var channel = RedisChannel.Literal($"{tableName}.{partition}");
@@ -38,7 +38,7 @@ namespace PgOutput2Json.Redis
 
         private async Task<bool> MaybeAwaitPublishes(bool force = false)
         {
-            if (!force && _publishedTasks.Count < 100)
+            if (!force && _publishedTasks.Count < _options.BatchSize)
             {
                 return false;
             }
@@ -68,7 +68,7 @@ namespace PgOutput2Json.Redis
 
         private ConnectionMultiplexer? _redis;
         private List<Task<long>> _publishedTasks = new List<Task<long>>();
-        private readonly ConfigurationOptions _options;
+        private readonly RedisPublisherOptions _options;
         private readonly ILogger<RedisPublisher>? _logger;
     }
 }

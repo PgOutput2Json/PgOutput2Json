@@ -70,14 +70,9 @@ namespace PgOutput2Json.TestWorker
                 })
                 //.UseRedis(options =>
                 //{
-                //    options.EndPoints.Add("localhost:6379");
+                //    options.Redis.EndPoints.Add("localhost:6379");
                 //})
                 ;
-
-            if (_batchSize.HasValue)
-            {
-                builder.WithBatchSize(_batchSize.Value);
-            }
 
             foreach (var partition in _partitions ?? Array.Empty<PartitionInfo>())
             {

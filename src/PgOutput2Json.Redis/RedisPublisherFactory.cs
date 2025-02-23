@@ -1,13 +1,12 @@
 ﻿using Microsoft.Extensions.Logging;
-using StackExchange.Redis;
 
 namespace PgOutput2Json.Redis
 {
     internal class RedisPublisherFactory : IMessagePublisherFactory
     {
-        private readonly ConfigurationOptions _options;
+        private readonly RedisPublisherOptions _options;
 
-        public RedisPublisherFactory(ConfigurationOptions options)
+        public RedisPublisherFactory(RedisPublisherOptions options)
         {
             _options = options;
         }

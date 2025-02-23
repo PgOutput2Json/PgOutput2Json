@@ -12,7 +12,6 @@ namespace PgOutput2Json
         private Dictionary<string, KeyColumn> _keyColumns = new Dictionary<string, KeyColumn>();
         private Dictionary<string, IReadOnlyList<string>> _columns = new Dictionary<string, IReadOnlyList<string>>();
         private IMessagePublisherFactory? _messagePublisherFactory;
-        private int _batchSize = 100;
         private int _confirmTimeoutSec = 30;
         private ILoggerFactory? _loggerFactory;
         private JsonOptions _jsonOptions = new JsonOptions();
@@ -96,12 +95,6 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithBatchSize(int batchSize)
-        {
-            _batchSize = batchSize;
-            return this;
-        }
-
         public PgOutput2JsonBuilder WithConfirmTimeoutSec(int confirmTimeoutSec)
         {
             _confirmTimeoutSec = confirmTimeoutSec;
@@ -130,9 +123,6 @@ namespace PgOutput2Json
 
             if (_messagePublisherFactory == null)
                 throw new ArgumentNullException("MessagePublisherFactory must be provided");
-
-            if (_batchSize <= 0)
-                throw new ArgumentOutOfRangeException("Publishing BatchSize must be greater than zero");
 
             if (_confirmTimeoutSec <= 0)
                 throw new ArgumentOutOfRangeException("Publishing ConfirmTimeoutSec must be greater than zero");
