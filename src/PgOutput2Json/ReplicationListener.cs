@@ -66,7 +66,7 @@ namespace PgOutput2Json
                                 .ConfigureAwait(false);
                         }
 
-                        var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, 1);
+                        var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
 
                         DateTime commitTimeStamp = DateTime.UtcNow;
 
