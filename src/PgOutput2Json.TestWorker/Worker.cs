@@ -1,6 +1,3 @@
-using PgOutput2Json.RabbitMq;
-using PgOutput2Json.Redis;
-
 namespace PgOutput2Json.TestWorker
 {
     /// <summary>
@@ -17,7 +14,6 @@ namespace PgOutput2Json.TestWorker
         {
             public string? Table { get; set; }
             public int? PartitionCount { get; set; }
-            public string[]? Columns { get; set; }
         };
 
         private readonly ILoggerFactory _loggerFactory;
@@ -57,7 +53,8 @@ namespace PgOutput2Json.TestWorker
                 })
                 .WithMessageHandler((json, table, key, partition) =>
                 {
-                    Console.WriteLine($"{table}: {json}");
+                    Console.WriteLine($"{table} ({key}): {json}");
+                    return Task.FromResult(true);
                 })
                 //.UseRabbitMq(options =>
                 //{
@@ -85,19 +82,12 @@ namespace PgOutput2Json.TestWorker
 
             foreach (var partition in _partitions ?? Array.Empty<PartitionInfo>())
             {
-                if (string.IsNullOrEmpty(partition.Table) || partition.Columns == null || partition.Columns.Length == 0)
+                if (string.IsNullOrEmpty(partition.Table))
                 {
-                    throw new Exception("Invalid partition definition - missing table name or columns");
+                    throw new Exception("Invalid partition definition - missing table name");
                 }
 
-                if (partition.PartitionCount.HasValue)
-                {
-                    builder.WithPgKeyColumn(partition.Table, partition.PartitionCount.Value, partition.Columns);
-                }
-                else
-                {
-                    builder.WithPgKeyColumn(partition.Table, partition.Columns);
-                }
+                builder.WithTablePartitions(partition.Table, partition.PartitionCount ?? 1);
             }
 
             if (_filterFrom.HasValue && _filterTo.HasValue)

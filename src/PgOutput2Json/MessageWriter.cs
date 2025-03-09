@@ -118,7 +118,7 @@ namespace PgOutput2Json
 
             if (_jsonOptions.WriteTimestamps)
             {
-                _jsonBuilder.Append(",");
+                _jsonBuilder.Append(',');
                 _jsonBuilder.Append("\"_cts\":\"");
                 _jsonBuilder.Append(commitTimeStamp.Ticks);
                 _jsonBuilder.Append("\",");
@@ -129,7 +129,7 @@ namespace PgOutput2Json
 
             if (_jsonOptions.WriteTableNames)
             {
-                _jsonBuilder.Append(",");
+                _jsonBuilder.Append(',');
                 _jsonBuilder.Append("\"_tbl\":\"");
                 JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
                 _jsonBuilder.Append('.');
@@ -141,9 +141,9 @@ namespace PgOutput2Json
 
             int finalHash = 0x12345678;
 
-            if (!_listenerOptions.KeyColumns.TryGetValue(tableName, out var keyColumn))
+            if (!_listenerOptions.TablePartitions.TryGetValue(tableName, out var partitionCount))
             {
-                keyColumn = null;
+                partitionCount = 1;
             }
 
             if (!_listenerOptions.IncludedColumns.TryGetValue(tableName, out var includedCols))
@@ -157,24 +157,15 @@ namespace PgOutput2Json
             {
                 var col = relation.Columns[i++];
 
+                var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey) 
+                    == RelationMessage.Column.ColumnFlags.PartOfKey;
+
                 if (value.IsDBNull && !sendNulls) continue;
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
-                    var isKeyColumn = false;
-                    if (keyColumn != null)
-                    {
-                        foreach (var c in keyColumn.ColumnNames)
-                        {
-                            if (c == col.ColumnName)
-                            {
-                                isKeyColumn = true;
-                                break;
-                            }
-                        }
-                    }
-
                     var isIncluded = includedCols == null; // if not specified, included by default
+
                     if (includedCols != null)
                     {
                         foreach (var c in includedCols)
@@ -269,7 +260,7 @@ namespace PgOutput2Json
                             
             _jsonBuilder.Append('}');
 
-            var partition = keyColumn != null ? finalHash % keyColumn.PartitionCount : 0;
+            var partition = finalHash % partitionCount;
 
             if (_listenerOptions.PartitionFilter != null 
                 && (partition < _listenerOptions.PartitionFilter.FromInclusive || partition >= _listenerOptions.PartitionFilter.ToExclusive))

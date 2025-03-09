@@ -7,7 +7,7 @@
     /// <param name="json">JSON representation of the changed row.</param>
     /// <param name="tableName">Schema qualified table name</param>
     /// <param name="keyColumnValue">
-    /// The value of the key column, if configured in <see cref="ReplicationListenerOptions.KeyColumns"/>.
+    /// The value of the key column, if configured in <see cref="ReplicationListenerOptions.TablePartitions"/>.
     /// If the key kolumn is not configured, this will be set to empty string.
     /// </param>
     /// <param name="partition">Partition number in range from 0 to partition count - 1</param>

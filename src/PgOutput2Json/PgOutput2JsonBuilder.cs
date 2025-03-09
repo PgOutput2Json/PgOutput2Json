@@ -9,7 +9,7 @@ namespace PgOutput2Json
         private string? _connectionString;
         private string _replicationSlotName = string.Empty;
         private string[]? _publicationNames;
-        private Dictionary<string, KeyColumn> _keyColumns = new Dictionary<string, KeyColumn>();
+        private Dictionary<string, int> _tablePartitions = new Dictionary<string, int>();
         private Dictionary<string, IReadOnlyList<string>> _columns = new Dictionary<string, IReadOnlyList<string>>();
         private IMessagePublisherFactory? _messagePublisherFactory;
         private int _confirmTimeoutSec = 30;
@@ -40,27 +40,13 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithPgKeyColumn(string tableName, params string[] keyColumns)
-        {
-            WithPgKeyColumn(tableName, 1, keyColumns);
-            return this;
-        }
-
-        /// <summary>
-        /// Specifies a key column for a table. Values from this column are used to split the table rows
-        /// in partitions. The partitions can be used for routing keys when pushing to a message broker.
-        /// </summary>
-        /// <param name="tableName"></param>
-        /// <param name="partitionsCount"></param>
         /// <param name="columnNames"></param>
         /// <returns></returns>
-        public PgOutput2JsonBuilder WithPgKeyColumn(string tableName, int partitionsCount, params string[] columnNames)
+        public PgOutput2JsonBuilder WithTablePartitions(string tableName, int partitionsCount)
         {
             if (partitionsCount < 1) throw new ArgumentOutOfRangeException(nameof(partitionsCount));
-            if (columnNames == null) throw new ArgumentNullException(nameof(columnNames));
-            if (columnNames.Length < 1) throw new ArgumentOutOfRangeException(nameof(columnNames), "At least one column must be specified");
 
-            _keyColumns[tableName] = new KeyColumn(partitionsCount, columnNames);
+            _tablePartitions[tableName] = partitionsCount;
             return this;
         }
 
@@ -130,7 +116,7 @@ namespace PgOutput2Json
             var options = new ReplicationListenerOptions(_connectionString,
                                                          _replicationSlotName,
                                                          _publicationNames,
-                                                         _keyColumns,
+                                                         _tablePartitions,
                                                          _columns,
                                                          _partitionFilter);
 
