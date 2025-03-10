@@ -12,10 +12,11 @@ namespace PgOutput2Json
         private Dictionary<string, int> _tablePartitions = new Dictionary<string, int>();
         private Dictionary<string, IReadOnlyList<string>> _columns = new Dictionary<string, IReadOnlyList<string>>();
         private IMessagePublisherFactory? _messagePublisherFactory;
-        private int _confirmTimeoutSec = 30;
+        private int _idleFlushTimeSec = 10;
         private ILoggerFactory? _loggerFactory;
         private JsonOptions _jsonOptions = new JsonOptions();
         private PartitionFilter? _partitionFilter;
+        private bool _useTemporarySlot = true;
 
         public static PgOutput2JsonBuilder Create()
         {
@@ -28,9 +29,10 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithPgReplicationSlot(string replicationSlotName)
+        public PgOutput2JsonBuilder WithPgReplicationSlot(string replicationSlotName, bool useTemporarySlot = false)
         {
             _replicationSlotName = replicationSlotName;
+            _useTemporarySlot = useTemporarySlot;
             return this;
         }
 
@@ -81,9 +83,9 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithConfirmTimeoutSec(int confirmTimeoutSec)
+        public PgOutput2JsonBuilder WithIdleFlushTime(int idleFlushTime)
         {
-            _confirmTimeoutSec = confirmTimeoutSec;
+            _idleFlushTimeSec = idleFlushTime;
             return this;
         }
 
@@ -110,12 +112,21 @@ namespace PgOutput2Json
             if (_messagePublisherFactory == null)
                 throw new ArgumentNullException("MessagePublisherFactory must be provided");
 
-            if (_confirmTimeoutSec <= 0)
-                throw new ArgumentOutOfRangeException("Publishing ConfirmTimeoutSec must be greater than zero");
+            if (_idleFlushTimeSec <= 0)
+                throw new ArgumentOutOfRangeException("Idle flush time must be greater than zero");
+
+            // if not explicitely specified in builder use temporary slot only if slot name is not provided
+
+            if (!_useTemporarySlot && string.IsNullOrWhiteSpace(_replicationSlotName))
+            {
+                throw new ArgumentOutOfRangeException("Replication slot name must be provided for permanent slots");
+            }
 
             var options = new ReplicationListenerOptions(_connectionString,
+                                                         _useTemporarySlot,
                                                          _replicationSlotName,
                                                          _publicationNames,
+                                                         TimeSpan.FromSeconds(_idleFlushTimeSec),
                                                          _tablePartitions,
                                                          _columns,
                                                          _partitionFilter);

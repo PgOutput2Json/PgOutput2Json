@@ -55,13 +55,16 @@ namespace PgOutput2Json
 
                         PgOutputReplicationSlot slot;
 
-                        if (_options.ReplicationSlotName != string.Empty)
+                        if (!_options.UseTemporarySlot)
                         {
                             slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                         }
                         else
                         {
-                            var slotName = $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}";
+                            var slotName = string.IsNullOrWhiteSpace(_options.ReplicationSlotName)
+                                ? $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}"
+                                : _options.ReplicationSlotName;
+
                             slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
                                 .ConfigureAwait(false);
                         }
@@ -134,7 +137,7 @@ namespace PgOutput2Json
                                 }
                                 else
                                 {
-                                    forceConfirmTimer.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+                                    forceConfirmTimer.Change(_options.IdleFlushTime, Timeout.InfiniteTimeSpan);
                                 }
                             }
                         }
