@@ -83,9 +83,9 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithIdleFlushTime(int idleFlushTime)
+        public PgOutput2JsonBuilder WithIdleFlushTime(int idleFlushTimeSec)
         {
-            _idleFlushTimeSec = idleFlushTime;
+            _idleFlushTimeSec = idleFlushTimeSec;
             return this;
         }
 
