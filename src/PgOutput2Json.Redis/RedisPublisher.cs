@@ -15,7 +15,7 @@ namespace PgOutput2Json.Redis
             _logger = logger;
         }
 
-        public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public async Task PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
@@ -25,31 +25,16 @@ namespace PgOutput2Json.Redis
             var task = _redis.GetSubscriber().PublishAsync(channel, json);
 
             _publishedTasks.Add(task);
-
-            return await MaybeAwaitPublishes()
-                .ConfigureAwait(false);
         }
 
-        public async Task ForceConfirmAsync(CancellationToken token)
+        public async Task ConfirmAsync(CancellationToken token)
         {
-            await MaybeAwaitPublishes(true)
-                .ConfigureAwait(false);
-        }
-
-        private async Task<bool> MaybeAwaitPublishes(bool force = false)
-        {
-            if (!force && _publishedTasks.Count < _options.BatchSize)
-            {
-                return false;
-            }
-
             foreach (var pt in _publishedTasks)
             {
                 await pt.ConfigureAwait(false);
             }
 
             DisposeTasks();
-            return true;
         }
 
         private void DisposeTasks()

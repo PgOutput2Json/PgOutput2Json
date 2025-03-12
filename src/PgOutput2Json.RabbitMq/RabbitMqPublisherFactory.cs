@@ -11,9 +11,9 @@ namespace PgOutput2Json.RabbitMq
             _options = options;
         }
 
-        public IMessagePublisher CreateMessagePublisher(ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(int batchSize, ILoggerFactory? loggerFactory)
         {
-            return new RabbitMqPublisher(_options, loggerFactory?.CreateLogger<RabbitMqPublisher>());
+            return new RabbitMqPublisher(_options, batchSize, loggerFactory?.CreateLogger<RabbitMqPublisher>());
         }
     }
 }

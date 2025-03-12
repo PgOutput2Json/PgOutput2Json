@@ -12,11 +12,12 @@ namespace PgOutput2Json
         private Dictionary<string, int> _tablePartitions = new Dictionary<string, int>();
         private Dictionary<string, IReadOnlyList<string>> _columns = new Dictionary<string, IReadOnlyList<string>>();
         private IMessagePublisherFactory? _messagePublisherFactory;
-        private int _idleFlushTimeSec = 10;
+        private int _idleFlushTimeSec = 2;
         private ILoggerFactory? _loggerFactory;
         private JsonOptions _jsonOptions = new JsonOptions();
         private PartitionFilter? _partitionFilter;
         private bool _useTemporarySlot = true;
+        private int _batchSize = 100;
 
         public static PgOutput2JsonBuilder Create()
         {
@@ -89,6 +90,12 @@ namespace PgOutput2Json
             return this;
         }
 
+        public PgOutput2JsonBuilder WithBatchSize(int batchSize)
+        {
+            _batchSize = batchSize;
+            return this;
+        }
+
         public PgOutput2JsonBuilder WithLoggerFactory(ILoggerFactory loggerFactory)
         {
             _loggerFactory = loggerFactory;
@@ -115,6 +122,9 @@ namespace PgOutput2Json
             if (_idleFlushTimeSec <= 0)
                 throw new ArgumentOutOfRangeException("Idle flush time must be greater than zero");
 
+            if (_batchSize <= 0)
+                throw new ArgumentOutOfRangeException("Idle flush time must be greater than zero");
+
             // if not explicitely specified in builder use temporary slot only if slot name is not provided
 
             if (!_useTemporarySlot && string.IsNullOrWhiteSpace(_replicationSlotName))
@@ -127,6 +137,7 @@ namespace PgOutput2Json
                                                          _replicationSlotName,
                                                          _publicationNames,
                                                          TimeSpan.FromSeconds(_idleFlushTimeSec),
+                                                         _batchSize,
                                                          _tablePartitions,
                                                          _columns,
                                                          _partitionFilter);

@@ -15,7 +15,7 @@ namespace PgOutput2Json
             _messageHandler = messageHandler;
         }
 
-        public IMessagePublisher CreateMessagePublisher(ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(int batchSize, ILoggerFactory? loggerFactory)
         {
             return new SimpleMessagePublisher(_messageHandler, loggerFactory?.CreateLogger<SimpleMessagePublisher>());
         }
@@ -32,14 +32,14 @@ namespace PgOutput2Json
             _logger = logger;
         }
 
-        public Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token) 
+        public Task PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token) 
         {
             _logger?.LogDebug("Message for {Table}: {Json}", tableName, json);
 
             return _messageHandler.Invoke(json, tableName, keyColumnValue, partition);
         }
 
-        public Task ForceConfirmAsync(CancellationToken token)
+        public Task ConfirmAsync(CancellationToken token)
         {
             return Task.CompletedTask;
         }

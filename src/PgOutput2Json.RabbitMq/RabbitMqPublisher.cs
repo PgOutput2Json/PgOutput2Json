@@ -11,13 +11,14 @@ namespace PgOutput2Json.RabbitMq
 {
     public class RabbitMqPublisher: IMessagePublisher
     {
-        public RabbitMqPublisher(RabbitMqPublisherOptions options, ILogger<RabbitMqPublisher>? logger = null)
+        public RabbitMqPublisher(RabbitMqPublisherOptions options, int batchSize, ILogger<RabbitMqPublisher>? logger = null)
         {
             _options = options;
+            _batchSize = batchSize;
             _logger = logger;
         }
 
-        public async Task<bool> PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public async Task PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             var channel = await EnsureConnection(token)
                 .ConfigureAwait(false);
@@ -39,15 +40,16 @@ namespace PgOutput2Json.RabbitMq
             var task = channel.BasicPublishAsync(_options.ExchangeName, routingKey, false, basicProperties, body, token);
 
             _pendingTasks.Add(task);
-
-            return await MaybeAwaitPublishes()
-                .ConfigureAwait(false);
         }
 
-        public async Task ForceConfirmAsync(CancellationToken token)
+        public async Task ConfirmAsync(CancellationToken token)
         {
-            await MaybeAwaitPublishes(force: true)
-                .ConfigureAwait(false);
+            foreach (var pt in _pendingTasks)
+            {
+                await pt.ConfigureAwait(false);
+            }
+
+            _pendingTasks.Clear();
         }
 
         public virtual async ValueTask DisposeAsync()
@@ -93,27 +95,11 @@ namespace PgOutput2Json.RabbitMq
             _channel = await _connection.CreateChannelAsync(new CreateChannelOptions(
                 publisherConfirmationsEnabled: true,
                 publisherConfirmationTrackingEnabled: true,
-                outstandingPublisherConfirmationsRateLimiter: new ThrottlingRateLimiter(_options.BatchSize * 2)
+                outstandingPublisherConfirmationsRateLimiter: new ThrottlingRateLimiter(_batchSize * 2)
             ), token)
                 .ConfigureAwait(false);
 
             return _channel;
-        }
-
-        private async ValueTask<bool> MaybeAwaitPublishes(bool force = false)
-        {
-            if (!force && _pendingTasks.Count < _options.BatchSize)
-            {
-                return false;
-            }
-
-            foreach (var pt in _pendingTasks)
-            {
-                await pt.ConfigureAwait(false);
-            }
-
-            _pendingTasks.Clear();
-            return true;
         }
 
         private Task ConnectionOnCallbackException(object? sender, CallbackExceptionEventArgs args)
@@ -144,6 +130,7 @@ namespace PgOutput2Json.RabbitMq
         private IChannel? _channel;
 
         private readonly RabbitMqPublisherOptions _options;
+        private readonly int _batchSize;
         private readonly ILogger<RabbitMqPublisher>? _logger;
 
         private readonly List<ValueTask> _pendingTasks = new List<ValueTask>();

@@ -9,7 +9,6 @@ namespace PgOutput2Json.RabbitMq
     {
         public List<string> HostNames { get; set; } = new List<string>();
         public string ExchangeName { get; set; } = "pgoutput2json";
-        public int BatchSize { get; set; } = 100;
 
         public ConnectionFactory ConnectionFactory { get; set; } = new ConnectionFactory
         {

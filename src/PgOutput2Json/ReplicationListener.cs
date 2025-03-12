@@ -40,7 +40,7 @@ namespace PgOutput2Json
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_loggerFactory);
+                var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options.BatchSize, _loggerFactory);
                 try
                 {
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
@@ -78,17 +78,22 @@ namespace PgOutput2Json
                         using var cts = new CancellationTokenSource();
                         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
 
-                        using var forceConfirmTimer = new Timer(async (_) =>
+                        var unconfirmedCount = 0;
+
+                        using var idleConfirmTimer = new Timer(async (_) =>
                         {
                             try
                             {
                                 using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                                 {
-                                    await messagePublisher.ForceConfirmAsync(cancellationToken)
+                                    await messagePublisher.ConfirmAsync(cancellationToken)
                                         .ConfigureAwait(false);
 
-                                    await connection.SendStatusUpdate(cancellationToken);
+                                    unconfirmedCount = 0;
 
+                                    await connection.SendStatusUpdate(cancellationToken)
+                                        .ConfigureAwait(false);
+                                    
                                     _logger.SafeLogInfo("Idle Confirmed PostgreSQL");
                                 }
                             }
@@ -106,6 +111,8 @@ namespace PgOutput2Json
                         {
                             using (await _lock.LockAsync(linkedCts.Token).ConfigureAwait(false))
                             {
+                                idleConfirmTimer.Change(_options.IdleFlushTime, Timeout.InfiniteTimeSpan);
+
                                 if (message is RelationMessage rel)
                                 {
                                     // Relation Message has WalEnd=0/0
@@ -123,21 +130,23 @@ namespace PgOutput2Json
                                 var result = await _writer.WriteMessage(message, commitTimeStamp, linkedCts.Token)
                                     .ConfigureAwait(false);
 
-                                var confirm = result.Partition >= 0 && await messagePublisher.PublishAsync(result.Json, result.TableNames, result.KeyKolValue, result.Partition, linkedCts.Token)
-                                    .ConfigureAwait(false);
-
-                                if (confirm)
+                                if (result.Partition >= 0)
                                 {
-                                    forceConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                                    await messagePublisher.PublishAsync(result.Json, result.TableNames, result.KeyKolValue, result.Partition, linkedCts.Token)
+                                        .ConfigureAwait(false);
 
-                                    await connection.SendStatusUpdate(linkedCts.Token);
+                                    if (++unconfirmedCount >= _options.BatchSize)
+                                    {
+                                        await messagePublisher.ConfirmAsync(linkedCts.Token)
+                                            .ConfigureAwait(false);
 
-                                    _logger.SafeLogInfo("Confirmed PostgreSQL");
-                                }
-                                else
-                                {
-                                    // this is important because the final commit message LSN are not marked as flushed here, but in idle confirm
-                                    forceConfirmTimer.Change(_options.IdleFlushTime, Timeout.InfiniteTimeSpan);
+                                        unconfirmedCount = 0;
+
+                                        await connection.SendStatusUpdate(linkedCts.Token)
+                                            .ConfigureAwait(false);
+
+                                        _logger.SafeLogInfo("Confirmed PostgreSQL");
+                                    }
                                 }
                             }
                         }

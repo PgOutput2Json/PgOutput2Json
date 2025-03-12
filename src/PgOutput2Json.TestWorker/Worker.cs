@@ -1,3 +1,6 @@
+using PgOutput2Json.RabbitMq;
+using PgOutput2Json.Redis;
+
 namespace PgOutput2Json.TestWorker
 {
     /// <summary>
@@ -64,21 +67,17 @@ namespace PgOutput2Json.TestWorker
                 //    options.ConnectionFactory.VirtualHost = "/";
                 //    options.ExchangeName = "my_exchange";
                 //    options.UsePersistentMessagesByDefault = false;
-
-                //    if (_batchSize.HasValue)
-                //    {
-                //        options.BatchSize = _batchSize.Value;
-                //    }
                 //})
                 //.UseRedis(options =>
                 //{
                 //    options.Redis.EndPoints.Add("localhost:6379");
-                //    if (_batchSize.HasValue)
-                //    {
-                //        options.BatchSize = _batchSize.Value;
-                //    }
                 //})
                 ;
+
+            if (_batchSize.HasValue)
+            {
+                builder = builder.WithBatchSize(_batchSize.Value);
+            }
 
             foreach (var partition in _partitions ?? Array.Empty<PartitionInfo>())
             {

@@ -11,7 +11,7 @@ namespace PgOutput2Json.Redis
             _options = options;
         }
 
-        public IMessagePublisher CreateMessagePublisher(ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(int batchSize, ILoggerFactory? loggerFactory)
         {
             return new RedisPublisher(_options, loggerFactory?.CreateLogger<RedisPublisher>());
         }
