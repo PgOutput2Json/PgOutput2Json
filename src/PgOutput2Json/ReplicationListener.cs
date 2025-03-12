@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Npgsql.Replication;
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
-using NpgsqlTypes;
 
 namespace PgOutput2Json
 {
