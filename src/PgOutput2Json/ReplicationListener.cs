@@ -74,8 +74,8 @@ namespace PgOutput2Json
 
                         DateTime commitTimeStamp = DateTime.UtcNow;
 
+                        // we will use cts to cancel the loop, if the idle confirm fails
                         using var cts = new CancellationTokenSource();
-                        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
 
                         var unconfirmedCount = 0;
 
@@ -85,8 +85,11 @@ namespace PgOutput2Json
                             {
                                 using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                                 {
-                                    await messagePublisher.ConfirmAsync(cancellationToken)
-                                        .ConfigureAwait(false);
+                                    if (unconfirmedCount > 0)
+                                    {
+                                        await messagePublisher.ConfirmAsync(cancellationToken)
+                                            .ConfigureAwait(false);
+                                    }
 
                                     unconfirmedCount = 0;
 
@@ -96,19 +99,27 @@ namespace PgOutput2Json
                                     _logger.SafeLogInfo("Idle Confirmed PostgreSQL");
                                 }
                             }
+                            catch (OperationCanceledException)
+                            {
+                                // stopping - nothing to do
+                            }
                             catch (Exception ex)
                             {
                                 _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
 
                                 // if force confirm fails, stop the replication loop, and dispose the publisher
-                                cts.Cancel();
+                                cts.TryCancel(_logger);
                             }
                         });
+
+                        // linkedCts.Token is used only in this foreach loop,
+                        // since lock ensures idle confirm cannot happen at the same time
+                        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
 
                         await foreach (var message in connection.StartReplication(slot, replicationOptions, linkedCts.Token)
                             .ConfigureAwait(false))
                         {
-                            using (await _lock.LockAsync(linkedCts.Token).ConfigureAwait(false))
+                            using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                             {
                                 idleConfirmTimer.Change(_options.IdleFlushTime, Timeout.InfiniteTimeSpan);
 
@@ -126,27 +137,33 @@ namespace PgOutput2Json
                                     continue;
                                 }
 
-                                var result = await _writer.WriteMessage(message, commitTimeStamp, linkedCts.Token)
+                                var result = await _writer.WriteMessage(message, commitTimeStamp, cancellationToken)
                                     .ConfigureAwait(false);
 
-                                if (result.Partition >= 0)
+                                if (result.Partition < 0)
                                 {
-                                    await messagePublisher.PublishAsync(result.Json, result.TableNames, result.KeyKolValue, result.Partition, linkedCts.Token)
-                                        .ConfigureAwait(false);
-
-                                    if (++unconfirmedCount >= _options.BatchSize)
-                                    {
-                                        await messagePublisher.ConfirmAsync(linkedCts.Token)
-                                            .ConfigureAwait(false);
-
-                                        unconfirmedCount = 0;
-
-                                        await connection.SendStatusUpdate(linkedCts.Token)
-                                            .ConfigureAwait(false);
-
-                                        _logger.SafeLogInfo("Confirmed PostgreSQL");
-                                    }
+                                    continue;
                                 }
+
+                                await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableNames, result.KeyKolValue, result.Partition, cancellationToken)
+                                    .ConfigureAwait(false);
+
+                                if (++unconfirmedCount < _options.BatchSize)
+                                {
+                                    continue;
+                                }
+
+                                idleConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+                                await messagePublisher.ConfirmAsync(cancellationToken)
+                                    .ConfigureAwait(false);
+
+                                unconfirmedCount = 0;
+
+                                await connection.SendStatusUpdate(cancellationToken)
+                                    .ConfigureAwait(false);
+
+                                _logger.SafeLogInfo("Confirmed PostgreSQL");
                             }
                         }
                     }

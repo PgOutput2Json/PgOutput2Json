@@ -1,5 +1,5 @@
-using PgOutput2Json.RabbitMq;
-using PgOutput2Json.Redis;
+using PgOutput2Json.RabbitMqStreams;
+using System.Net;
 
 namespace PgOutput2Json.TestWorker
 {
@@ -71,6 +71,19 @@ namespace PgOutput2Json.TestWorker
                 //.UseRedis(options =>
                 //{
                 //    options.Redis.EndPoints.Add("localhost:6379");
+                //})
+                //.UseRabbitMqStreams(options =>
+                //{
+                //    options.StreamName = "my_stream";
+                //    options.UseDeduplication = true;
+
+                //    options.StreamSystemConfig.UserName = "guest";
+                //    options.StreamSystemConfig.Password = "guest";
+                //    options.StreamSystemConfig.VirtualHost = "/";
+                //    options.StreamSystemConfig.Endpoints =
+                //    [
+                //        new IPEndPoint(IPAddress.Loopback, 5552)
+                //    ];
                 //})
                 ;
 

@@ -15,7 +15,7 @@ namespace PgOutput2Json.Redis
             _logger = logger;
         }
 
-        public async Task PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);

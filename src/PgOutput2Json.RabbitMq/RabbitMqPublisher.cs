@@ -18,7 +18,7 @@ namespace PgOutput2Json.RabbitMq
             _logger = logger;
         }
 
-        public async Task PublishAsync(string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             var channel = await EnsureConnection(token)
                 .ConfigureAwait(false);

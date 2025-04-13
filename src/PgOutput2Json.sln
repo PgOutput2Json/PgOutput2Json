@@ -13,6 +13,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.Tests", "PgOu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.Redis", "PgOutput2Json.Redis\PgOutput2Json.Redis.csproj", "{2B6B330F-101B-4F63-9590-F10D2249491A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.RabbitMqStreams", "PgOutput2Json.RabbitMqStreams\PgOutput2Json.RabbitMqStreams.csproj", "{1C3C87DA-6D56-4ADF-9BF3-1891692F1B70}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +41,10 @@ Global
 		{2B6B330F-101B-4F63-9590-F10D2249491A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2B6B330F-101B-4F63-9590-F10D2249491A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2B6B330F-101B-4F63-9590-F10D2249491A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1C3C87DA-6D56-4ADF-9BF3-1891692F1B70}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1C3C87DA-6D56-4ADF-9BF3-1891692F1B70}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1C3C87DA-6D56-4ADF-9BF3-1891692F1B70}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1C3C87DA-6D56-4ADF-9BF3-1891692F1B70}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

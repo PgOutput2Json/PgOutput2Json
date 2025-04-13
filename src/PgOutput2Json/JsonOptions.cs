@@ -21,5 +21,7 @@
         /// Default is false (RabbitMQ is sending the table name as "messageType").
         /// </summary>
         public bool WriteTableNames { get; set; }
+
+        public bool WriteWalStart { get; set; }
     }
 }

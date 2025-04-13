@@ -45,46 +45,46 @@ namespace PgOutput2Json
             }
             else if (message is InsertMessage insertMsg)
             {
-                partition = await WriteTuple(insertMsg.NewRow,
-                                 insertMsg.Relation,
-                                 "I",
-                                 commitTimeStamp,
-                                 insertMsg.ServerClock,
-                                 _jsonOptions.WriteNulls,
-                                 token)
+                partition = await WriteTuple(insertMsg,
+                                             insertMsg.Relation,
+                                             insertMsg.NewRow,
+                                             "I",
+                                             commitTimeStamp,
+                                             _jsonOptions.WriteNulls,
+                                             token)
                     .ConfigureAwait(false);
             }
             else if (message is UpdateMessage updateMsg)
             {
-                partition = await WriteTuple(updateMsg.NewRow,
-                                 updateMsg.Relation,
-                                 "U",
-                                 commitTimeStamp,
-                                 updateMsg.ServerClock,
-                                 _jsonOptions.WriteNulls,
-                                 token)
+                partition = await WriteTuple(updateMsg,
+                                             updateMsg.Relation,
+                                             updateMsg.NewRow,
+                                             "U",
+                                             commitTimeStamp,
+                                             _jsonOptions.WriteNulls,
+                                             token)
                     .ConfigureAwait(false);
             }
             else if (message is KeyDeleteMessage keyDeleteMsg)
             {
-                partition = await WriteTuple(keyDeleteMsg.Key,
-                                 keyDeleteMsg.Relation,
-                                 "D",
-                                 commitTimeStamp,
-                                 keyDeleteMsg.ServerClock,
-                                 false,
-                                 token)
+                partition = await WriteTuple(keyDeleteMsg,
+                                             keyDeleteMsg.Relation,
+                                             keyDeleteMsg.Key,
+                                             "D",
+                                             commitTimeStamp,
+                                             false,
+                                             token)
                     .ConfigureAwait(false);
             }
             else if (message is FullDeleteMessage fullDeleteMsg)
             {
-                partition = await WriteTuple(fullDeleteMsg.OldRow,
-                                 fullDeleteMsg.Relation,
-                                 "D",
-                                 commitTimeStamp,
-                                 fullDeleteMsg.ServerClock,
-                                 false,
-                                 token)
+                partition = await WriteTuple(fullDeleteMsg,
+                                             fullDeleteMsg.Relation,
+                                             fullDeleteMsg.OldRow,
+                                             "D",
+                                             commitTimeStamp,
+                                             false,
+                                             token)
                     .ConfigureAwait(false);
             }
 
@@ -96,11 +96,11 @@ namespace PgOutput2Json
             return _result;
         }
 
-        private async Task<int> WriteTuple(ReplicationTuple tuple,
+        private async Task<int> WriteTuple(TransactionalMessage msg,
                                            RelationMessage relation,
+                                           ReplicationTuple tuple,
                                            string changeType,
                                            DateTime commitTimeStamp,
-                                           DateTime messageTimeStamp,
                                            bool sendNulls,
                                            CancellationToken cancellationToken)
         {
@@ -116,6 +116,17 @@ namespace PgOutput2Json
             _jsonBuilder.Append(changeType);
             _jsonBuilder.Append('"');
 
+            if (_jsonOptions.WriteWalStart)
+            {
+                _jsonBuilder.Append(',');
+                _jsonBuilder.Append("\"_ws\":\"");
+                _jsonBuilder.Append((ulong)msg.WalStart);
+            }
+
+            _jsonBuilder.Append(',');
+            _jsonBuilder.Append("\"_we\":");
+            _jsonBuilder.Append((ulong)msg.WalEnd);
+
             if (_jsonOptions.WriteTimestamps)
             {
                 _jsonBuilder.Append(',');
@@ -123,7 +134,7 @@ namespace PgOutput2Json
                 _jsonBuilder.Append(commitTimeStamp.Ticks);
                 _jsonBuilder.Append("\",");
                 _jsonBuilder.Append("\"_mts\":\"");
-                _jsonBuilder.Append(messageTimeStamp.Ticks);
+                _jsonBuilder.Append(msg.ServerClock.Ticks);
                 _jsonBuilder.Append('"');
             }
 
