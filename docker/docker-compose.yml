@@ -1,0 +1,14 @@
+services:
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"     # AMQP (default RabbitMQ port)
+      - "15672:15672"   # Management UI
+      - "5552:5552"     # Streams plugin port
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbitmq_stream advertised_host localhost"
+    volumes:
+      - ./rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq-config:/etc/rabbitmq
+    restart: unless-stopped
