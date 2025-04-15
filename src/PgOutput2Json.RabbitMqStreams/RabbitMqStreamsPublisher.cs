@@ -26,7 +26,7 @@ namespace PgOutput2Json.RabbitMqStreams
         {
             if (_lastWalSeq == 0 && _options.UseDeduplication)
             {
-                _lastWalSeq = await GetLastPublishedWalSeq();
+                _lastWalSeq = await GetLastPublishedWalSeq(token);
             }
 
             if (walSeqNo <= _lastWalSeq)
@@ -101,10 +101,12 @@ namespace PgOutput2Json.RabbitMqStreams
         {
             if (_streamSystem != null && !_streamSystem.IsClosed) return _streamSystem;
 
-            _logger?.LogInformation("Creating to Stream System");
+            _logger?.LogInformation("Creating stream system");
 
             _streamSystem = await StreamSystem.Create(_options.StreamSystemConfig, _loggerStreamSystem)
                 .ConfigureAwait(false);
+
+            _logger?.LogInformation("Created stream system");
 
             return _streamSystem;
         }
@@ -115,15 +117,13 @@ namespace PgOutput2Json.RabbitMqStreams
             
             var streamSystem = await EnsureStreamSystem().ConfigureAwait(false);
 
-            _logger?.LogInformation("Creating to Producer for: {StreamName}", _options.StreamName);
+            _logger?.LogInformation("Creating producer for: {StreamName}", _options.StreamName);
 
             _producer = await Producer.Create(
                 new ProducerConfig(streamSystem, _options.StreamName)
                 {
-                    ReconnectStrategy = new NoReconnectStrategy(),
-                    ResourceAvailableReconnectStrategy = new NoReconnectStrategy(),
                     MaxInFlight = _batchSize,
-                    MessagesBufferSize = _options.UseDeduplication ? 1 : _batchSize,
+                    MessagesBufferSize = _options.MessageBufferSize,
                     ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-producer",
                     ConfirmationHandler = confirmation =>
                     {
@@ -165,65 +165,78 @@ namespace PgOutput2Json.RabbitMqStreams
             )
             .ConfigureAwait(false);
 
-            _logger?.LogInformation("Created to Producer for: {StreamName}", _options.StreamName);
+            _logger?.LogInformation("Created producer for: {StreamName}", _options.StreamName);
 
             return _producer;
         }
 
-        private async Task<ulong> GetLastPublishedWalSeq()
+        private async Task<ulong> GetLastPublishedWalSeq(CancellationToken stoppingToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 
-            var streamSystem = await EnsureStreamSystem();
+            var system = await EnsureStreamSystem();
 
-            using var cancellationTokenSource = new CancellationTokenSource();
+            try
+            {
+                var stats = await system.StreamStats(_options.StreamName);
+                var firstOffset = stats.CommittedChunkId();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogInformation("Empty stream detected: {StreamName} ({ErrorMessage}).", _options.StreamName, ex.Message);
+                return 0;
+            }
 
             string? json = null;
 
-            var consumer = await Consumer.Create(new ConsumerConfig(streamSystem, _options.StreamName)
+            var receivedCount = 0;
+
+            var consumer = await Consumer.Create(new ConsumerConfig(system, _options.StreamName)
             {
                 OffsetSpec = new OffsetTypeLast(),
                 ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-consumer",
-                ReconnectStrategy = new NoReconnectStrategy(),
-                ResourceAvailableReconnectStrategy = new NoReconnectStrategy(),
                 MessageHandler = (stream, consumer, context, message) =>
                 {
+                    Interlocked.Increment(ref receivedCount);
+
                     json = Encoding.UTF8.GetString(message.Data.Contents);
-                    cancellationTokenSource.Cancel();
 
                     return Task.CompletedTask;
                 }
             }).ConfigureAwait(false);
 
-
-            try
+            // wait until no more messsage are received in the last two seconds
+            var lastCount = 0;
+            do
             {
-                await Task.Delay(TimeSpan.FromSeconds(10), cancellationTokenSource.Token)
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken)
                     .ConfigureAwait(false);
+
+                if (lastCount == receivedCount) break;
+
+                lastCount = receivedCount;
             }
-            catch (OperationCanceledException)
-            {
-            }
-            
+            while (true);
+
             await consumer.Close()
                 .ConfigureAwait(false);
 
-            if (json != null)
+            if (json == null)
             {
-                using JsonDocument doc = JsonDocument.Parse(json);
-
-                if (doc.RootElement.TryGetProperty("_we", out JsonElement weProperty)
-                    && weProperty.ValueKind == JsonValueKind.Number
-                    && weProperty.TryGetUInt64(out var value))
-                {
-                    return value;
-                }
-
-                throw new Exception($"Missing WAL end LSN in the message: '{json}'");
+                throw new Exception($"Cannot read last WAL end LSN. No messages read from an non-empty stream.");
             }
 
-            _logger?.LogWarning("Timeout consuming the last message to ensure deduplication. Possibly empty stream: {StreamName}", _options.StreamName);
-            return 0;
+            using JsonDocument doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.TryGetProperty("_we", out JsonElement weProperty)
+                && weProperty.ValueKind == JsonValueKind.Number
+                && weProperty.TryGetUInt64(out var value))
+            {
+                _logger?.LogInformation("Successfully read last WAL LSN for: {StreamName} ({LSN}).", _options.StreamName, value);
+                return value;
+            }
+
+            throw new Exception($"Missing WAL end LSN in the message: '{json}'");
         }
 
         private StreamSystem? _streamSystem;
@@ -241,18 +254,5 @@ namespace PgOutput2Json.RabbitMqStreams
         private readonly ILogger<StreamSystem>? _loggerStreamSystem;
         private readonly ILogger<Producer>? _loggerProducer;
         private readonly ILogger<RabbitMqStreamsPublisher>? _logger;
-
-        private class NoReconnectStrategy : IReconnectStrategy
-        {
-            public ValueTask WhenConnected(string itemIdentifier)
-            {
-                return ValueTask.CompletedTask;
-            }
-
-            public ValueTask<bool> WhenDisconnected(string itemIdentifier)
-            {
-                return ValueTask.FromResult(false);
-            }
-        }
     }
 }
