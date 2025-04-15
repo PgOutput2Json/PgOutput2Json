@@ -105,6 +105,7 @@ namespace PgOutput2Json
                             }
                             catch (Exception ex)
                             {
+                                MetricsHelper.IncrementErrorCounter();
                                 _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
 
                                 // if force confirm fails, stop the replication loop, and dispose the publisher
@@ -148,6 +149,8 @@ namespace PgOutput2Json
                                 await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableNames, result.KeyKolValue, result.Partition, cancellationToken)
                                     .ConfigureAwait(false);
 
+                                MetricsHelper.IncrementPublishCounter();
+
                                 if (++unconfirmedCount < _options.BatchSize)
                                 {
                                     continue;
@@ -180,6 +183,7 @@ namespace PgOutput2Json
                     }
                     else
                     {
+                        MetricsHelper.IncrementErrorCounter();
                         _logger.SafeLogError(ex, "Error in replication listener. Waiting for 10 seconds...");
                     }
                 }
