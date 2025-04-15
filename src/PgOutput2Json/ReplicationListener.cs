@@ -96,7 +96,7 @@ namespace PgOutput2Json
                                     await connection.SendStatusUpdate(cancellationToken)
                                         .ConfigureAwait(false);
                                     
-                                    _logger.SafeLogInfo("Idle Confirmed PostgreSQL");
+                                    _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
                                 }
                             }
                             catch (OperationCanceledException)
@@ -163,7 +163,7 @@ namespace PgOutput2Json
                                 await connection.SendStatusUpdate(cancellationToken)
                                     .ConfigureAwait(false);
 
-                                _logger.SafeLogInfo("Confirmed PostgreSQL");
+                                _logger.SafeLogDebug("Confirmed PostgreSQL");
                             }
                         }
                     }
