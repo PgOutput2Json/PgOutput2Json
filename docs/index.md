@@ -1,7 +1,7 @@
 # PgOutput2Json library for .NET
 
 ## Overview
-The `PgOutput2Json` library for .NET uses PostgreSQL logical replication to push changes, as JSON messages, from database tables to a .NET application, or a message broker, such as RabbitMq (implemented) or Redis (todo).
+The `PgOutput2Json` library for .NET xuses PostgreSQL logical replication to push changes, as JSON messages, from database tables to a .NET application, or a message broker, such as RabbitMq (implemented) or Redis (todo).
 
 Possible use cases for this library:
 - Performing background tasks when a row is inserted/updated in a database table

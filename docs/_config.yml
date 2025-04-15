@@ -1,0 +1,5 @@
+theme: jekyll-theme-slate
+title: PgOutput2Json.NET
+description: .NET library for building PostgreSQL CDC solutions
+github:
+  repository_url: https://github.com/PgOutput2Json/PgOutput2Json
