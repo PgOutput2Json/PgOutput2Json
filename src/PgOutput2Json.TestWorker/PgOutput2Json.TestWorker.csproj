@@ -14,9 +14,9 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.6" />
-    <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.6" />
-    <PackageReference Include="PgOutput2Json.Redis" Version="0.9.6" />
+    <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.7" />
+    <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.7" />
+    <PackageReference Include="PgOutput2Json.Redis" Version="0.9.7" />
   </ItemGroup>
 
 
