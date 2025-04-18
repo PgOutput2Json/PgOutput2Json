@@ -50,6 +50,11 @@ namespace PgOutput2Json.RabbitMqStreams
 
             await producer.Send(new Message(Encoding.UTF8.GetBytes(json)))
                 .ConfigureAwait(false);
+
+            if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug("Published to Stream={0}, Body={1}", _options.StreamName, json);
+            }
         }
 
         public async Task ConfirmAsync(CancellationToken token)
