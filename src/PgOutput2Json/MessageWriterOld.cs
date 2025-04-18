@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,20 +8,7 @@ using Npgsql.Replication.PgOutput.Messages;
 
 namespace PgOutput2Json
 {
-    interface IMessageWriter
-    {
-        Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message, DateTime commitTimeStamp, CancellationToken cancellationToken);
-    }
-
-    class MessageWriterResult
-    {
-            public int Partition;
-            public string Json = "";
-            public string TableNames = "";
-            public string KeyKolValue = "";
-    }
-
-    class MessageWriter: IMessageWriter
+    class MessageWriterOld: IMessageWriter
     {
         private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
         private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
@@ -33,7 +19,7 @@ namespace PgOutput2Json
 
         private readonly MessageWriterResult _result = new MessageWriterResult();
 
-        public MessageWriter(JsonOptions jsonOptions, ReplicationListenerOptions listenerOptions)
+        public MessageWriterOld(JsonOptions jsonOptions, ReplicationListenerOptions listenerOptions)
         {
             _jsonOptions = jsonOptions;
             _listenerOptions = listenerOptions;
@@ -54,43 +40,17 @@ namespace PgOutput2Json
                 partition = await WriteTuple(insertMsg,
                                              insertMsg.Relation,
                                              insertMsg.NewRow,
-                                             null,
                                              "I",
                                              commitTimeStamp,
                                              _jsonOptions.WriteNulls,
                                              token)
                     .ConfigureAwait(false);
             }
-            else if (message is DefaultUpdateMessage updateMsg)
+            else if (message is UpdateMessage updateMsg)
             {
                 partition = await WriteTuple(updateMsg,
                                              updateMsg.Relation,
                                              updateMsg.NewRow,
-                                             null,
-                                             "U",
-                                             commitTimeStamp,
-                                             _jsonOptions.WriteNulls,
-                                             token)
-                    .ConfigureAwait(false);
-            }
-            else if (message is FullUpdateMessage fullUpdateMsg)
-            {
-                partition = await WriteTuple(fullUpdateMsg,
-                                             fullUpdateMsg.Relation,
-                                             fullUpdateMsg.NewRow,
-                                             fullUpdateMsg.OldRow,
-                                             "U",
-                                             commitTimeStamp,
-                                             _jsonOptions.WriteNulls,
-                                             token)
-                    .ConfigureAwait(false);
-            }
-            else if (message is IndexUpdateMessage indexUpdateMsg)
-            {
-                partition = await WriteTuple(indexUpdateMsg,
-                                             indexUpdateMsg.Relation,
-                                             indexUpdateMsg.NewRow,
-                                             indexUpdateMsg.Key,
                                              "U",
                                              commitTimeStamp,
                                              _jsonOptions.WriteNulls,
@@ -101,7 +61,6 @@ namespace PgOutput2Json
             {
                 partition = await WriteTuple(keyDeleteMsg,
                                              keyDeleteMsg.Relation,
-                                             null,
                                              keyDeleteMsg.Key,
                                              "D",
                                              commitTimeStamp,
@@ -113,7 +72,6 @@ namespace PgOutput2Json
             {
                 partition = await WriteTuple(fullDeleteMsg,
                                              fullDeleteMsg.Relation,
-                                             null,
                                              fullDeleteMsg.OldRow,
                                              "D",
                                              commitTimeStamp,
@@ -132,8 +90,7 @@ namespace PgOutput2Json
 
         private async Task<int> WriteTuple(TransactionalMessage msg,
                                            RelationMessage relation,
-                                           ReplicationTuple? newRow,
-                                           ReplicationTuple? keyValues,
+                                           ReplicationTuple tuple,
                                            string changeType,
                                            DateTime commitTimeStamp,
                                            bool sendNulls,
@@ -147,31 +104,36 @@ namespace PgOutput2Json
             var tableName = _tableNameBuilder.ToString();
 
             _jsonBuilder.Clear();
-            _jsonBuilder.Append("{\"c\":\"");
+            _jsonBuilder.Append("{\"_ct\":\"");
             _jsonBuilder.Append(changeType);
             _jsonBuilder.Append('"');
 
             if (_jsonOptions.WriteWalStart)
             {
-                _jsonBuilder.Append(",\"ws\":\"");
+                _jsonBuilder.Append(',');
+                _jsonBuilder.Append("\"_ws\":\"");
                 _jsonBuilder.Append((ulong)msg.WalStart);
             }
 
-            _jsonBuilder.Append(",\"w\":");
+            _jsonBuilder.Append(',');
+            _jsonBuilder.Append("\"_we\":");
             _jsonBuilder.Append((ulong)msg.WalEnd);
 
             if (_jsonOptions.WriteTimestamps)
             {
-                _jsonBuilder.Append(",\"cts\":\"");
+                _jsonBuilder.Append(',');
+                _jsonBuilder.Append("\"_cts\":\"");
                 _jsonBuilder.Append(commitTimeStamp.Ticks);
-                _jsonBuilder.Append(",\"mts\":\"");
+                _jsonBuilder.Append("\",");
+                _jsonBuilder.Append("\"_mts\":\"");
                 _jsonBuilder.Append(msg.ServerClock.Ticks);
                 _jsonBuilder.Append('"');
             }
 
             if (_jsonOptions.WriteTableNames)
             {
-                _jsonBuilder.Append(",\"t\":\"");
+                _jsonBuilder.Append(',');
+                _jsonBuilder.Append("\"_tbl\":\"");
                 JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
                 _jsonBuilder.Append('.');
                 JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
@@ -179,6 +141,8 @@ namespace PgOutput2Json
             }
 
             _keyColValueBuilder.Clear();
+
+            int finalHash = 0x12345678;
 
             if (!_listenerOptions.TablePartitions.TryGetValue(tableName, out var partitionCount))
             {
@@ -190,57 +154,13 @@ namespace PgOutput2Json
                 includedCols = null;
             }
 
-            int? hash = null;
-
-            if (keyValues != null)
-            {
-                _jsonBuilder.Append(",\"k\":{");
-
-                hash = await WriteValues(keyValues, relation, sendNulls, null, cancellationToken)
-                    .ConfigureAwait(false);
-
-                _jsonBuilder.Append('}');
-            }
-
-            if (newRow != null)
-            {
-                _jsonBuilder.Append(",\"r\":{");
-
-                hash = await WriteValues(newRow, relation, sendNulls, includedCols, cancellationToken)
-                    .ConfigureAwait(false);
-
-                _jsonBuilder.Append('}');
-            }
-
-            _jsonBuilder.Append('}');
-
-            var partition = hash.HasValue ? hash.Value % partitionCount : 0;
-
-            if (_listenerOptions.PartitionFilter != null 
-                && (partition < _listenerOptions.PartitionFilter.FromInclusive || partition >= _listenerOptions.PartitionFilter.ToExclusive))
-            {
-                partition = -1; // this will prevent event from firing
-            }
-
-            return partition;
-        }
-
-        private async Task<int> WriteValues(ReplicationTuple tuple,
-                                       RelationMessage relation,
-                                       bool sendNulls,
-                                       IReadOnlyList<string>? includedCols,
-                                       CancellationToken cancellationToken)
-        {
-            int finalHash = 0x12345678;
-
             var i = 0;
-            var firstValue = true;
 
             await foreach (var value in tuple.ConfigureAwait(false))
             {
                 var col = relation.Columns[i++];
 
-                var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
+                var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey) 
                     == RelationMessage.Column.ColumnFlags.PartOfKey;
 
                 if (value.IsDBNull && !sendNulls) continue;
@@ -273,28 +193,20 @@ namespace PgOutput2Json
                         continue;
                     }
 
-                    StringBuilder? keyColBuilder = null;
+                    StringBuilder? valueBuilder = null;
 
                     if (isKeyColumn)
                     {
-                        keyColBuilder = _keyColValueBuilder;
-                        if (keyColBuilder.Length > 0)
+                        valueBuilder = _keyColValueBuilder;
+                        if (valueBuilder.Length > 0)
                         {
-                            keyColBuilder.Append('|');
+                            valueBuilder.Append('|');
                         }
                     }
 
-                    if (!firstValue)
-                    {
-                        _jsonBuilder.Append(',');
-                    }
-
-                    firstValue = false;
-
-                    _jsonBuilder.Append('"');
+                    _jsonBuilder.Append(",\"");
                     JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
-                    _jsonBuilder.Append('"');
-                    _jsonBuilder.Append(':');
+                    _jsonBuilder.Append("\":");
 
                     if (value.IsDBNull)
                     {
@@ -307,7 +219,7 @@ namespace PgOutput2Json
                         var colValue = await value.Get<string>(cancellationToken)
                             .ConfigureAwait(false);
 
-                        keyColBuilder?.Append(colValue);
+                        valueBuilder?.Append(colValue);
 
                         int hash;
 
@@ -339,7 +251,7 @@ namespace PgOutput2Json
                         {
                             hash = JsonUtils.WriteArrayOfText(_jsonBuilder, colValue);
                         }
-                        else
+                        else 
                         {
                             hash = JsonUtils.WriteText(_jsonBuilder, colValue);
                         }
@@ -348,8 +260,18 @@ namespace PgOutput2Json
                     }
                 }
             }
+                            
+            _jsonBuilder.Append('}');
 
-            return finalHash;
+            var partition = finalHash % partitionCount;
+
+            if (_listenerOptions.PartitionFilter != null 
+                && (partition < _listenerOptions.PartitionFilter.FromInclusive || partition >= _listenerOptions.PartitionFilter.ToExclusive))
+            {
+                partition = -1; // this will prevent event from firing
+            }
+
+            return partition;
         }
     }
 }

@@ -228,9 +228,9 @@ namespace PgOutput2Json.RabbitMqStreams
 
             using JsonDocument doc = JsonDocument.Parse(json);
 
-            if (doc.RootElement.TryGetProperty("_we", out JsonElement weProperty)
-                && weProperty.ValueKind == JsonValueKind.Number
-                && weProperty.TryGetUInt64(out var value))
+            if ((doc.RootElement.TryGetProperty("w", out JsonElement prop) || doc.RootElement.TryGetProperty("_we", out prop))
+                && prop.ValueKind == JsonValueKind.Number
+                && prop.TryGetUInt64(out var value))
             {
                 _logger?.LogInformation("Successfully read last WAL LSN for: {StreamName} ({LSN}).", _options.StreamName, value);
                 return value;

@@ -23,5 +23,10 @@
         public bool WriteTableNames { get; set; }
 
         public bool WriteWalStart { get; set; }
+
+        /// <summary>
+        /// Use old (inline) JSON format, where row values are written directly to the root document.
+        /// </summary>
+        public bool UseOldFormat { get; set; }
     }
 }

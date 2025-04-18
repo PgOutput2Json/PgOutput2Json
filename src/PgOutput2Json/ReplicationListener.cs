@@ -15,7 +15,7 @@ namespace PgOutput2Json
         private readonly ILogger<ReplicationListener>? _logger;
 
         private readonly ReplicationListenerOptions _options;
-        private readonly MessageWriter _writer;
+        private readonly IMessageWriter _writer;
 
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
@@ -29,7 +29,9 @@ namespace PgOutput2Json
             _messagePublisherFactory = messagePublisherFactory;
             _options = options;
 
-            _writer = new MessageWriter(jsonOptions, options);
+            _writer = jsonOptions.UseOldFormat
+                ? new MessageWriterOld(jsonOptions, options)
+                : new MessageWriter(jsonOptions, options);
 
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
