@@ -1,4 +1,7 @@
+using PgOutput2Json.Kafka;
+using PgOutput2Json.RabbitMq;
 using PgOutput2Json.RabbitMqStreams;
+using PgOutput2Json.Redis;
 using System.Net;
 
 namespace PgOutput2Json.TestWorker
@@ -84,6 +87,11 @@ namespace PgOutput2Json.TestWorker
                 //    [
                 //        new IPEndPoint(IPAddress.Loopback, 5552)
                 //    ];
+                //})
+                //.UseKafka(options =>
+                //{
+                //    options.ProducerConfig.BootstrapServers = "localhost:9093";
+                //    options.Topic = "my_topic";
                 //})
                 ;
 

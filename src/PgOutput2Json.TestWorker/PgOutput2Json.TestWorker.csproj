@@ -8,12 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(Configuration)' != 'Release'">
+    <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMqStreams\PgOutput2Json.RabbitMqStreams.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Redis\PgOutput2Json.Redis.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <PackageReference Include="PgOutput2Json.Kafka" Version="0.9.7" />
     <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.7" />
     <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.7" />
     <PackageReference Include="PgOutput2Json.Redis" Version="0.9.7" />
