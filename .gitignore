@@ -393,4 +393,6 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
-/docker/rabbitmq-data
+
+# Docker runtime data
+/docker/rabbitmq/rabbitmq-data
