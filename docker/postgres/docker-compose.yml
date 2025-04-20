@@ -1,0 +1,32 @@
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: postgres-pg2j
+    container_name: postgres
+    pull_policy: never
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command: [
+      "postgres",
+      "-c", "wal_level=logical",
+      "-c", "max_wal_senders=10",
+      "-c", "max_replication_slots=10"
+    ]
+    shm_size: 128mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+    name: pg2j_postgres_data

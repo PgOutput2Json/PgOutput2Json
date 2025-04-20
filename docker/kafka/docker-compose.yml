@@ -1,3 +1,6 @@
+include:
+  - ../postgres/docker-compose.yml
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
@@ -45,7 +48,12 @@ services:
 
 volumes:
   zookeeper_secrets:
+    name: pg2j_zookeeper_secrets
   zookeeper_data:
+    name: pg2j_zookeeper_data
   zookeeper_log:
+    name: pg2j_zookeeper_log
   kafka_secrets:
+    name: pg2j_kafka_secrets
   kafka_data:
+    name: pg2j_kafka_data

@@ -1,7 +1,11 @@
+include:
+  - ../postgres/docker-compose.yml
+
 services:
   rabbitmq:
     image: rabbitmq:management
     container_name: rabbitmq
+    hostname: rabbitmq  # needed to use the same folder in the volume
     ports:
       - "5672:5672"     # AMQP (default RabbitMQ port)
       - "15672:15672"   # Management UI
@@ -15,3 +19,4 @@ services:
 
 volumes:
   rabbitmq_data:
+    name: pg2j_rabbitmq_data

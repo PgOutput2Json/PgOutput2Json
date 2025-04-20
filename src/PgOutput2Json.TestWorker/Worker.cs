@@ -24,34 +24,18 @@ namespace PgOutput2Json.TestWorker
 
         private readonly ILoggerFactory _loggerFactory;
 
-        private readonly int? _batchSize;
-        private readonly int? _filterFrom;
-        private readonly int? _filterTo;
-        private readonly string[] _publicationNames;
-        private readonly string? _connectionString;
-        private readonly PartitionInfo[] _partitions;
-
         public Worker(ILoggerFactory loggerFactory, IConfiguration configuration)
         {
             _loggerFactory = loggerFactory;
-            _connectionString = configuration.GetConnectionString("PublicationDatabase");
-            _publicationNames = configuration.GetSection("AppSettings:PublicationNames").Get<string[]>() ?? Array.Empty<string>();
-            _batchSize = configuration.GetSection("AppSettings:BatchSize").Get<int?>();
-            _filterFrom = configuration.GetSection("AppSettings:PartitionFilter:FromInclusive").Get<int?>();
-            _filterTo = configuration.GetSection("AppSettings:PartitionFilter:ToExclusive").Get<int?>();
-            _partitions = configuration.GetSection("AppSettings:Partitions").Get<PartitionInfo[]>() ?? Array.Empty<PartitionInfo>();
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            if (_connectionString == null) throw new Exception("Missing connection string");
-            if (_publicationNames.Length == 0) throw new Exception("Missing publication names");
-
-            var builder = PgOutput2JsonBuilder.Create()
+            var pgOutput2Json = PgOutput2JsonBuilder.Create()
                 .WithLoggerFactory(_loggerFactory)
-                .WithPgConnectionString(_connectionString)
-                .WithPgPublications(_publicationNames)
-                //.WithPgReplicationSlot("my_slot")
+                .WithPgConnectionString("Host=localhost;Database=test_db;Username=postgres;Password=postgres")
+                .WithPgPublications("test_publication")
+                .WithPgReplicationSlot("test_slot")
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;
@@ -69,7 +53,7 @@ namespace PgOutput2Json.TestWorker
                 //    options.ConnectionFactory.UserName = "guest";
                 //    options.ConnectionFactory.Password = "guest";
                 //    options.ConnectionFactory.VirtualHost = "/";
-                //    options.ExchangeName = "my_exchange";
+                //    options.ExchangeName = "amq.topic";
                 //    options.UsePersistentMessagesByDefault = false;
                 //})
                 //.UseRedis(options =>
@@ -78,7 +62,7 @@ namespace PgOutput2Json.TestWorker
                 //})
                 //.UseRabbitMqStreams(options =>
                 //{
-                //    options.StreamName = "my_stream";
+                //    options.StreamName = "test_stream";
                 //    options.StreamSystemConfig.UserName = "guest";
                 //    options.StreamSystemConfig.Password = "guest";
                 //    options.StreamSystemConfig.VirtualHost = "/";
@@ -90,31 +74,9 @@ namespace PgOutput2Json.TestWorker
                 //.UseKafka(options =>
                 //{
                 //    options.ProducerConfig.BootstrapServers = "localhost:9092";
-                //    options.Topic = "my_topic";
+                //    options.Topic = "test_topic";
                 //})
-                ;
-
-            if (_batchSize.HasValue)
-            {
-                builder = builder.WithBatchSize(_batchSize.Value);
-            }
-
-            foreach (var partition in _partitions ?? Array.Empty<PartitionInfo>())
-            {
-                if (string.IsNullOrEmpty(partition.Table))
-                {
-                    throw new Exception("Invalid partition definition - missing table name");
-                }
-
-                builder.WithTablePartitions(partition.Table, partition.PartitionCount ?? 1);
-            }
-
-            if (_filterFrom.HasValue && _filterTo.HasValue)
-            {
-                builder.WithPartitionFilter(_filterFrom.Value, _filterTo.Value);
-            }
-
-            using var pgOutput2Json = builder.Build();
+                .Build();
 
             await pgOutput2Json.Start(stoppingToken);
         }

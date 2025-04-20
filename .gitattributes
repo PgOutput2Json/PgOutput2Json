@@ -1,3 +1,6 @@
 # Ensure specific files use Unix line endings
 docker/rabbitmq/rabbitmq-config/conf.d/10-defaults.conf text eol=lf
 docker/rabbitmq/rabbitmq-config/enabled_plugins text eol=lf
+
+docker/postgres/initdb/01-create-test-db.sql eol=lf
+docker/postgres/initdb/02-create-test-slot.sql eol=lf
