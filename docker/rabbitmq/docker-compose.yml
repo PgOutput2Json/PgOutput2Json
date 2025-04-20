@@ -9,6 +9,9 @@ services:
     environment:
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbitmq_stream advertised_host localhost"
     volumes:
-      - ./rabbitmq-data:/var/lib/rabbitmq
+      - rabbitmq_data:/var/lib/rabbitmq
       - ./rabbitmq-config:/etc/rabbitmq
     restart: unless-stopped
+
+volumes:
+  rabbitmq_data:

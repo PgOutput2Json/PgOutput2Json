@@ -5,9 +5,9 @@ services:
     ports:
       - "2181:2181"
     volumes:
-      - ./volumes/zookeeper_secrets:/etc/zookeeper/secrets
-      - ./volumes/zookeeper_data:/var/lib/zookeeper/data
-      - ./volumes/zookeeper_log:/var/lib/zookeeper/log
+      - zookeeper_secrets:/etc/zookeeper/secrets
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -27,8 +27,8 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
     volumes:
-      - ./volumes/kafka-secrets:/etc/kafka/secrets
-      - ./volumes/kafka-data:/var/lib/kafka/data
+      - kafka_secrets:/etc/kafka/secrets
+      - kafka_data:/var/lib/kafka/data
     depends_on:
       - zookeeper
 
@@ -42,3 +42,10 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     depends_on:
       - kafka
+
+volumes:
+  zookeeper_secrets:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_secrets:
+  kafka_data:
