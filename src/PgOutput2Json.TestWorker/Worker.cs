@@ -51,6 +51,7 @@ namespace PgOutput2Json.TestWorker
                 .WithLoggerFactory(_loggerFactory)
                 .WithPgConnectionString(_connectionString)
                 .WithPgPublications(_publicationNames)
+                //.WithPgReplicationSlot("my_slot")
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;
@@ -78,8 +79,6 @@ namespace PgOutput2Json.TestWorker
                 //.UseRabbitMqStreams(options =>
                 //{
                 //    options.StreamName = "my_stream";
-                //    options.UseDeduplication = true;
-
                 //    options.StreamSystemConfig.UserName = "guest";
                 //    options.StreamSystemConfig.Password = "guest";
                 //    options.StreamSystemConfig.VirtualHost = "/";
@@ -90,7 +89,7 @@ namespace PgOutput2Json.TestWorker
                 //})
                 //.UseKafka(options =>
                 //{
-                //    options.ProducerConfig.BootstrapServers = "localhost:9093";
+                //    options.ProducerConfig.BootstrapServers = "localhost:9092";
                 //    options.Topic = "my_topic";
                 //})
                 ;
