@@ -396,3 +396,4 @@ FodyWeavers.xsd
 
 # Docker runtime data
 /docker/rabbitmq/rabbitmq-data
+/docker/kafka/volumes
