@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -24,18 +23,6 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            if (_lastWalSeq == 0 && _options.UseDeduplication)
-            {
-                _lastWalSeq = await GetLastPublishedWalSeq(token);
-            }
-
-            if (walSeqNo <= _lastWalSeq)
-            {
-                return;
-            }
-
-            _lastWalSeq = walSeqNo;
-
             var producer = await EnsureProducer();
 
             lock (_confirmationLock)
@@ -175,7 +162,7 @@ namespace PgOutput2Json.RabbitMqStreams
             return _producer;
         }
 
-        private async Task<ulong> GetLastPublishedWalSeq(CancellationToken stoppingToken)
+        public async Task<ulong> GetLastPublishedWalSeq(CancellationToken stoppingToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 
@@ -231,17 +218,12 @@ namespace PgOutput2Json.RabbitMqStreams
                 throw new Exception($"Cannot read last WAL end LSN. No messages read from an non-empty stream.");
             }
 
-            using JsonDocument doc = JsonDocument.Parse(json);
-
-            if ((doc.RootElement.TryGetProperty("w", out JsonElement prop) || doc.RootElement.TryGetProperty("_we", out prop))
-                && prop.ValueKind == JsonValueKind.Number
-                && prop.TryGetUInt64(out var value))
+            if (!json.TryGetWalEnd(out var walEnd))
             {
-                _logger?.LogInformation("Successfully read last WAL LSN for: {StreamName} ({LSN}).", _options.StreamName, value);
-                return value;
+                throw new Exception($"Missing WAL end LSN in the message: '{json}'");
             }
 
-            throw new Exception($"Missing WAL end LSN in the message: '{json}'");
+            return walEnd;
         }
 
         private StreamSystem? _streamSystem;
@@ -249,8 +231,6 @@ namespace PgOutput2Json.RabbitMqStreams
 
         private int _unconfirmedCount = 0;
         private TaskCompletionSource? _confirmationTaskCompletionSource;
-
-        private ulong _lastWalSeq = 0;
 
         private readonly object _confirmationLock = new();
 

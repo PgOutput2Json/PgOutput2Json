@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,7 +20,7 @@ namespace PgOutput2Json.Kafka
 
         public Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var msgKey = string.IsNullOrEmpty(keyColumnValue) ? tableName : string.Join('|', tableName, keyColumnValue);
+            var msgKey  = string.Join('|', tableName, string.IsNullOrEmpty(keyColumnValue) ? _random.Next().ToString() : keyColumnValue);
 
             var producer = EnsureProducer();
 
@@ -63,6 +65,73 @@ namespace PgOutput2Json.Kafka
             return ValueTask.CompletedTask;
         }
 
+        public Task<ulong> GetLastPublishedWalSeq(CancellationToken cancellationToken)
+        {
+            var config = _options.ConsumerConfig ?? new ConsumerConfig(_options.ProducerConfig.ToDictionary());
+
+            config.AutoOffsetReset = AutoOffsetReset.Latest;
+            config.GroupId = $"{_options.Topic}-dedupe-{Guid.NewGuid()}";
+            config.EnableAutoCommit = false;
+
+            var partitionMetadata = GetPartitionMetadata();
+
+            using var consumer = new ConsumerBuilder<string, string>(config).Build();
+
+            var partitions = new List<TopicPartitionOffset>();
+
+            // Step 1, get partitions offsets
+            foreach (var metadata in partitionMetadata)
+            {
+                var tpp = new TopicPartition(_options.Topic, new Partition(metadata.PartitionId));
+
+                var endOffsets = consumer.QueryWatermarkOffsets(tpp, TimeSpan.FromSeconds(5));
+
+                if (endOffsets.High > 0)
+                {
+                    // seek to the last message
+                    partitions.Add(new TopicPartitionOffset(tpp, new Offset(endOffsets.High - 1)));
+                }
+            }
+
+            // Step 2: Assign manually to specific offsets
+            consumer.Assign(partitions);
+
+            var lastWalSeq = 0ul;
+
+            // Step 3: Poll once per partition
+            foreach (var tpo in partitions)
+            {
+                var record = consumer.Consume(TimeSpan.FromSeconds(5)) 
+                    ?? throw new Exception($"Could not read last WAL LSN from topic {tpo.Topic}, partition {tpo.Partition}");
+
+                if (!record.Message.Value.TryGetWalEnd(out var walSeq))
+                {
+                    throw new Exception($"Missing WAL end LSN in the message: '{record.Message.Value}'");
+                }
+
+                if (walSeq > lastWalSeq)
+                {
+                    lastWalSeq = walSeq;
+                }
+            }
+
+            consumer.Close();
+
+            return Task.FromResult(lastWalSeq);
+        }
+
+        private List<PartitionMetadata> GetPartitionMetadata()
+        {
+            var config = _options.AdminClientConfig ?? new AdminClientConfig(_options.ProducerConfig.ToDictionary());
+
+            using var adminClient = new AdminClientBuilder(config).Build();
+
+            var metadata = adminClient.GetMetadata(_options.Topic, TimeSpan.FromSeconds(10));
+            var partitions = metadata.Topics.FirstOrDefault(t => t.Topic == _options.Topic)?.Partitions;
+
+            return partitions ?? [];
+        }
+
         private IProducer<string, string> EnsureProducer()
         {
             if (_producer != null) return _producer;
@@ -83,5 +152,7 @@ namespace PgOutput2Json.Kafka
 
         private readonly KafkaPublisherOptions _options;
         private readonly ILogger<KafkaPublisher>? _logger;
+
+        private readonly Random _random = new();
     }
 }

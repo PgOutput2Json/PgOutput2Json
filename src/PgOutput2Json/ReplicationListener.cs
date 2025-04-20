@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql.Replication;
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
+using NpgsqlTypes;
 
 namespace PgOutput2Json
 {
@@ -46,7 +47,10 @@ namespace PgOutput2Json
                 {
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
 
+                    var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken));
+
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);
+
                     await using (connection.ConfigureAwait(false))
                     {
                         connection.WalReceiverStatusInterval = Timeout.InfiniteTimeSpan; // we are sending status manually
@@ -132,13 +136,25 @@ namespace PgOutput2Json
                                     continue;
                                 }
 
-                                connection.SetReplicationStatus(message.WalEnd);
-
                                 if (message is BeginMessage beginMsg)
                                 {
                                     commitTimeStamp = beginMsg.TransactionCommitTimestamp;
                                     continue;
                                 }
+                                else if (message is CommitMessage commitMsg)
+                                {
+                                    // replication status only make sense on commit (it seems)
+                                    connection.SetReplicationStatus(message.WalEnd);
+                                    continue;
+                                }
+
+                                if (message.WalEnd <= _lastWalEnd)
+                                {
+                                    // already published
+                                    continue;
+                                }
+
+                                _lastWalEnd = message.WalEnd;
 
                                 var result = await _writer.WriteMessage(message, commitTimeStamp, cancellationToken)
                                     .ConfigureAwait(false);
@@ -148,6 +164,12 @@ namespace PgOutput2Json
                                     continue;
                                 }
 
+                                if (_options.PartitionFilter != null
+                                    && (result.Partition < _options.PartitionFilter.FromInclusive || result.Partition >= _options.PartitionFilter.ToExclusive))
+                                {
+                                    continue;
+                                }
+                                
                                 await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableNames, result.KeyKolValue, result.Partition, cancellationToken)
                                     .ConfigureAwait(false);
 

@@ -48,5 +48,10 @@ namespace PgOutput2Json
         {
             return ValueTask.CompletedTask;
         }
+
+        public Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        {
+            return Task.FromResult(0ul);
+        }
     }
 }

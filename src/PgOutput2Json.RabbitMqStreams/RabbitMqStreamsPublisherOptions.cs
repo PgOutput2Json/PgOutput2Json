@@ -7,11 +7,6 @@ namespace PgOutput2Json.RabbitMqStreams
         public string StreamName { get; set; } = "pgoutput2json";
 
         /// <summary>
-        /// Default is false
-        /// </summary>
-        public bool UseDeduplication { get; set; } = false;
-
-        /// <summary>
         /// Number of the messages sent for each frame-send.<br/>
         /// High values can increase the throughput.<br/>
         /// Low values can reduce the messages latency.<br/>

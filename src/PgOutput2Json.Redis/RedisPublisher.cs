@@ -37,6 +37,11 @@ namespace PgOutput2Json.Redis
             DisposeTasks();
         }
 
+        public Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        {
+            return Task.FromResult(0ul);
+        }
+
         private void DisposeTasks()
         {
             _publishedTasks.TryDispose(_logger);

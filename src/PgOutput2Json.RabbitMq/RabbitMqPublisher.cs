@@ -52,6 +52,11 @@ namespace PgOutput2Json.RabbitMq
             _pendingTasks.Clear();
         }
 
+        public Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        {
+            return Task.FromResult(0ul);
+        }
+
         public virtual async ValueTask DisposeAsync()
         {
             _pendingTasks.Clear();

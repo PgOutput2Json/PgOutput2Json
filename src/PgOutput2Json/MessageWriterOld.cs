@@ -31,11 +31,7 @@ namespace PgOutput2Json
         {
             var partition = -1;
 
-            if (message is BeginMessage beginMsg)
-            {
-                commitTimeStamp = beginMsg.TransactionCommitTimestamp;
-            }
-            else if (message is InsertMessage insertMsg)
+            if (message is InsertMessage insertMsg)
             {
                 partition = await WriteTuple(insertMsg,
                                              insertMsg.Relation,
@@ -263,15 +259,7 @@ namespace PgOutput2Json
                             
             _jsonBuilder.Append('}');
 
-            var partition = finalHash % partitionCount;
-
-            if (_listenerOptions.PartitionFilter != null 
-                && (partition < _listenerOptions.PartitionFilter.FromInclusive || partition >= _listenerOptions.PartitionFilter.ToExclusive))
-            {
-                partition = -1; // this will prevent event from firing
-            }
-
-            return partition;
+            return finalHash % partitionCount;
         }
     }
 }
