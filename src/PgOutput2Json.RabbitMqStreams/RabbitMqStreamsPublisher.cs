@@ -223,6 +223,8 @@ namespace PgOutput2Json.RabbitMqStreams
                 throw new Exception($"Missing WAL end LSN in the message: '{json}'");
             }
 
+            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", _options.StreamName, walEnd);
+
             return walEnd;
         }
 

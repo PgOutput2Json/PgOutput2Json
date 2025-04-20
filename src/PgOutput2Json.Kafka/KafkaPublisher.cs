@@ -67,6 +67,8 @@ namespace PgOutput2Json.Kafka
 
         public Task<ulong> GetLastPublishedWalSeq(CancellationToken cancellationToken)
         {
+            _logger?.LogInformation("Reading last published WAL LSN for {Topic}", _options.Topic);
+
             var config = _options.ConsumerConfig ?? new ConsumerConfig(_options.ProducerConfig.ToDictionary());
 
             config.AutoOffsetReset = AutoOffsetReset.Latest;
@@ -116,6 +118,8 @@ namespace PgOutput2Json.Kafka
             }
 
             consumer.Close();
+
+            _logger?.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}", _options.Topic, lastWalSeq);
 
             return Task.FromResult(lastWalSeq);
         }
