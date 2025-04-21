@@ -36,6 +36,7 @@ namespace PgOutput2Json.TestWorker
                 .WithPgConnectionString("Host=localhost;Database=test_db;Username=postgres;Password=postgres")
                 .WithPgPublications("test_publication")
                 .WithPgReplicationSlot("test_slot")
+                //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;
