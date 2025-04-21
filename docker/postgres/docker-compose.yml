@@ -23,8 +23,8 @@ services:
     shm_size: 128mb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 3s
-      timeout: 3s
+      interval: 10s
+      timeout: 5s
       retries: 5
 
 volumes:
