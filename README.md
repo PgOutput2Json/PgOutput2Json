@@ -121,8 +121,7 @@ public class Worker : BackgroundService
 }
 ```
 
-> **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.  
-For persistent replication, refer to the next section.
+> **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.
 
 ## 2. Working with Permanent Replication Slots
 
