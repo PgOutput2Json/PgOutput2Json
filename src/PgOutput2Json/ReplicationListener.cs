@@ -197,7 +197,11 @@ namespace PgOutput2Json
                 }
                 catch (OperationCanceledException)
                 {
-                    break;
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        _logger.SafeLogWarn("Stopping ReplicationListener - cancellation requested");
+                        break;
+                    }
                 }
                 catch (Exception ex)
                 {
