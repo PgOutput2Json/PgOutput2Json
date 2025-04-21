@@ -11,9 +11,9 @@ namespace PgOutput2Json.Kafka
             _options = options;
         }
 
-        public IMessagePublisher CreateMessagePublisher(int batchSize, ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
         {
-            return new KafkaPublisher(_options, batchSize, loggerFactory?.CreateLogger<KafkaPublisher>());
+            return new KafkaPublisher(_options, listenerOptions.BatchSize, loggerFactory?.CreateLogger<KafkaPublisher>());
         }
     }
 }

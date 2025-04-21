@@ -4,6 +4,6 @@ namespace PgOutput2Json
 {
     public interface IMessagePublisherFactory
     {
-        public IMessagePublisher CreateMessagePublisher(int batchSize, ILoggerFactory? loggerFactory);
+        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory);
     }
 }

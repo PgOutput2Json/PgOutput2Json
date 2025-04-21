@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using Npgsql.Replication.PgOutput.Messages;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,7 +16,7 @@ namespace PgOutput2Json
             _messageHandler = messageHandler;
         }
 
-        public IMessagePublisher CreateMessagePublisher(int batchSize, ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
         {
             return new SimpleMessagePublisher(_messageHandler, loggerFactory?.CreateLogger<SimpleMessagePublisher>());
         }
@@ -52,6 +53,11 @@ namespace PgOutput2Json
         public Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
         {
             return Task.FromResult(0ul);
+        }
+
+        public Task HandleRelationMessage(RelationMessage message, CancellationToken token)
+        {
+            return Task.CompletedTask;
         }
     }
 }

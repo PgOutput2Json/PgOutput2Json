@@ -397,3 +397,6 @@ FodyWeavers.xsd
 # Docker runtime data
 /docker/rabbitmq/rabbitmq-data
 /docker/kafka/volumes
+
+# Test SQLite database
+/src/PgOutput2Json.TestWorker/test_database.s3db

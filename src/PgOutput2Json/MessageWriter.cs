@@ -16,10 +16,10 @@ namespace PgOutput2Json
 
     class MessageWriterResult
     {
-            public int Partition;
-            public string Json = "";
-            public string TableNames = "";
-            public string KeyKolValue = "";
+        public int Partition;
+        public string Json = "";
+        public string TableNames = "";
+        public string KeyKolValue = "";
     }
 
     class MessageWriter: IMessageWriter
@@ -193,9 +193,9 @@ namespace PgOutput2Json
                 _jsonBuilder.Append(",\"k\":{");
 
                 var writeKeyValues = newRow == null; // only write key values if new row is not present (deletes)
-
+                
                 hash = await WriteValues(keyRow, relation, sendNulls, writeKeyValues, includedCols, cancellationToken)
-                    .ConfigureAwait(false);
+                        .ConfigureAwait(false);
 
                 _jsonBuilder.Append('}');
             }
@@ -218,7 +218,7 @@ namespace PgOutput2Json
         private async Task<int> WriteValues(ReplicationTuple tuple,
                                             RelationMessage relation,
                                             bool sendNulls,
-                                            bool writeKeyValues,
+                                            bool writeToKeyValueBuilder,
                                             IReadOnlyList<string>? includedCols,
                                             CancellationToken cancellationToken)
         {
@@ -238,21 +238,7 @@ namespace PgOutput2Json
 
                 if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
                 {
-                    var isIncluded = includedCols == null; // if not specified, included by default
-
-                    if (includedCols != null)
-                    {
-                        foreach (var c in includedCols)
-                        {
-                            if (c == col.ColumnName)
-                            {
-                                isIncluded = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!isIncluded)
+                    if (!IsIncluded(includedCols, col))
                     {
                         if (!value.IsDBNull)
                         {
@@ -266,7 +252,7 @@ namespace PgOutput2Json
 
                     StringBuilder? keyColBuilder = null;
 
-                    if (isKeyColumn && writeKeyValues)
+                    if (isKeyColumn && writeToKeyValueBuilder)
                     {
                         keyColBuilder = _keyColValueBuilder;
 
@@ -359,5 +345,68 @@ namespace PgOutput2Json
 
             return finalHash;
         }
+
+        private static bool IsIncluded(IReadOnlyList<string>? includedCols, RelationMessage.Column col)
+        {
+            if (includedCols == null) return true; // if not specified, included by default
+
+            foreach (var c in includedCols)
+            {
+                if (c == col.ColumnName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /*
+        private void WriteSchema(RelationMessage relation, IReadOnlyList<string>? includedCols)
+        {
+            var i = 0;
+            foreach (var col in relation.Columns)
+            {
+                if (!IsIncluded(includedCols, col)) continue;
+
+                if (i == 0)
+                {
+                    _jsonBuilder.Append(",\"s\":{");
+                }
+                else
+                {
+                    _jsonBuilder.Append(',');
+                }
+
+                var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
+                    == RelationMessage.Column.ColumnFlags.PartOfKey;
+
+                _jsonBuilder.Append('"');
+                JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
+                _jsonBuilder.Append('"');
+                _jsonBuilder.Append(':');
+
+                _jsonBuilder.Append('"');
+                _jsonBuilder.Append(isKeyColumn ? 't' : 'f');
+                _jsonBuilder.Append(',');
+                JsonUtils.EscapeText(_jsonBuilder, col.DataTypeId.ToString());
+
+                if (col.TypeModifier >= 0)
+                {
+                    _jsonBuilder.Append(',');
+                    JsonUtils.EscapeText(_jsonBuilder, col.TypeModifier.ToString());
+                }
+
+                _jsonBuilder.Append('"');
+
+                i++;
+            }
+
+            if (i > 0)
+            {
+                _jsonBuilder.Append('}');
+            }
+        }
+        */
     }
 }

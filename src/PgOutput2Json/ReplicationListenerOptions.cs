@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace PgOutput2Json
 {
-    class ReplicationListenerOptions
+    public class ReplicationListenerOptions
     {
         public string ConnectionString { get; private set; }
         public string[] PublicationNames { get; private set; }

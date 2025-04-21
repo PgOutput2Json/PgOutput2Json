@@ -9,7 +9,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Authors>PgOutput2Json</Authors>
     <Copyright>Copyright (c) 2021 PgOutput2Json</Copyright>
-    <Description>PgOutput2Json.RabbitMQ library uses PostgreSQL logical replication to push changes, as JSON messages, from database tables to Kafka</Description>
+    <Description>PgOutput2Json.Kafka library uses PostgreSQL logical replication to push changes, as JSON messages, from database tables to Kafka</Description>
     <PackageIcon>icon.png</PackageIcon>
     <PackageProjectUrl>https://github.com/PgOutput2Json/PgOutput2Json</PackageProjectUrl>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>

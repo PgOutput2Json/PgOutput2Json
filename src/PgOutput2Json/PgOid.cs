@@ -1,5 +1,7 @@
 ﻿namespace PgOutput2Json
 {
+    // taken from: https://github.com/postgres/postgres/blob/90260e2ec6bbfc3dfa9d9501ab75c535de52f677/src/include/catalog/pg_type.dat
+
     internal enum PgOid
     {
         BOOLOID = 16,
@@ -17,6 +19,7 @@
         XIDOID = 28,
         CIDOID = 29,
         OIDVECTOROID = 30,
+
         POINTOID = 600,
         LSEGOID = 601,
         PATHOID = 602,
@@ -56,7 +59,13 @@
         A_NUMERICOID = 1231,
 
         A_BPCHAROID = 1014,
-        A_VARCHAROID = 1015
+        A_VARCHAROID = 1015,
+
+        JSONOID = 114,
+        A_JSONOID = 199, // array of json
+
+        XMLOID = 142,
+        A_XMLOID = 143, // array of xml
     }
 
     internal static class PgOidExtensions
@@ -96,7 +105,9 @@
         public static bool IsArrayOfText(this PgOid pgOid)
         {
             return pgOid == PgOid.A_BPCHAROID
-                || pgOid == PgOid.A_VARCHAROID;
+                || pgOid == PgOid.A_VARCHAROID
+                || pgOid == PgOid.A_JSONOID
+                || pgOid == PgOid.A_XMLOID;
         }
 
         public static bool IsArrayOfBoolean(this PgOid pgOid)

@@ -42,7 +42,7 @@ namespace PgOutput2Json
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options.BatchSize, _loggerFactory);
+                var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
                 try
                 {
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
@@ -132,6 +132,7 @@ namespace PgOutput2Json
 
                                 if (message is RelationMessage rel)
                                 {
+                                    await messagePublisher.HandleRelationMessage(rel, cancellationToken);
                                     // Relation Message has WalEnd=0/0
                                     continue;
                                 }

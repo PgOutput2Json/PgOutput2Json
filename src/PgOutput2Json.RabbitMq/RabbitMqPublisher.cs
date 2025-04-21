@@ -4,6 +4,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+
+using Npgsql.Replication.PgOutput.Messages;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
@@ -55,6 +57,11 @@ namespace PgOutput2Json.RabbitMq
         public Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
         {
             return Task.FromResult(0ul);
+        }
+
+        public Task HandleRelationMessage(RelationMessage message, CancellationToken token)
+        {
+            return Task.CompletedTask;
         }
 
         public virtual async ValueTask DisposeAsync()
