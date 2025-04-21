@@ -122,7 +122,7 @@ public class Worker : BackgroundService
             .WithMessageHandler((json, table, key, partition) =>  
             {  
                 Console.WriteLine($"{table}: {json}");
-				return Task.FromResult(true);
+                return Task.FromResult(true);
             })  
             .Build();  
 
