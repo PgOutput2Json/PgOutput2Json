@@ -49,7 +49,7 @@ namespace PgOutput2Json.Redis
             }
             else
             {
-                var task = _redis.GetDatabase().StreamAddAsync(name, "msg", json, flags: CommandFlags.DemandMaster);
+                var task = _redis.GetDatabase().StreamAddAsync(name, "m", json, flags: CommandFlags.DemandMaster);
 
                 _publishedTasks.Add(task);
 
