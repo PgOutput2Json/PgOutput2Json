@@ -2,8 +2,6 @@
 
 **PgOutput2Json** is a .NET library that uses **PostgreSQL logical replication** to stream **JSON-encoded change events** from your database to a .NET application or a message broker like **RabbitMQ**, **Kafka**, or **Redis**.
 
----
-
 ## 🚀 Use Cases
 
 Use `PgOutput2Json` when you need to react to DB changes in near real-time:
@@ -16,8 +14,6 @@ Use `PgOutput2Json` when you need to react to DB changes in near real-time:
 
 All with **minimal latency** — events are dispatched shortly after a transaction is committed, though large transactions may introduce additional delay due to processing and transmission overhead.
 
----
-
 ## 🔌 Supported Outputs
 
 - ✅ **.NET application** via a simple delegate handler
@@ -26,8 +22,6 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Redis**
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
-
----
 
 ## 🧠 How It Works
 
@@ -41,13 +35,9 @@ PostgreSQL 10+ ships with a built-in logical decoding plugin called `pgoutput`, 
 
 No extra plugins needed — `pgoutput` comes with PostgreSQL by default.
 
----
-
 ## ⚠️ Development Status
 
 **Still early days** — the library is under active development, but it's **fully usable for testing and early integration**.
-
----
 
 ## 1. Quick Start
 
@@ -134,8 +124,6 @@ public class Worker : BackgroundService
 > **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.  
 For persistent replication, refer to the next section.
 
----
-
 ## 2. Working with Permanent Replication Slots
 
 If you want to capture changes made while the worker is stopped, you need a permanent replication slot. 
@@ -176,8 +164,6 @@ using var pgOutput2Json = PgOutput2JsonBuilder.Create()
 	.WithPgReplicationSlot("my_slot")      // <-- slot specified here
 //...
 ```
-
----
 
 ## 3. Using RabbitMQ (Classic)
 
@@ -244,8 +230,6 @@ public class Worker : BackgroundService
 Run the code, and with a little luck, you should see JSON messages being pushed into the `my_queue` in RabbitMQ when you make a change in the tables specified in `my_publication`. 
 The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
 
----
-
 ## 4. Using RabbitMQ (Streams)
 
 Using RabbitMQ Streams is similar to the standard RabbitMQ setup, but instead of creating an exchange and binding queues, you need to create a stream, and configure the stream protocol in RabbitMQ.
@@ -308,8 +292,6 @@ public class Worker : BackgroundService
 Once the stream is configured in RabbitMQ and the .NET service is running, changes to the PostgreSQL tables specified in `my_publication` will be pushed to the `my_stream` stream in RabbitMQ. 
 No need to manage exchanges or queues — everything will flow directly through the stream.
 
----
-
 ## 5. Using Kafka
 
 Kafka is supported out of the box and works similarly to the RabbitMQ integrations. PgOutput2Json will publish JSON messages directly to a Kafka topic.
@@ -365,11 +347,9 @@ public class Worker : BackgroundService
 
 Once the service is running, any changes made to the tables listed in `my_publication` will be published to the `my_topic` topic in Kafka as JSON messages.
 
----
-
 ## 6. Using Redis
 
-PgOutput2Json supports publishing JSON messages to Redis Pub/Sub channels. This is a simple way to broadcast change events to multiple listeners.
+PgOutput2Json supports publishing JSON messages to Redis streams (default) or Pub/Sub channels.
 
 > ⚠️ **Important:** First, set up the database, as described in the **QuickStart** section above.
 
@@ -407,7 +387,10 @@ public class Worker : BackgroundService
             .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
             .WithPgPublications("my_publication")  
             .UseRedis(options =>  
-            {  
+            {
+                options.StreamName = "my_stream";
+                options.PublishMode = PublishMode.Stream;
+                options.StreamNameSuffix = StreamNameSuffix.None; // or TableName, or TableNameAndPartition
                 options.Redis.EndPoints.Add("localhost:6379");  
             })  
             .Build();  
@@ -417,9 +400,6 @@ public class Worker : BackgroundService
 }
 ```
 
-JSON messages will be published to Redis channels using the format: `schema.table.partition`.  
-For example, changes to the `public.users` table will be published to the channel `public.users.0`.
+JSON messages will be published to the specified Redis stream. If a stream name suffix is specified, the stream or channel name becomes dynamic, using the format: `stream_name:schema.table:partition`.
 
-> **Note:** The `partition` value is `0` by default unless configured otherwise.
-
----
+> **Note:** The table name is always qualified with the schema using the `.` character.
