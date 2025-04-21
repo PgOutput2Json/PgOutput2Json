@@ -11,6 +11,11 @@ namespace PgOutput2Json.Kafka
         /// </summary>
         public bool WriteHeaders { get; set; } = false;
 
+        /// <summary>
+        /// Default is false
+        /// </summary>
+        public bool WriteTableNameToMessageKey { get; set; } = false;
+
         public ProducerConfig ProducerConfig { get; set; } = new ProducerConfig
         {
             BootstrapServers = "localhost:9092",

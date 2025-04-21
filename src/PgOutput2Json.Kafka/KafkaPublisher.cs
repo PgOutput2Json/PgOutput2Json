@@ -20,7 +20,12 @@ namespace PgOutput2Json.Kafka
 
         public Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var msgKey  = string.Join('|', tableName, string.IsNullOrEmpty(keyColumnValue) ? _random.Next().ToString() : keyColumnValue);
+            var msgKey = string.IsNullOrEmpty(keyColumnValue) ? _random.Next().ToString() : keyColumnValue;
+
+            if (_options.WriteTableNameToMessageKey) 
+            {
+                msgKey = string.Join('|', tableName, msgKey);
+            }
 
             var producer = EnsureProducer();
 
