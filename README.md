@@ -17,9 +17,9 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 ## 🔌 Supported Outputs
 
 - ✅ **.NET application** via a simple delegate handler
-- ✅ **RabbitMQ** (Classic queues + Streams)
 - ✅ **Kafka**
-- ✅ **Redis**
+- ✅ **RabbitMQ** (Streams + Classic Queues)
+- ✅ **Redis** (Streams + Pub/Sub Channels)
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -143,9 +143,9 @@ The current position of each slot is persisted only at checkpoint, so in the cas
 
 > **Note:** It is the responsibility of the receiving client to avoid the ill effects from handling the same message more than once.
 
-> ⚠️ **Important:** Replication slots persist across crashes and know nothing about the state of their consumer(s). They will prevent removal of required resources even when there is no connection using them. This consumes storage because neither required WAL nor required rows from the system catalogs can be removed by VACUUM as long as they are required by a replication slot. 
+⚠️ **Important:** Replication slots persist across crashes and know nothing about the state of their consumer(s). They will prevent removal of required resources even when there is no connection using them. This consumes storage because neither required WAL nor required rows from the system catalogs can be removed by VACUUM as long as they are required by a replication slot. 
 
-In extreme cases, this could cause the database to shut down to prevent transaction ID wraparound. 
+**In extreme cases, this could cause the database to shut down to prevent transaction ID wraparound.**
 
 **So, if a slot is no longer required, it should be dropped.** To drop a replication slot, use:
 
