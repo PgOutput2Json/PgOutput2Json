@@ -194,7 +194,7 @@ namespace PgOutput2Json
 
                 var writeKeyValues = newRow == null; // only write key values if new row is not present (deletes)
 
-                hash = await WriteValues(keyRow, relation, sendNulls, writeKeyValues, null, cancellationToken)
+                hash = await WriteValues(keyRow, relation, sendNulls, writeKeyValues, includedCols, cancellationToken)
                     .ConfigureAwait(false);
 
                 _jsonBuilder.Append('}');
@@ -252,7 +252,7 @@ namespace PgOutput2Json
                         }
                     }
 
-                    if (!isIncluded && !isKeyColumn)
+                    if (!isIncluded)
                     {
                         if (!value.IsDBNull)
                         {
