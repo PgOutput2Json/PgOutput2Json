@@ -35,6 +35,18 @@ PostgreSQL 10+ ships with a built-in logical decoding plugin called `pgoutput`, 
 
 No extra plugins needed — `pgoutput` comes with PostgreSQL by default.
 
+The change events JSON format:
+```
+{
+  "c": "U",             // Change type: I (insert), U (update), D (delete)
+  "w": 2485645760,      // WAL end offset
+  "t": "schema.table",  // Table name (if enabled in JSON options)
+  "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
+                        // or old row values, if the table uses REPLICA IDENTITY FULL
+  "r": { ... }          // New row values (not present for deletes)
+}
+```
+
 ## ⚠️ Development Status
 
 **Still early days** — the library is under active development, but it's **fully usable for testing and early integration**.
@@ -57,7 +69,7 @@ Other necessary settings usually have appropriate default values for a basic set
 
 Next, create a user in PostgreSQL that will be used for replication. Run the following SQL command:
 
-```
+```sql
 CREATE USER pgoutput2json WITH  
     PASSWORD '_your_password_here_'  
     REPLICATION;
@@ -73,7 +85,7 @@ If you are connecting from a remote machine, don't forget to modify `pg_hba.conf
 
 Now, connect to the target database and create a publication to specify which tables and actions should be replicated:
 
-```
+```sql
 CREATE PUBLICATION my_publication  
     FOR TABLE my_table1, my_table2  
     WITH (publish = 'insert, update, delete');
@@ -91,7 +103,7 @@ dotnet add package PgOutput2Json
 
 In your `Worker.cs`, add the following:
 
-```
+```csharp
 using PgOutput2Json;
 
 public class Worker : BackgroundService  
@@ -132,7 +144,7 @@ Each slot streams a sequence of changes from a single database.
 
 To create a replication slot, call the `pg_create_logical_replication_slot` function in the same database that holds the tables being tracked:
 
-```
+```sql
 SELECT * FROM pg_create_logical_replication_slot('my_slot', 'pgoutput');
 ```
 
@@ -148,13 +160,13 @@ The current position of each slot is persisted only at checkpoint, so in the cas
 
 **So, if a slot is no longer required, it should be dropped.** To drop a replication slot, use:
 
-```
+```sql
 SELECT * FROM pg_drop_replication_slot('my_slot');
 ```
 
 Once the replication slot is created, to use it, simply specify the name of the slot in the `PgOutput2JsonBuilder`:
 
-```
+```csharp
 // ...
 using var pgOutput2Json = PgOutput2JsonBuilder.Create()
     .WithLoggerFactory(_loggerFactory)
@@ -190,7 +202,7 @@ dotnet add package PgOutput2Json.RabbitMq
 
 In your `Worker.cs`, add the following code:
 
-```
+```csharp
 using PgOutput2Json.RabbitMq;
 
 public class Worker : BackgroundService  
@@ -252,7 +264,7 @@ dotnet add package PgOutput2Json.RabbitMqStreams
 
 In your `Worker.cs`, add the following code to use RabbitMQ Streams:
 
-```
+```csharp
 using PgOutput2Json.RabbitMqStreams;
 
 public class Worker : BackgroundService  
@@ -314,7 +326,7 @@ dotnet add package PgOutput2Json.Kafka
 
 In your `Worker.cs`, use the following code to publish changes to Kafka:
 
-```
+```csharp
 using PgOutput2Json.Kafka;
 
 public class Worker : BackgroundService  
@@ -367,7 +379,7 @@ dotnet add package PgOutput2Json.Redis
 
 In your `Worker.cs`, use the following code to publish change events to Redis:
 
-```
+```csharp
 using PgOutput2Json.Redis;
 
 public class Worker : BackgroundService  
