@@ -253,7 +253,7 @@ dotnet add package PgOutput2Json.RabbitMqStreams
 In your `Worker.cs`, add the following code to use RabbitMQ Streams:
 
 ```
-using PgOutput2Json.RabbitMq;
+using PgOutput2Json.RabbitMqStreams;
 
 public class Worker : BackgroundService  
 {  
