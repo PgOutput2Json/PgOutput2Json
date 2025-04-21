@@ -158,10 +158,10 @@ Once the replication slot is created, to use it, simply specify the name of the 
 ```
 // ...
 using var pgOutput2Json = PgOutput2JsonBuilder.Create()
-	.WithLoggerFactory(_loggerFactory)
-	.WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
-	.WithPgPublications("my_publication")
-	.WithPgReplicationSlot("my_slot")      // <-- slot specified here
+    .WithLoggerFactory(_loggerFactory)
+    .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
+    .WithPgPublications("my_publication")
+    .WithPgReplicationSlot("my_slot")      // <-- slot specified here
 //...
 ```
 
@@ -217,8 +217,9 @@ public class Worker : BackgroundService
                 options.Password = "guest";  
                 options.VirtualHost = "/";  
                 options.ExchangeName = "my_exchange";
-				
-				options.UsePersistentMessagesByDefault = false;
+
+                // set to true for persistent messages
+                options.UsePersistentMessagesByDefault = false; 
             })  
             .Build();  
 
@@ -266,7 +267,7 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
     {  
-	    // This code assumes PostgreSQL and RabbitMQ are on localhost  
+        // This code assumes PostgreSQL and RabbitMQ are on localhost  
         using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
             .WithLoggerFactory(_loggerFactory)  
             .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
