@@ -12,6 +12,7 @@
     <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMqStreams\PgOutput2Json.RabbitMqStreams.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Redis\PgOutput2Json.Redis.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Sqlite\PgOutput2Json.Sqlite.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
@@ -19,6 +20,7 @@
     <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.10" />
     <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.10" />
     <PackageReference Include="PgOutput2Json.Redis" Version="0.9.10" />
+    <PackageReference Include="PgOutput2Json.Sqlite" Version="0.9.10" />
   </ItemGroup>
 
 

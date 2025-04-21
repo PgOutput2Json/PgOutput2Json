@@ -2,6 +2,7 @@ using PgOutput2Json.Kafka;
 using PgOutput2Json.RabbitMq;
 using PgOutput2Json.RabbitMqStreams;
 using PgOutput2Json.Redis;
+using PgOutput2Json.Sqlite;
 using System.Net;
 
 namespace PgOutput2Json.TestWorker
@@ -77,6 +78,10 @@ namespace PgOutput2Json.TestWorker
                 //{
                 //    options.ProducerConfig.BootstrapServers = "localhost:9092";
                 //    options.Topic = "test_topic";
+                //})
+                //.UseSqlite(options =>
+                //{
+                //    options.ConnectionStringBuilder.DataSource = "test_database.s3db";
                 //})
                 .Build();
 
