@@ -59,6 +59,7 @@ namespace PgOutput2Json.TestWorker
                 //})
                 //.UseRedis(options =>
                 //{
+                //    options.StreamName = "test_stream";
                 //    options.Redis.EndPoints.Add("localhost:6379");
                 //})
                 //.UseRabbitMqStreams(options =>

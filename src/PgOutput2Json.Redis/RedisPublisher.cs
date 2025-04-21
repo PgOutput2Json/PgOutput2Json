@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -20,11 +21,43 @@ namespace PgOutput2Json.Redis
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
 
-            var channel = RedisChannel.Literal($"{tableName}.{partition}");
+            string name;
 
-            var task = _redis.GetSubscriber().PublishAsync(channel, json);
+            if (_options.StreamNameSuffix == StreamNameSuffix.TableName)
+            {
+                name = string.Join(':', _options.StreamName, tableName);
+            }
+            else if (_options.StreamNameSuffix == StreamNameSuffix.TableNameAndPartition)
+            {
+                name = string.Join(':', _options.StreamName, tableName, partition);
+            }
+            else
+            {
+                name = _options.StreamName;
+            }
 
-            _publishedTasks.Add(task);
+            if (_options.PublishMode == PublishMode.Channel)
+            {
+                var task = _redis.GetSubscriber().PublishAsync(RedisChannel.Literal(name), json, CommandFlags.DemandMaster);
+
+                _publishedTasks.Add(task);
+
+                if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug("Published to Channel={ChannelName}, Body={Body}", name, json);
+                }
+            }
+            else
+            {
+                var task = _redis.GetDatabase().StreamAddAsync(name, "msg", json, flags: CommandFlags.DemandMaster);
+
+                _publishedTasks.Add(task);
+
+                if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug("Published to Stream={StreamName}, Body={Body}", name, json);
+                }
+            }
         }
 
         public async Task ConfirmAsync(CancellationToken token)
@@ -37,9 +70,40 @@ namespace PgOutput2Json.Redis
             DisposeTasks();
         }
 
-        public Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
         {
-            return Task.FromResult(0ul);
+            if (_options.PublishMode == PublishMode.Channel) return 0; // cannot do de-duplication with channels
+
+            _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
+                .ConfigureAwait(false);
+
+            var entries = _redis.GetDatabase().StreamRange(_options.StreamName, "-", "+", count: 1, messageOrder: Order.Descending, flags: CommandFlags.DemandMaster);
+
+            if (entries.Length == 0)
+            {
+                return 0;
+            }
+
+            var lastEntry = entries[^1];
+
+            if (lastEntry.Values.Length == 0)
+            {
+                throw new Exception($"Could not rad WAL end LSN - missing entry value");
+            }
+
+            var json = lastEntry.Values[0].Value.ToString();
+
+            if (string.IsNullOrEmpty(json))
+            {
+                throw new Exception($"Could not rad WAL end LSN - entry value is null or empty");
+            }
+
+            if (!json.TryGetWalEnd(out var walEnd))
+            {
+                throw new Exception($"Missing WAL end LSN in the message: '{json}'");
+            }
+
+            return walEnd;
         }
 
         private void DisposeTasks()
@@ -57,7 +121,9 @@ namespace PgOutput2Json.Redis
         }
 
         private ConnectionMultiplexer? _redis;
-        private List<Task<long>> _publishedTasks = new List<Task<long>>();
+
+        private List<Task> _publishedTasks = [];
+
         private readonly RedisPublisherOptions _options;
         private readonly ILogger<RedisPublisher>? _logger;
     }
