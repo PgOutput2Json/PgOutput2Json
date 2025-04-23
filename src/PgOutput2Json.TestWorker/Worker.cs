@@ -43,6 +43,7 @@ namespace PgOutput2Json.TestWorker
                     //options.WriteNulls = true;
                     //options.WriteTimestamps = true;
                     //options.WriteTableNames = true;
+                    //options.WriteMode = JsonWriteMode.Compact;
                 })
                 .WithMessageHandler((json, table, key, partition) =>
                 {

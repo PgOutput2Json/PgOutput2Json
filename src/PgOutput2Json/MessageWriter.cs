@@ -11,7 +11,7 @@ namespace PgOutput2Json
 {
     interface IMessageWriter
     {
-        Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message, DateTime commitTimeStamp, CancellationToken cancellationToken);
+        Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message, DateTime commitTimeStamp, bool hasRelationChanged, CancellationToken cancellationToken);
     }
 
     class MessageWriterResult
@@ -41,6 +41,7 @@ namespace PgOutput2Json
 
         public async Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message,
                                                             DateTime commitTimeStamp,
+                                                            bool hasRelationChanged,
                                                             CancellationToken token)
         {
             var partition = -1;
@@ -52,8 +53,9 @@ namespace PgOutput2Json
                                              insertMsg.NewRow,
                                              null,
                                              "I",
+                                             null,
                                              commitTimeStamp,
-                                             _jsonOptions.WriteNulls,
+                                             hasRelationChanged,
                                              token)
                     .ConfigureAwait(false);
             }
@@ -64,8 +66,9 @@ namespace PgOutput2Json
                                              updateMsg.NewRow,
                                              null,
                                              "U",
+                                             null,
                                              commitTimeStamp,
-                                             _jsonOptions.WriteNulls,
+                                             hasRelationChanged,
                                              token)
                     .ConfigureAwait(false);
             }
@@ -76,8 +79,9 @@ namespace PgOutput2Json
                                              fullUpdateMsg.NewRow,
                                              fullUpdateMsg.OldRow,
                                              "U",
+                                             "F",
                                              commitTimeStamp,
-                                             _jsonOptions.WriteNulls,
+                                             hasRelationChanged,
                                              token)
                     .ConfigureAwait(false);
             }
@@ -88,8 +92,9 @@ namespace PgOutput2Json
                                              indexUpdateMsg.NewRow,
                                              indexUpdateMsg.Key,
                                              "U",
+                                             "K",
                                              commitTimeStamp,
-                                             _jsonOptions.WriteNulls,
+                                             hasRelationChanged,
                                              token)
                     .ConfigureAwait(false);
             }
@@ -100,8 +105,9 @@ namespace PgOutput2Json
                                              null,
                                              keyDeleteMsg.Key,
                                              "D",
+                                             "K",
                                              commitTimeStamp,
-                                             false,
+                                             hasRelationChanged,
                                              token)
                     .ConfigureAwait(false);
             }
@@ -112,8 +118,9 @@ namespace PgOutput2Json
                                              null,
                                              fullDeleteMsg.OldRow,
                                              "D",
+                                             "F",
                                              commitTimeStamp,
-                                             false,
+                                             hasRelationChanged,
                                              token)
                     .ConfigureAwait(false);
             }
@@ -131,8 +138,9 @@ namespace PgOutput2Json
                                            ReplicationTuple? newRow,
                                            ReplicationTuple? keyRow,
                                            string changeType,
+                                           string? keyType,
                                            DateTime commitTimeStamp,
-                                           bool sendNulls,
+                                           bool hasRelationChanged,
                                            CancellationToken cancellationToken)
         {
             _tableNameBuilder.Clear();
@@ -186,28 +194,43 @@ namespace PgOutput2Json
                 includedCols = null;
             }
 
+            if (_jsonOptions.WriteMode == JsonWriteMode.Compact && hasRelationChanged)
+            {
+                _jsonBuilder.Append(',');
+                WriteSchema(relation, includedCols);
+            }
+
             int? hash = null;
 
             if (keyRow != null)
             {
-                _jsonBuilder.Append(",\"k\":{");
+                _jsonBuilder.Append(",\"k\":");
+                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
                 var writeKeyValues = newRow == null; // only write key values if new row is not present (deletes)
                 
-                hash = await WriteValues(keyRow, relation, sendNulls, writeKeyValues, includedCols, cancellationToken)
+                hash = await WriteValues(keyRow, relation, writeKeyValues, includedCols, cancellationToken)
                         .ConfigureAwait(false);
 
-                _jsonBuilder.Append('}');
+                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
+            }
+
+            if (keyType != null)
+            {
+                _jsonBuilder.Append(",\"kt\":\"");
+                _jsonBuilder.Append(keyType);
+                _jsonBuilder.Append('"');
             }
 
             if (newRow != null)
             {
-                _jsonBuilder.Append(",\"r\":{");
+                _jsonBuilder.Append(",\"r\":");
+                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
-                hash = await WriteValues(newRow, relation, sendNulls, true, includedCols, cancellationToken)
+                hash = await WriteValues(newRow, relation, true, includedCols, cancellationToken)
                     .ConfigureAwait(false);
 
-                _jsonBuilder.Append('}');
+                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
             }
 
             _jsonBuilder.Append('}');
@@ -217,7 +240,6 @@ namespace PgOutput2Json
 
         private async Task<int> WriteValues(ReplicationTuple tuple,
                                             RelationMessage relation,
-                                            bool sendNulls,
                                             bool writeToKeyValueBuilder,
                                             IReadOnlyList<string>? includedCols,
                                             CancellationToken cancellationToken)
@@ -234,107 +256,112 @@ namespace PgOutput2Json
                 var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
                     == RelationMessage.Column.ColumnFlags.PartOfKey;
 
-                if (value.IsDBNull && !sendNulls) continue;
+                // we must write nulls in compact mode to preserve the column indexes (no column names)
+                if (value.IsDBNull && !_jsonOptions.WriteNulls && _jsonOptions.WriteMode != JsonWriteMode.Compact) continue;
 
-                if (value.IsDBNull || value.Kind == TupleDataKind.TextValue)
+                if (!value.IsDBNull && value.Kind != TupleDataKind.TextValue) continue;
+
+                if (!IsIncluded(includedCols, col))
                 {
-                    if (!IsIncluded(includedCols, col))
+                    if (!value.IsDBNull)
                     {
-                        if (!value.IsDBNull)
-                        {
-                            // this is a hack to skip bytes (dispose does the trick)
-                            // otherwise, npgsql throws exception
-                            await value.Get<string>(cancellationToken)
-                                .ConfigureAwait(false);
-                        }
-                        continue;
+                        // this is a hack to skip bytes (dispose does the trick)
+                        // otherwise, npgsql throws exception
+                        await value.Get<string>(cancellationToken)
+                            .ConfigureAwait(false);
                     }
+                    continue;
+                }
 
-                    StringBuilder? keyColBuilder = null;
+                StringBuilder? keyColBuilder = null;
 
-                    if (isKeyColumn && writeToKeyValueBuilder)
+                if (isKeyColumn && writeToKeyValueBuilder)
+                {
+                    keyColBuilder = _keyColValueBuilder;
+
+                    if (keyColBuilder.Length == 0)
                     {
-                        keyColBuilder = _keyColValueBuilder;
-
-                        if (keyColBuilder.Length == 0)
-                        {
-                            keyColBuilder.Append('[');
-                        }
-                        else
-                        {
-                            keyColBuilder.Append(',');
-                        }
+                        keyColBuilder.Append('[');
                     }
-
-                    if (!firstValue)
+                    else
                     {
-                        _jsonBuilder.Append(',');
+                        keyColBuilder.Append(',');
                     }
+                }
 
-                    firstValue = false;
+                if (!firstValue)
+                {
+                    _jsonBuilder.Append(',');
+                }
+
+                firstValue = false;
+
+                if (_jsonOptions.WriteMode != JsonWriteMode.Compact)
+                {
+                    // skip property name writing if we are in compact mode
 
                     _jsonBuilder.Append('"');
                     JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
                     _jsonBuilder.Append('"');
                     _jsonBuilder.Append(':');
+                }
 
-                    if (value.IsDBNull)
+                if (value.IsDBNull)
+                {
+                    _jsonBuilder.Append("null");
+                    keyColBuilder?.Append("null");
+                }
+                else if (value.Kind == TupleDataKind.TextValue)
+                {
+                    var pgOid = (PgOid)col.DataTypeId;
+
+                    var colValue = await value.Get<string>(cancellationToken)
+                        .ConfigureAwait(false);
+
+                    int hash;
+
+                    if (pgOid.IsNumber())
                     {
-                        _jsonBuilder.Append("null");
-                        keyColBuilder?.Append("null");
+                        hash = JsonUtils.WriteNumber(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteNumber(keyColBuilder, colValue);
                     }
-                    else if (value.Kind == TupleDataKind.TextValue)
+                    else if (pgOid.IsBoolean())
                     {
-                        var pgOid = (PgOid)col.DataTypeId;
-
-                        var colValue = await value.Get<string>(cancellationToken)
-                            .ConfigureAwait(false);
-
-                        int hash;
-
-                        if (pgOid.IsNumber())
-                        {
-                            hash = JsonUtils.WriteNumber(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteNumber(keyColBuilder, colValue);
-                        }
-                        else if (pgOid.IsBoolean())
-                        {
-                            hash = JsonUtils.WriteBoolean(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteBoolean(keyColBuilder, colValue);
-                        }
-                        else if (pgOid.IsByte())
-                        {
-                            hash = JsonUtils.WriteByte(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteByte(keyColBuilder, colValue);
-                        }
-                        else if (pgOid.IsArrayOfNumber())
-                        {
-                            hash = JsonUtils.WriteArrayOfNumber(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteArrayOfNumber(keyColBuilder, colValue);
-                        }
-                        else if (pgOid.IsArrayOfByte())
-                        {
-                            hash = JsonUtils.WriteArrayOfByte(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteArrayOfByte(keyColBuilder, colValue);
-                        }
-                        else if (pgOid.IsArrayOfBoolean())
-                        {
-                            hash = JsonUtils.WriteArrayOfBoolean(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteArrayOfBoolean(keyColBuilder, colValue);
-                        }
-                        else if (pgOid.IsArrayOfText())
-                        {
-                            hash = JsonUtils.WriteArrayOfText(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteArrayOfText(keyColBuilder, colValue);
-                        }
-                        else
-                        {
-                            hash = JsonUtils.WriteText(_jsonBuilder, colValue);
-                            if (keyColBuilder != null) JsonUtils.WriteText(keyColBuilder, colValue);
-                        }
-
-                        if (isKeyColumn) finalHash ^= hash;
+                        hash = JsonUtils.WriteBoolean(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteBoolean(keyColBuilder, colValue);
                     }
+                    else if (pgOid.IsByte())
+                    {
+                        hash = JsonUtils.WriteByte(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteByte(keyColBuilder, colValue);
+                    }
+                    else if (pgOid.IsArrayOfNumber())
+                    {
+                        hash = JsonUtils.WriteArrayOfNumber(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteArrayOfNumber(keyColBuilder, colValue);
+                    }
+                    else if (pgOid.IsArrayOfByte())
+                    {
+                        hash = JsonUtils.WriteArrayOfByte(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteArrayOfByte(keyColBuilder, colValue);
+                    }
+                    else if (pgOid.IsArrayOfBoolean())
+                    {
+                        hash = JsonUtils.WriteArrayOfBoolean(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteArrayOfBoolean(keyColBuilder, colValue);
+                    }
+                    else if (pgOid.IsArrayOfText())
+                    {
+                        hash = JsonUtils.WriteArrayOfText(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteArrayOfText(keyColBuilder, colValue);
+                    }
+                    else
+                    {
+                        hash = JsonUtils.WriteText(_jsonBuilder, colValue);
+                        if (keyColBuilder != null) JsonUtils.WriteText(keyColBuilder, colValue);
+                    }
+
+                    if (isKeyColumn) finalHash ^= hash;
                 }
             }
 
@@ -361,7 +388,6 @@ namespace PgOutput2Json
             return false;
         }
 
-        /*
         private void WriteSchema(RelationMessage relation, IReadOnlyList<string>? includedCols)
         {
             var i = 0;
@@ -371,12 +397,14 @@ namespace PgOutput2Json
 
                 if (i == 0)
                 {
-                    _jsonBuilder.Append(",\"s\":{");
+                    _jsonBuilder.Append("\"s\":[");
                 }
                 else
                 {
                     _jsonBuilder.Append(',');
                 }
+
+                _jsonBuilder.Append('[');
 
                 var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
                     == RelationMessage.Column.ColumnFlags.PartOfKey;
@@ -384,29 +412,28 @@ namespace PgOutput2Json
                 _jsonBuilder.Append('"');
                 JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
                 _jsonBuilder.Append('"');
-                _jsonBuilder.Append(':');
-
-                _jsonBuilder.Append('"');
-                _jsonBuilder.Append(isKeyColumn ? 't' : 'f');
                 _jsonBuilder.Append(',');
+
+                _jsonBuilder.Append(isKeyColumn ? '1' : '0');
+                _jsonBuilder.Append(',');
+
                 JsonUtils.EscapeText(_jsonBuilder, col.DataTypeId.ToString());
 
-                if (col.TypeModifier >= 0)
+                if (col.TypeModifier != -1)
                 {
                     _jsonBuilder.Append(',');
                     JsonUtils.EscapeText(_jsonBuilder, col.TypeModifier.ToString());
                 }
 
-                _jsonBuilder.Append('"');
+                _jsonBuilder.Append(']');
 
                 i++;
             }
 
             if (i > 0)
             {
-                _jsonBuilder.Append('}');
+                _jsonBuilder.Append(']');
             }
         }
-        */
     }
 }

@@ -89,6 +89,11 @@ namespace PgOutput2Json
                         {
                             try
                             {
+                                if (cancellationToken.IsCancellationRequested)
+                                {
+                                    return;
+                                }
+
                                 using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                                 {
                                     if (unconfirmedCount > 0)
@@ -123,6 +128,8 @@ namespace PgOutput2Json
                         // since lock ensures idle confirm cannot happen at the same time
                         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
 
+                        var hasRelationChanged = true;
+
                         await foreach (var message in connection.StartReplication(slot, replicationOptions, linkedCts.Token)
                             .ConfigureAwait(false))
                         {
@@ -132,6 +139,8 @@ namespace PgOutput2Json
 
                                 if (message is RelationMessage rel)
                                 {
+                                    hasRelationChanged = true; 
+
                                     // Relation Message has WalEnd=0/0
                                     continue;
                                 }
@@ -156,8 +165,10 @@ namespace PgOutput2Json
 
                                 _lastWalEnd = message.WalEnd;
 
-                                var result = await _writer.WriteMessage(message, commitTimeStamp, cancellationToken)
+                                var result = await _writer.WriteMessage(message, commitTimeStamp, hasRelationChanged, cancellationToken)
                                     .ConfigureAwait(false);
+
+                                hasRelationChanged = false;
 
                                 if (result.Partition < 0)
                                 {

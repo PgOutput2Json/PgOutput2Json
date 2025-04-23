@@ -27,6 +27,7 @@ namespace PgOutput2Json
 
         public async Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message,
                                                             DateTime commitTimeStamp,
+                                                            bool hasRelationChanged,
                                                             CancellationToken token)
         {
             var partition = -1;
