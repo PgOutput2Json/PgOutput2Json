@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 using Microsoft.Data.Sqlite;
-using Npgsql.Replication.PgOutput.Messages;
 
 namespace PgOutput2Json.Sqlite
 {
@@ -40,11 +39,6 @@ namespace PgOutput2Json.Sqlite
             var cn = await EnsureConnection(token).ConfigureAwait(false);
 
             return await cn.GetWalEnd(token).ConfigureAwait(false);
-        }
-
-        public Task HandleRelationMessage(RelationMessage message, CancellationToken token)
-        {
-            return Task.CompletedTask;
         }
 
         public async ValueTask DisposeAsync()

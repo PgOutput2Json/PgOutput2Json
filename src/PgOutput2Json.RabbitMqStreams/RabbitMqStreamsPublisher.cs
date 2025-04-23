@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
-using Npgsql.Replication.PgOutput.Messages;
 using RabbitMQ.Stream.Client;
 using RabbitMQ.Stream.Client.Reliable;
 
@@ -56,11 +55,6 @@ namespace PgOutput2Json.RabbitMqStreams
                         .ConfigureAwait(false);
                 }
             }
-        }
-
-        public Task HandleRelationMessage(RelationMessage message, CancellationToken token)
-        {
-            return Task.CompletedTask;
         }
 
         public virtual async ValueTask DisposeAsync()

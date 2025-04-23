@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 using Confluent.Kafka;
-using Npgsql.Replication.PgOutput.Messages;
 
 namespace PgOutput2Json.Kafka
 {
@@ -51,11 +50,6 @@ namespace PgOutput2Json.Kafka
         {
             _producer?.Flush(token);
 
-            return Task.CompletedTask;
-        }
-
-        public Task HandleRelationMessage(RelationMessage message, CancellationToken token)
-        {
             return Task.CompletedTask;
         }
 

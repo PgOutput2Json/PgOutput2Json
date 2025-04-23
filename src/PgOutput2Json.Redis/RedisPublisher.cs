@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
-using Npgsql.Replication.PgOutput.Messages;
 using StackExchange.Redis;
 
 namespace PgOutput2Json.Redis
@@ -105,11 +104,6 @@ namespace PgOutput2Json.Redis
             }
 
             return walEnd;
-        }
-
-        public Task HandleRelationMessage(RelationMessage message, CancellationToken token)
-        {
-            return Task.CompletedTask;
         }
 
         private void DisposeTasks()

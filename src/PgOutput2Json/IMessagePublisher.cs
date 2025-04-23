@@ -2,8 +2,6 @@
 using System.Threading;
 using System.Threading.Tasks;
 
-using Npgsql.Replication.PgOutput.Messages;
-
 namespace PgOutput2Json
 {
     public interface IMessagePublisher: IAsyncDisposable
@@ -12,7 +10,5 @@ namespace PgOutput2Json
         Task ConfirmAsync(CancellationToken token);
 
         Task<ulong> GetLastPublishedWalSeq(CancellationToken token);
-
-        Task HandleRelationMessage(RelationMessage message, CancellationToken token);
     }
 }

@@ -132,7 +132,6 @@ namespace PgOutput2Json
 
                                 if (message is RelationMessage rel)
                                 {
-                                    await messagePublisher.HandleRelationMessage(rel, cancellationToken);
                                     // Relation Message has WalEnd=0/0
                                     continue;
                                 }
