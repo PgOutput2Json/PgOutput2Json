@@ -2,7 +2,7 @@
 {
     // taken from: https://github.com/postgres/postgres/blob/90260e2ec6bbfc3dfa9d9501ab75c535de52f677/src/include/catalog/pg_type.dat
 
-    internal enum PgOid
+    public enum PgOid
     {
         BOOLOID = 16,
         BYTEAOID = 17,
