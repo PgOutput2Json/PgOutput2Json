@@ -53,7 +53,6 @@ namespace PgOutput2Json
                                              insertMsg.NewRow,
                                              null,
                                              "I",
-                                             null,
                                              commitTimeStamp,
                                              hasRelationChanged,
                                              token)
@@ -66,7 +65,6 @@ namespace PgOutput2Json
                                              updateMsg.NewRow,
                                              null,
                                              "U",
-                                             null,
                                              commitTimeStamp,
                                              hasRelationChanged,
                                              token)
@@ -79,7 +77,6 @@ namespace PgOutput2Json
                                              fullUpdateMsg.NewRow,
                                              fullUpdateMsg.OldRow,
                                              "U",
-                                             "F",
                                              commitTimeStamp,
                                              hasRelationChanged,
                                              token)
@@ -92,7 +89,6 @@ namespace PgOutput2Json
                                              indexUpdateMsg.NewRow,
                                              indexUpdateMsg.Key,
                                              "U",
-                                             "K",
                                              commitTimeStamp,
                                              hasRelationChanged,
                                              token)
@@ -105,7 +101,6 @@ namespace PgOutput2Json
                                              null,
                                              keyDeleteMsg.Key,
                                              "D",
-                                             "K",
                                              commitTimeStamp,
                                              hasRelationChanged,
                                              token)
@@ -118,7 +113,6 @@ namespace PgOutput2Json
                                              null,
                                              fullDeleteMsg.OldRow,
                                              "D",
-                                             "F",
                                              commitTimeStamp,
                                              hasRelationChanged,
                                              token)
@@ -138,7 +132,6 @@ namespace PgOutput2Json
                                            ReplicationTuple? newRow,
                                            ReplicationTuple? keyRow,
                                            string changeType,
-                                           string? keyType,
                                            DateTime commitTimeStamp,
                                            bool hasRelationChanged,
                                            CancellationToken cancellationToken)
@@ -157,7 +150,7 @@ namespace PgOutput2Json
 
             if (_jsonOptions.WriteWalStart)
             {
-                _jsonBuilder.Append(",\"ws\":\"");
+                _jsonBuilder.Append(",\"ws\":");
                 _jsonBuilder.Append((ulong)msg.WalStart);
             }
 
@@ -166,11 +159,10 @@ namespace PgOutput2Json
 
             if (_jsonOptions.WriteTimestamps)
             {
-                _jsonBuilder.Append(",\"cts\":\"");
+                _jsonBuilder.Append(",\"cts\":");
                 _jsonBuilder.Append(commitTimeStamp.Ticks);
-                _jsonBuilder.Append(",\"mts\":\"");
+                _jsonBuilder.Append(",\"mts\":");
                 _jsonBuilder.Append(msg.ServerClock.Ticks);
-                _jsonBuilder.Append('"');
             }
 
             if (_jsonOptions.WriteTableNames)
@@ -207,19 +199,12 @@ namespace PgOutput2Json
                 _jsonBuilder.Append(",\"k\":");
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
-                var writeKeyValues = newRow == null; // only write key values if new row is not present (deletes)
+                var writeToKeyBuilder = newRow == null; // only write key values if new row is not present (deletes)
                 
-                hash = await WriteValues(keyRow, relation, writeKeyValues, includedCols, cancellationToken)
+                hash = await WriteValues(keyRow, relation, writeToKeyBuilder, includedCols, true, cancellationToken)
                         .ConfigureAwait(false);
 
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
-            }
-
-            if (keyType != null)
-            {
-                _jsonBuilder.Append(",\"kt\":\"");
-                _jsonBuilder.Append(keyType);
-                _jsonBuilder.Append('"');
             }
 
             if (newRow != null)
@@ -227,7 +212,7 @@ namespace PgOutput2Json
                 _jsonBuilder.Append(",\"r\":");
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
-                hash = await WriteValues(newRow, relation, true, includedCols, cancellationToken)
+                hash = await WriteValues(newRow, relation, true, includedCols, false, cancellationToken)
                     .ConfigureAwait(false);
 
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
@@ -242,6 +227,7 @@ namespace PgOutput2Json
                                             RelationMessage relation,
                                             bool writeToKeyValueBuilder,
                                             IReadOnlyList<string>? includedCols,
+                                            bool isKeyRow,
                                             CancellationToken cancellationToken)
         {
             int finalHash = 0x12345678;
@@ -257,11 +243,12 @@ namespace PgOutput2Json
                     == RelationMessage.Column.ColumnFlags.PartOfKey;
 
                 // we must write nulls in compact mode to preserve the column indexes (no column names)
-                if (value.IsDBNull && !_jsonOptions.WriteNulls && _jsonOptions.WriteMode != JsonWriteMode.Compact) continue;
+                if (value.IsDBNull && !_jsonOptions.WriteNulls && _jsonOptions.WriteMode != JsonWriteMode.Compact)
+                {
+                    continue;
+                }
 
-                if (!value.IsDBNull && value.Kind != TupleDataKind.TextValue) continue;
-
-                if (!IsIncluded(includedCols, col))
+                if (!IsIncluded(includedCols, col) || (isKeyRow && !isKeyColumn) || (!value.IsDBNull && value.Kind != TupleDataKind.TextValue))
                 {
                     if (!value.IsDBNull)
                     {
@@ -390,20 +377,18 @@ namespace PgOutput2Json
 
         private void WriteSchema(RelationMessage relation, IReadOnlyList<string>? includedCols)
         {
-            var i = 0;
+            _jsonBuilder.Append("\"s\":[");
+            _jsonBuilder.Append('"');
+            JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
+            _jsonBuilder.Append('.');
+            JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
+            _jsonBuilder.Append('"');
+
             foreach (var col in relation.Columns)
             {
                 if (!IsIncluded(includedCols, col)) continue;
 
-                if (i == 0)
-                {
-                    _jsonBuilder.Append("\"s\":[");
-                }
-                else
-                {
-                    _jsonBuilder.Append(',');
-                }
-
+                _jsonBuilder.Append(',');
                 _jsonBuilder.Append('[');
 
                 var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
@@ -426,14 +411,9 @@ namespace PgOutput2Json
                 }
 
                 _jsonBuilder.Append(']');
-
-                i++;
             }
 
-            if (i > 0)
-            {
-                _jsonBuilder.Append(']');
-            }
+            _jsonBuilder.Append(']');
         }
     }
 }
