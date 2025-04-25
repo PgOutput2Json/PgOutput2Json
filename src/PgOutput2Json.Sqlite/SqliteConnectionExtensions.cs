@@ -124,9 +124,8 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                                           JsonElement rowElement,
                                           CancellationToken token)
         {
-            using var trans = await cn.BeginTransactionAsync(token).ConfigureAwait(false);
-
             var changeType = changeTypeElement.GetString();
+
             if (changeType == "I")
             {
                 await cn.Insert(fullTableName, columns, rowElement, token).ConfigureAwait(false);
@@ -145,8 +144,6 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             }
 
             await cn.SetWalEnd(walEnd, token).ConfigureAwait(false);
-
-            await trans.CommitAsync(token).ConfigureAwait(false);
         }
 
         public static async Task Insert(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, CancellationToken token)

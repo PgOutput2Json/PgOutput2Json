@@ -1,12 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Data.Common;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Logging;
-
 using Microsoft.Data.Sqlite;
-using System.Collections.Generic;
 
 namespace PgOutput2Json.Sqlite
 {
@@ -17,6 +17,7 @@ namespace PgOutput2Json.Sqlite
         private readonly ILogger<SqlitePublisher>? _logger;
 
         private SqliteConnection? _connection;
+        private DbTransaction? _transaction;
 
         private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = new();
 
@@ -31,7 +32,7 @@ namespace PgOutput2Json.Sqlite
 
         public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var connection = await EnsureConnection(token).ConfigureAwait(false);
+            var connection = await EnsureConnectionInTransaction(token).ConfigureAwait(false);
 
             using var doc = JsonDocument.Parse(json);
 
@@ -40,9 +41,12 @@ namespace PgOutput2Json.Sqlite
             await ParseRow(connection, tableName, doc, token).ConfigureAwait(false);
         }
 
-        public Task ConfirmAsync(CancellationToken token)
+        public async Task ConfirmAsync(CancellationToken token)
         {
-            return Task.CompletedTask;
+            if (_transaction == null) return;
+
+            await _transaction.CommitAsync(token).ConfigureAwait(false);
+            _transaction = null;
         }
 
         public async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
@@ -126,8 +130,17 @@ namespace PgOutput2Json.Sqlite
             await _connection.OpenAsync(token).ConfigureAwait(false);
 
             await _connection.CreateConfigTable(token).ConfigureAwait(false);
-            
+
             return _connection;
+        }
+
+        private async Task<SqliteConnection> EnsureConnectionInTransaction(CancellationToken token)
+        {
+            var connection = await EnsureConnection(token).ConfigureAwait(false);
+
+            _transaction ??= await connection.BeginTransactionAsync(token).ConfigureAwait(false);
+
+            return connection;
         }
     }
 }
