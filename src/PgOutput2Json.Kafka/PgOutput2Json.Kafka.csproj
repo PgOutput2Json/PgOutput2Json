@@ -4,7 +4,7 @@
     <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
-	<Version>0.9.10</Version>
+	<Version>0.9.11</Version>
     <RepositoryUrl>https://github.com/PgOutput2Json/PgOutput2Json</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Authors>PgOutput2Json</Authors>
@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <PackageReference Include="PgOutput2Json" Version="0.9.10" />
+    <PackageReference Include="PgOutput2Json" Version="0.9.11" />
   </ItemGroup>
 
 
