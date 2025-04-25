@@ -449,7 +449,7 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
     {  
-        // This code assumes PostgreSQL and Redis are running on localhost  
+        // This code assumes PostgreSQL is running on localhost  
         using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
             .WithLoggerFactory(_loggerFactory)  
             .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
