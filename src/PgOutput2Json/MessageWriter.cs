@@ -186,10 +186,17 @@ namespace PgOutput2Json
                 includedCols = null;
             }
 
-            if (_jsonOptions.WriteMode == JsonWriteMode.Compact && hasRelationChanged)
+            if (hasRelationChanged)
             {
                 _jsonBuilder.Append(',');
-                WriteSchema(relation, includedCols);
+                if (_jsonOptions.WriteMode == JsonWriteMode.Compact)
+                {
+                    WriteSchemaCompact(relation, includedCols);
+                }
+                else
+                {
+                    WriteSchema(relation, includedCols);
+                }
             }
 
             int? hash = null;
@@ -376,6 +383,56 @@ namespace PgOutput2Json
         }
 
         private void WriteSchema(RelationMessage relation, IReadOnlyList<string>? includedCols)
+        {
+            _jsonBuilder.Append("\"schema\":{");
+
+            _jsonBuilder.Append("\"tableName\":");
+            _jsonBuilder.Append('"');
+            JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
+            _jsonBuilder.Append('.');
+            JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
+            _jsonBuilder.Append('"');
+
+            _jsonBuilder.Append(",\"columns\":[");
+
+            var i = 0;
+            foreach (var col in relation.Columns)
+            {
+                if (!IsIncluded(includedCols, col)) continue;
+
+                var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
+                    == RelationMessage.Column.ColumnFlags.PartOfKey;
+
+                if (i > 0) _jsonBuilder.Append(',');
+
+                _jsonBuilder.Append('{');
+
+                _jsonBuilder.Append("\"name\":");
+                _jsonBuilder.Append('"');
+                JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
+                _jsonBuilder.Append('"');
+
+                _jsonBuilder.Append(",\"isKey\":");
+                _jsonBuilder.Append(isKeyColumn ? "true" : "false");
+
+                _jsonBuilder.Append(",\"dataType\":");
+                JsonUtils.EscapeText(_jsonBuilder, col.DataTypeId.ToString());
+
+                if (col.TypeModifier != -1)
+                {
+                    _jsonBuilder.Append(",\"typeModifier\":");
+                    JsonUtils.EscapeText(_jsonBuilder, col.TypeModifier.ToString());
+                }
+
+                _jsonBuilder.Append('}');
+                i++;
+            }
+
+            _jsonBuilder.Append(']'); // columns
+            _jsonBuilder.Append('}'); // schema
+        }
+
+        private void WriteSchemaCompact(RelationMessage relation, IReadOnlyList<string>? includedCols)
         {
             _jsonBuilder.Append("\"s\":[");
             _jsonBuilder.Append('"');
