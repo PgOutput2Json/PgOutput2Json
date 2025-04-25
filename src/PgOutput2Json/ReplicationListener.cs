@@ -42,9 +42,11 @@ namespace PgOutput2Json
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
+                IMessagePublisher? messagePublisher = null; 
                 try
                 {
+                    messagePublisher =_messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
+
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
 
                     var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken));
