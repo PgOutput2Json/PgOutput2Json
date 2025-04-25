@@ -20,6 +20,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Kafka**
 - ✅ **RabbitMQ** (Streams + Classic Queues)
 - ✅ **Redis** (Streams + Pub/Sub Channels)
+- ✅ **SQLite**
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -415,3 +416,51 @@ public class Worker : BackgroundService
 JSON messages will be published to the specified Redis stream. If a stream name suffix is specified, the stream or channel name becomes dynamic, using the format: `stream_name:schema.table:partition`.
 
 > **Note:** The table name is always qualified with the schema using the `.` character.
+
+## 7. Using SQLite
+
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. Rows are copied only when they change, using logical replication and compact JSON messages. 
+
+The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified. This means that once a table is created, DDL changes are not replicated.
+
+> ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
+
+### 7.1 Create a .NET Worker Service
+
+Set up a new **.NET Worker Service** and add the following package reference:
+
+```
+dotnet add package PgOutput2Json.Sqlite
+```
+
+In your `Worker.cs`, use the following code to configure change propagation to SQLite:
+
+```csharp
+using PgOutput2Json.SQLite;
+
+public class Worker : BackgroundService  
+{  
+    private readonly ILoggerFactory _loggerFactory;  
+
+    public Worker(ILoggerFactory loggerFactory)  
+    {  
+        _loggerFactory = loggerFactory;  
+    }  
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
+    {  
+        // This code assumes PostgreSQL and Redis are running on localhost  
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
+            .WithLoggerFactory(_loggerFactory)  
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
+            .WithPgPublications("my_publication")  
+            .UseSqlite(options =>
+            {
+                options.ConnectionStringBuilder.DataSource = "my_database.s3db";
+            }) 
+            .Build();  
+
+        await pgOutput2Json.Start(stoppingToken);  
+    }  
+}
+```
