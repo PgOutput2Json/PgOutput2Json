@@ -133,11 +133,15 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             }
             else if (changeType == "U")
             {
-                throw new NotImplementedException();
+                var count = await cn.Update(fullTableName, columns, keyElement, rowElement, token).ConfigureAwait(false);
+                if (count == 0)
+                {
+                    await cn.Insert(fullTableName, columns, rowElement, token).ConfigureAwait(false);
+                }
             }
             else if (changeType == "D")
             {
-                throw new NotImplementedException();
+                await cn.Delete(fullTableName, columns, keyElement, token).ConfigureAwait(false);
             }
 
             await cn.SetWalEnd(walEnd, token).ConfigureAwait(false);
@@ -169,36 +173,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             {
                 if (i > 0) sqlBuilder.Append(", ");
 
-                switch (valElement.ValueKind)
-                {
-                    case JsonValueKind.Undefined:
-                    case JsonValueKind.Null:
-                        sqlBuilder.Append("NULL");
-                        break;
-                    case JsonValueKind.Number:
-                        if (valElement.TryGetInt64(out var intValue))
-                        {
-                            sqlBuilder.Append(intValue.ToString(CultureInfo.InvariantCulture));
-                        }
-                        else
-                        {
-                            valElement.TryGetDecimal(out var decimalValue);
-                            sqlBuilder.Append(decimalValue.ToString(CultureInfo.InvariantCulture));
-                        }
-                        break;
-                    case JsonValueKind.True:
-                        sqlBuilder.Append('1');
-                        break;
-                    case JsonValueKind.False:
-                        sqlBuilder.Append('0');
-                        break;
-                    case JsonValueKind.String:
-                        sqlBuilder.Append($"'{valElement.GetString()}'");
-                        break;
-                    default:
-                        sqlBuilder.Append($"'{valElement.GetRawText()}'");
-                        break;
-                }
+                WriteColumnValue(sqlBuilder, valElement);
 
                 i++;
             }
@@ -210,6 +185,137 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             cmd.CommandText = sqlBuilder.ToString();
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        public static async Task<int> Update(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
+        {
+            var tableName = GetTableName(fullTableName);
+
+            var setFieldsBuilder = new StringBuilder();
+            var whereBuilder = new StringBuilder();
+
+            int i;
+
+            if (keyElement.ValueKind != JsonValueKind.Undefined)
+            {
+                i = 0;
+                foreach (var column in columns)
+                {
+                    if (!column.IsKey) continue;
+
+                    if (whereBuilder.Length > 0) whereBuilder.Append(" AND ");
+
+                    WriteColumnValueAssignment(whereBuilder, keyElement[i], column, true);
+
+                    i++;
+                }
+            }
+
+            var hasWhere = whereBuilder.Length > 0; 
+
+            i = 0;
+            foreach (var column in columns)
+            {
+                if (column.IsKey && !hasWhere)
+                {
+                    if (whereBuilder.Length > 0) whereBuilder.Append(" AND ");
+
+                    WriteColumnValueAssignment(whereBuilder, rowElement[i], column);
+
+                    i++;
+                    continue;
+                } 
+
+                if (setFieldsBuilder.Length > 0) setFieldsBuilder.Append(", ");
+
+                WriteColumnValueAssignment(setFieldsBuilder, rowElement[i], column);
+
+                i++;
+            }
+
+            var sqlBuilder = new StringBuilder($"UPDATE \"{tableName}\" SET ");
+            sqlBuilder.Append(setFieldsBuilder);
+            sqlBuilder.Append(" WHERE ");
+            sqlBuilder.Append(whereBuilder);
+
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = sqlBuilder.ToString();
+
+            return await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        public static async Task Delete(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
+        {
+            var tableName = GetTableName(fullTableName);
+
+            var sqlBuilder = new StringBuilder($"DELETE FROM \"{tableName}\" WHERE ");
+
+            var i = 0;
+
+            foreach (var column in columns)
+            {
+                if (!column.IsKey) continue;
+
+                if (i > 0) sqlBuilder.Append(" AND ");
+
+                WriteColumnValueAssignment(sqlBuilder, keyElement[i], column, true);
+
+                i++;
+            }
+
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = sqlBuilder.ToString();
+
+            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        private static void WriteColumnValueAssignment(StringBuilder keysBuilder, JsonElement rowElement, ColumnInfo column, bool isWhereStatement = false)
+        {
+            if (isWhereStatement && rowElement.ValueKind == JsonValueKind.Null)
+            {
+                keysBuilder.Append($"\"{column.Name}\" IS NULL");
+            }
+            else
+            {
+                keysBuilder.Append($"\"{column.Name}\"=");
+                WriteColumnValue(keysBuilder, rowElement);
+            }
+        }
+
+        private static void WriteColumnValue(StringBuilder sqlBuilder, JsonElement valElement)
+        {
+            switch (valElement.ValueKind)
+            {
+                case JsonValueKind.Undefined:
+                case JsonValueKind.Null:
+                    sqlBuilder.Append("NULL");
+                    break;
+                case JsonValueKind.Number:
+                    if (valElement.TryGetInt64(out var intValue))
+                    {
+                        sqlBuilder.Append(intValue.ToString(CultureInfo.InvariantCulture));
+                    }
+                    else
+                    {
+                        valElement.TryGetDecimal(out var decimalValue);
+                        sqlBuilder.Append(decimalValue.ToString(CultureInfo.InvariantCulture));
+                    }
+                    break;
+                case JsonValueKind.True:
+                    sqlBuilder.Append('1');
+                    break;
+                case JsonValueKind.False:
+                    sqlBuilder.Append('0');
+                    break;
+                case JsonValueKind.String:
+                    sqlBuilder.Append($"'{valElement.GetString()}'");
+                    break;
+                default:
+                    sqlBuilder.Append($"'{valElement.GetRawText()}'");
+                    break;
+            }
         }
     }
 
