@@ -68,7 +68,7 @@
         A_XMLOID = 143, // array of xml
     }
 
-    internal static class PgOidExtensions
+    public static class PgOidExtensions
     {
         public static bool IsNumber(this PgOid pgOid)
         {
@@ -119,6 +119,13 @@
         {
             return pgOid == PgOid.A_BYTEAOID;
         }
+
+        public static bool IsTimestamp(this PgOid pgOid)
+        {
+            return pgOid == PgOid.TIMESTAMPOID
+                || pgOid == PgOid.TIMESTAMPTZOID;
+        }
+
 
         /*
         public static bool IsArray(this PgOid pgOid)
