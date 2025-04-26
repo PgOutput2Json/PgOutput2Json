@@ -320,7 +320,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
     {
         public string Name { get; set; }
         public bool IsKey { get; set; }
-        public int DataType { get; set; }
+        public uint DataType { get; set; }
         public int TypeModifier { get; set; }
 
         public readonly string GetSqliteType()
