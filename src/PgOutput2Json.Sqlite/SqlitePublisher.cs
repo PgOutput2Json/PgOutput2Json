@@ -49,7 +49,7 @@ namespace PgOutput2Json.Sqlite
             _transaction = null;
         }
 
-        public async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public async Task<ulong?> GetLastPublishedWalSeq(CancellationToken token)
         {
             var cn = await EnsureConnection(token).ConfigureAwait(false);
 

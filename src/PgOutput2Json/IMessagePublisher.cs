@@ -9,6 +9,6 @@ namespace PgOutput2Json
         Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token);
         Task ConfirmAsync(CancellationToken token);
 
-        Task<ulong> GetLastPublishedWalSeq(CancellationToken token);
+        Task<ulong?> GetLastPublishedWalSeq(CancellationToken token);
     }
 }
