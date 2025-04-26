@@ -10,6 +10,11 @@ namespace PgOutput2Json
         Task ConfirmAsync(CancellationToken token);
 
         Task<ulong> GetLastPublishedWalSeq(CancellationToken token);
+
+        Task ReportDataCopyProgress(string tableName, string lastJson, CancellationToken token);
+        Task ReportDataCopyCompleted(string tableName, CancellationToken token);
+        
+        Task<DataCopyStatus> GetDataCopyStatus(string tableName, CancellationToken token);
     }
 
     public abstract class MessagePublisher : IMessagePublisher
@@ -23,5 +28,26 @@ namespace PgOutput2Json
             return Task.FromResult<ulong>(0);
         }
 
+        public virtual Task ReportDataCopyProgress(string tableName, string lastJson, CancellationToken token)
+        {
+            return Task.CompletedTask;
+        }
+
+        public virtual Task ReportDataCopyCompleted(string tableName, CancellationToken token)
+        {
+            return Task.CompletedTask;
+        }
+
+        public virtual Task<DataCopyStatus> GetDataCopyStatus(string tableName, CancellationToken token)
+        {
+            return Task.FromResult(new DataCopyStatus { IsCompleted = false });
+        }
+    }
+
+    public class DataCopyStatus
+    {
+        public bool IsCompleted { get; set; }
+        public string? AdditionalRowFilter { get; set; }
+        public string? OrderByColumns { get; set; }
     }
 }

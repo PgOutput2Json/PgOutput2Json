@@ -16,6 +16,8 @@ namespace PgOutput2Json
         private readonly ILogger<ReplicationListener>? _logger;
 
         private readonly ReplicationListenerOptions _options;
+        private readonly JsonOptions _jsonOptions;
+
         private readonly IMessageWriter _writer;
 
         private readonly IMessagePublisherFactory _messagePublisherFactory;
@@ -29,7 +31,7 @@ namespace PgOutput2Json
         {
             _messagePublisherFactory = messagePublisherFactory;
             _options = options;
-
+            _jsonOptions = jsonOptions;
             _writer = jsonOptions.UseOldFormat
                 ? new MessageWriterOld(jsonOptions, options)
                 : new MessageWriter(jsonOptions, options);
@@ -49,6 +51,8 @@ namespace PgOutput2Json
 
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
 
+                    await DataExporter.MaybeExportData(messagePublisher, _writer, _options, _jsonOptions, cancellationToken, _logger).ConfigureAwait(false);
+                    
                     var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken).ConfigureAwait(false));
 
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);

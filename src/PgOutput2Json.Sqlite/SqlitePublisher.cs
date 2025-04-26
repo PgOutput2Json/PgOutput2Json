@@ -82,7 +82,7 @@ namespace PgOutput2Json.Sqlite
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
-            await connection.UpdateOrInsert(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, token)
+            await connection.UpdateOrInsert(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
                 .ConfigureAwait(false);
         }
 

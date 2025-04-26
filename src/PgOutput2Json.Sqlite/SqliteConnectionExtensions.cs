@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace PgOutput2Json.Sqlite
 {
@@ -116,19 +117,35 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         }
 
         public static async Task UpdateOrInsert(this SqliteConnection cn,
-                                          ulong walEnd,
-                                          string fullTableName,
-                                          IReadOnlyList<ColumnInfo> columns,
-                                          JsonElement changeTypeElement,
-                                          JsonElement keyElement,
-                                          JsonElement rowElement,
-                                          CancellationToken token)
+                                                ulong walEnd,
+                                                string fullTableName,
+                                                IReadOnlyList<ColumnInfo> columns,
+                                                JsonElement changeTypeElement,
+                                                JsonElement keyElement,
+                                                JsonElement rowElement,
+                                                ILogger? logger,
+                                                CancellationToken token)
         {
             var changeType = changeTypeElement.GetString();
 
             if (changeType == "I")
             {
-                await cn.Insert(fullTableName, columns, rowElement, token).ConfigureAwait(false);
+                try
+                {
+                    await cn.Insert(fullTableName, columns, rowElement, token).ConfigureAwait(false);
+                }
+                catch (SqliteException ex)
+                {
+                    if (!ex.IsPrimaryKeyViolation())
+                    {
+                        throw;
+                    }
+
+                    if (logger != null && logger.IsEnabled(LogLevel.Warning))
+                    {
+                        logger.LogWarning("Skipping existing row for table {TableName}", fullTableName);
+                    }
+                }
             }
             else if (changeType == "U")
             {
