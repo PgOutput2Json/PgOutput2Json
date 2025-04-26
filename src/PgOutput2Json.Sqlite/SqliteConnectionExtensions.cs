@@ -207,7 +207,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             {
                 if (i > 0) sqlBuilder.Append(", ");
 
-                WriteColumnValue(sqlBuilder, valElement);
+                WriteColumnValue(sqlBuilder, valElement, columns[i]);
 
                 i++;
             }
@@ -314,11 +314,11 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             else
             {
                 keysBuilder.Append($"\"{column.Name}\"=");
-                WriteColumnValue(keysBuilder, rowElement);
+                WriteColumnValue(keysBuilder, rowElement, column);
             }
         }
 
-        private static void WriteColumnValue(StringBuilder sqlBuilder, JsonElement valElement)
+        private static void WriteColumnValue(StringBuilder sqlBuilder, JsonElement valElement, ColumnInfo column)
         {
             switch (valElement.ValueKind)
             {
@@ -344,12 +344,31 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                     sqlBuilder.Append('0');
                     break;
                 case JsonValueKind.String:
-                    sqlBuilder.Append($"'{valElement.GetString()}'");
+                    if (column.IsDateTime())
+                    {
+                        var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
+                        AppendEscapedSqlString(sqlBuilder, dateTime.ToString("O"));
+                    }
+                    else
+                    {
+                        AppendEscapedSqlString(sqlBuilder, valElement.GetString() ?? "");
+                    }
                     break;
                 default:
                     sqlBuilder.Append($"'{valElement.GetRawText()}'");
                     break;
             }
+        }
+
+        private static void AppendEscapedSqlString(StringBuilder sql, string text)
+        {
+            sql.Append('\'');
+            foreach (var c in text)
+            {
+                if (c == '\'') sql.Append(c); // append two '' to escape it in SQL strings
+                sql.Append(c);
+            }
+            sql.Append('\'');
         }
     }
 
@@ -377,8 +396,15 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 PgOid.FLOAT4OID => "REAL",   // FLOAT4 maps to REAL
                 PgOid.FLOAT8OID => "REAL",   // FLOAT8 maps to REAL
                 PgOid.NUMERICOID => "NUMERIC" + GetPrecisionAndScale(TypeModifier),
+                PgOid.TIMESTAMPOID => "DATETIME",
+                PgOid.TIMESTAMPTZOID => "DATETIME",
                 _ => "TEXT",// Default fallback for unknown types
             };
+        }
+
+        public readonly bool IsDateTime()
+        {
+            return ((PgOid)DataType).IsTimestamp();
         }
 
         private static string GetPrecisionAndScale(int typeModifier)

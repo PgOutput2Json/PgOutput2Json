@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace PgOutput2Json
 {
@@ -139,7 +140,11 @@ namespace PgOutput2Json
                 throw new ArgumentOutOfRangeException("Replication slot name must be provided for permanent slots");
             }
 
-            var options = new ReplicationListenerOptions(_connectionString,
+            var cnStringBuilder = new NpgsqlConnectionStringBuilder(_connectionString);
+
+            cnStringBuilder.Timezone ??= "UTC";
+
+            var options = new ReplicationListenerOptions(cnStringBuilder.ConnectionString,
                                                          _useTemporarySlot,
                                                          _replicationSlotName,
                                                          _publicationNames,
