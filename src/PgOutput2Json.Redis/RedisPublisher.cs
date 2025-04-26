@@ -70,7 +70,7 @@ namespace PgOutput2Json.Redis
             DisposeTasks();
         }
 
-        public async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public async Task<ulong?> GetLastPublishedWalSeq(CancellationToken token)
         {
             if (_options.PublishMode == PublishMode.Channel) return 0; // cannot do de-duplication with channels
 

@@ -162,7 +162,7 @@ namespace PgOutput2Json.RabbitMqStreams
             return _producer;
         }
 
-        public async Task<ulong> GetLastPublishedWalSeq(CancellationToken stoppingToken)
+        public async Task<ulong?> GetLastPublishedWalSeq(CancellationToken stoppingToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 

@@ -70,7 +70,7 @@ namespace PgOutput2Json.Kafka
             return ValueTask.CompletedTask;
         }
 
-        public Task<ulong> GetLastPublishedWalSeq(CancellationToken cancellationToken)
+        public Task<ulong?> GetLastPublishedWalSeq(CancellationToken cancellationToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for {Topic}", _options.Topic);
 
@@ -126,7 +126,7 @@ namespace PgOutput2Json.Kafka
 
             _logger?.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}", _options.Topic, lastWalSeq);
 
-            return Task.FromResult(lastWalSeq);
+            return Task.FromResult<ulong?>(lastWalSeq);
         }
 
         private List<PartitionMetadata> GetPartitionMetadata()
