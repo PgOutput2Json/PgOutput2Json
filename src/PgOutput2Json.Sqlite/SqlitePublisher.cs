@@ -56,6 +56,32 @@ namespace PgOutput2Json.Sqlite
             return await cn.GetWalEnd(token).ConfigureAwait(false);
         }
 
+        public override async Task ReportDataCopyProgress(string tableName, string lastJson, CancellationToken token)
+        {
+            var cn = await EnsureConnectionInTransaction(token).ConfigureAwait(false);
+
+            await cn.SetDataCopyProgress(tableName, lastJson, token).ConfigureAwait(false);
+        }
+
+        public override async Task ReportDataCopyCompleted(string tableName, CancellationToken token)
+        {
+            var cn = await EnsureConnectionInTransaction(token).ConfigureAwait(false);
+
+            await cn.SetDataCopyCompleted(tableName, token).ConfigureAwait(false);
+        }
+
+        public override async Task<DataCopyStatus> GetDataCopyStatus(string tableName, CancellationToken token)
+        {
+            var cn = await EnsureConnection(token).ConfigureAwait(false);
+
+            var cfgValue = await cn.GetDataCopyProgress(tableName, token).ConfigureAwait(false);
+
+            return new DataCopyStatus
+            {
+                IsCompleted = cfgValue.IsDataCopyCompleted(),
+            };
+        }
+
         public override async ValueTask DisposeAsync()
         {
             if (_connection != null)
