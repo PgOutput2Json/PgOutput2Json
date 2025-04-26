@@ -38,6 +38,7 @@ namespace PgOutput2Json.TestWorker
                 .WithPgPublications("test_publication")
                 .WithPgReplicationSlot("test_slot")
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
+                //.CopyData(true) // supported only by Sqlite at the moment (warning be logged if used with other publishers)
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;

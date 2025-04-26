@@ -15,8 +15,8 @@ namespace PgOutput2Json
                                                  IMessageWriter writer,
                                                  ReplicationListenerOptions listenerOptions,
                                                  JsonOptions jsonOptions,
-                                                 CancellationToken token,
-                                                 ILogger? logger)
+                                                 ILogger? logger,
+                                                 CancellationToken token)
         {
             if (!listenerOptions.CopyData)
             {
@@ -34,9 +34,17 @@ namespace PgOutput2Json
 
             foreach (var publication in publications)
             {
-                var dataCopyStatus = await publisher.GetDataCopyStatus(publication.TableName, token).ConfigureAwait(false);
+                try
+                {
+                    var dataCopyStatus = await publisher.GetDataCopyStatus(publication.TableName, token).ConfigureAwait(false);
 
-                if (dataCopyStatus.IsCompleted) continue;
+                    if (dataCopyStatus.IsCompleted) continue;
+                }
+                catch (NotImplementedException)
+                {
+                    logger.SafeLogWarn("Data copying is not supported in this publisher. Only PgOutput2Json.Sqlite publisher supports it at the moment");
+                    break;
+                }
 
                 logger.SafeLogInfo("Exporting data from table {TableName} {RowFilter}", publication.TableName, publication.RowFilter);
 

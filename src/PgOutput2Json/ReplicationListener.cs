@@ -51,8 +51,6 @@ namespace PgOutput2Json
 
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
 
-                    await DataExporter.MaybeExportData(messagePublisher, _writer, _options, _jsonOptions, cancellationToken, _logger).ConfigureAwait(false);
-                    
                     var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken).ConfigureAwait(false));
 
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);
@@ -81,6 +79,9 @@ namespace PgOutput2Json
                             slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
                                 .ConfigureAwait(false);
                         }
+                    
+                        // start data export after creating the temporary replication slot
+                        await DataExporter.MaybeExportData(messagePublisher, _writer, _options, _jsonOptions, _logger, cancellationToken).ConfigureAwait(false);
 
                         var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
 
