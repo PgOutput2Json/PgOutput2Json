@@ -24,6 +24,8 @@ namespace PgOutput2Json
         /// </summary>
         public bool CopyData { get; private set; } = false;
 
+        public Action<string, DataCopyStatus> DataCopyStatusHandler { get; private set; }
+
         public ReplicationListenerOptions(string connectionString,
                                           bool useTemporarySlot,
                                           string replicationSlotName,
@@ -33,7 +35,8 @@ namespace PgOutput2Json
                                           IReadOnlyDictionary<string, int> tablePartitions,
                                           IReadOnlyDictionary<string, IReadOnlyList<string>> includedColumns, 
                                           PartitionFilter? partitionFilter = null,
-                                          bool copyData = false)
+                                          bool copyData = false,
+                                          Action<string, DataCopyStatus>? dataCopyStatusHandler = null)
         {
             ConnectionString = connectionString;
             UseTemporarySlot = useTemporarySlot;
@@ -45,6 +48,7 @@ namespace PgOutput2Json
             IncludedColumns = new Dictionary<string, IReadOnlyList<string>>(includedColumns);
             PartitionFilter = partitionFilter;
             CopyData = copyData;
+            DataCopyStatusHandler = dataCopyStatusHandler ?? ((tableName, status) => { });
         }
     }
 }

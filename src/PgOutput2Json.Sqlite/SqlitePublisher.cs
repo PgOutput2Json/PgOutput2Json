@@ -76,10 +76,12 @@ namespace PgOutput2Json.Sqlite
 
             var cfgValue = await cn.GetDataCopyProgress(tableName, token).ConfigureAwait(false);
 
-            return new DataCopyStatus
+            if (cfgValue.IsDataCopyCompleted())
             {
-                IsCompleted = cfgValue.IsDataCopyCompleted(),
-            };
+                return new DataCopyStatus { IsCompleted = true };
+            }
+
+            return new DataCopyStatus { IsCompleted = false, LastJson = cfgValue };
         }
 
         public override async ValueTask DisposeAsync()
