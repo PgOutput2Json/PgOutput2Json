@@ -105,7 +105,7 @@ namespace PgOutput2Json.Sqlite
                 {
                     var name = colElement[0].GetString() ?? string.Empty;
                     colElement[1].TryGetByte(out var isKey);
-                    colElement[2].TryGetInt32(out var dataType);
+                    colElement[2].TryGetUInt32(out var dataType);
 
                     if (colLength < 4 || !colElement[3].TryGetInt32(out var typeModifier))
                     {
