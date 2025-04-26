@@ -17,6 +17,13 @@ namespace PgOutput2Json
         public Dictionary<string, IReadOnlyList<string>> IncludedColumns { get; private set; }
         public PartitionFilter? PartitionFilter { get; private set; }
 
+        /// <summary>
+        /// Push the existing data to the publisher. Default is false.
+        /// The publisher must support storing the last WAL LSN, because it is used to decide weather to initiate the copy or not.
+        /// The copy is initiated only if the last published WAL LSN == 0.
+        /// </summary>
+        public bool CopyData { get; private set; } = false;
+
         public ReplicationListenerOptions(string connectionString,
                                           bool useTemporarySlot,
                                           string replicationSlotName,
@@ -25,7 +32,8 @@ namespace PgOutput2Json
                                           int batchSize,
                                           IReadOnlyDictionary<string, int> tablePartitions,
                                           IReadOnlyDictionary<string, IReadOnlyList<string>> includedColumns, 
-                                          PartitionFilter? partitionFilter = null)
+                                          PartitionFilter? partitionFilter = null,
+                                          bool copyData = false)
         {
             ConnectionString = connectionString;
             UseTemporarySlot = useTemporarySlot;
@@ -36,6 +44,7 @@ namespace PgOutput2Json
             TablePartitions = new Dictionary<string, int>(tablePartitions);
             IncludedColumns = new Dictionary<string, IReadOnlyList<string>>(includedColumns);
             PartitionFilter = partitionFilter;
+            CopyData = copyData;
         }
     }
 }

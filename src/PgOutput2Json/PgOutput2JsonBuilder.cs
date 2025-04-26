@@ -18,6 +18,7 @@ namespace PgOutput2Json
         private PartitionFilter? _partitionFilter;
         private bool _useTemporarySlot = true;
         private int _batchSize = 100;
+        private bool _copyData = false;
 
         public static PgOutput2JsonBuilder Create()
         {
@@ -108,6 +109,12 @@ namespace PgOutput2Json
             return this;
         }
 
+        public PgOutput2JsonBuilder CopyData(bool copyData = false)
+        {
+            _copyData = copyData;
+            return this;
+        }
+
         public IPgOutput2Json Build()
         {
             if (string.IsNullOrWhiteSpace(_connectionString)) 
@@ -140,7 +147,8 @@ namespace PgOutput2Json
                                                          _batchSize,
                                                          _tablePartitions,
                                                          _columns,
-                                                         _partitionFilter);
+                                                         _partitionFilter,
+                                                         _copyData);
 
             var listener = new ReplicationListener(_messagePublisherFactory, options, _jsonOptions, _loggerFactory);
 

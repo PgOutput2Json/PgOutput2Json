@@ -5,13 +5,13 @@ namespace PgOutput2Json
 {
     static class ILoggerExtensions
     {
-        public static void SafeLogDebug(this ILogger? logger, string message)
+        public static void SafeLogDebug(this ILogger? logger, string message, params object?[] args)
         {
             try
             {
                 if (logger != null && logger.IsEnabled(LogLevel.Debug))
                 {
-                    logger.LogDebug(message);
+                    logger.LogDebug(message, args);
                 }
             }
             catch
@@ -19,13 +19,13 @@ namespace PgOutput2Json
             }
         }
 
-        public static void SafeLogInfo(this ILogger? logger, string message)
+        public static void SafeLogInfo(this ILogger? logger, string message, params object?[] args)
         {
             try
             {
                 if (logger != null && logger.IsEnabled(LogLevel.Information))
                 {
-                    logger.LogInformation(message);
+                    logger.LogInformation(message, args);
                 }
             }
             catch
@@ -33,13 +33,13 @@ namespace PgOutput2Json
             }
         }
 
-        public static void SafeLogWarn(this ILogger? logger, string message)
+        public static void SafeLogWarn(this ILogger? logger, string message, params object?[] args)
         {
             try
             {
                 if (logger != null && logger.IsEnabled(LogLevel.Warning))
                 {
-                    logger.LogWarning(message);
+                    logger.LogWarning(message, args);
                 }
             }
             catch
@@ -47,13 +47,13 @@ namespace PgOutput2Json
             }
         }
 
-        public static void SafeLogError(this ILogger? logger, Exception ex, string message)
+        public static void SafeLogError(this ILogger? logger, Exception ex, string message, params object?[] args)
         {
             try
             {
                 if (logger != null && logger.IsEnabled(LogLevel.Error))
                 {
-                    logger.LogError(ex, message);
+                    logger.LogError(ex, message, args);
                 }
             }
             catch
