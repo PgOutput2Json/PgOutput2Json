@@ -10,7 +10,7 @@ using RabbitMQ.Client.Events;
 
 namespace PgOutput2Json.RabbitMq
 {
-    public class RabbitMqPublisher: IMessagePublisher
+    public class RabbitMqPublisher: MessagePublisher
     {
         public RabbitMqPublisher(RabbitMqPublisherOptions options, int batchSize, ILogger<RabbitMqPublisher>? logger = null)
         {
@@ -19,7 +19,7 @@ namespace PgOutput2Json.RabbitMq
             _logger = logger;
         }
 
-        public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             var channel = await EnsureConnection(token)
                 .ConfigureAwait(false);
@@ -43,7 +43,7 @@ namespace PgOutput2Json.RabbitMq
             _pendingTasks.Add(task);
         }
 
-        public async Task ConfirmAsync(CancellationToken token)
+        public override async Task ConfirmAsync(CancellationToken token)
         {
             foreach (var pt in _pendingTasks)
             {
@@ -53,12 +53,7 @@ namespace PgOutput2Json.RabbitMq
             _pendingTasks.Clear();
         }
 
-        public Task<ulong?> GetLastPublishedWalSeq(CancellationToken token)
-        {
-            return Task.FromResult<ulong?>(null);
-        }
-
-        public virtual async ValueTask DisposeAsync()
+        public override async ValueTask DisposeAsync()
         {
             _pendingTasks.Clear();
 

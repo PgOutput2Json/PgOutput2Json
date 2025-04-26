@@ -21,7 +21,7 @@ namespace PgOutput2Json
         }
     }
 
-    internal class SimpleMessagePublisher : IMessagePublisher
+    internal class SimpleMessagePublisher : MessagePublisher
     {
         private readonly SimpleMessageHandler _messageHandler;
         private readonly ILogger<SimpleMessagePublisher>? _logger;
@@ -32,26 +32,21 @@ namespace PgOutput2Json
             _logger = logger;
         }
 
-        public Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token) 
+        public override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token) 
         {
             _logger?.LogDebug("Message for {Table}: {Json}", tableName, json);
 
             return _messageHandler.Invoke(json, tableName, keyColumnValue, partition);
         }
 
-        public Task ConfirmAsync(CancellationToken token)
+        public override Task ConfirmAsync(CancellationToken token)
         {
             return Task.CompletedTask;
         }
 
-        public ValueTask DisposeAsync()
+        public override ValueTask DisposeAsync()
         {
             return ValueTask.CompletedTask;
-        }
-
-        public Task<ulong?> GetLastPublishedWalSeq(CancellationToken token)
-        {
-            return Task.FromResult<ulong?>(null);
         }
     }
 }

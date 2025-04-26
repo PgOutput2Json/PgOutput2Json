@@ -9,7 +9,7 @@ using RabbitMQ.Stream.Client.Reliable;
 
 namespace PgOutput2Json.RabbitMqStreams
 {
-    public class RabbitMqStreamsPublisher: IMessagePublisher
+    public class RabbitMqStreamsPublisher: MessagePublisher
     {
         public RabbitMqStreamsPublisher(RabbitMqStreamsPublisherOptions options, int batchSize, ILoggerFactory? loggerFactory = null)
         {
@@ -21,7 +21,7 @@ namespace PgOutput2Json.RabbitMqStreams
             _logger = loggerFactory?.CreateLogger<RabbitMqStreamsPublisher>();
         }
 
-        public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public async override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             var producer = await EnsureProducer();
 
@@ -44,7 +44,7 @@ namespace PgOutput2Json.RabbitMqStreams
             }
         }
 
-        public async Task ConfirmAsync(CancellationToken token)
+        public async override Task ConfirmAsync(CancellationToken token)
         {
             // only PublishAsync can create the source, ConfirmAsync is never called in parallel
             if (_confirmationTaskCompletionSource != null)
@@ -57,7 +57,7 @@ namespace PgOutput2Json.RabbitMqStreams
             }
         }
 
-        public virtual async ValueTask DisposeAsync()
+        public override async ValueTask DisposeAsync()
         {
             if (_producer != null)
             {
@@ -162,7 +162,7 @@ namespace PgOutput2Json.RabbitMqStreams
             return _producer;
         }
 
-        public async Task<ulong?> GetLastPublishedWalSeq(CancellationToken stoppingToken)
+        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken stoppingToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 

@@ -10,7 +10,7 @@ using Confluent.Kafka;
 
 namespace PgOutput2Json.Kafka
 {
-    public class KafkaPublisher: IMessagePublisher
+    public class KafkaPublisher: MessagePublisher
     {
         public KafkaPublisher(KafkaPublisherOptions options, int batchSize, ILogger<KafkaPublisher>? logger = null)
         {
@@ -18,7 +18,7 @@ namespace PgOutput2Json.Kafka
             _logger = logger;
         }
 
-        public Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             var msgKey = string.IsNullOrEmpty(keyColumnValue) ? _random.Next().ToString() : keyColumnValue;
 
@@ -46,14 +46,14 @@ namespace PgOutput2Json.Kafka
             return Task.CompletedTask;
         }
 
-        public Task ConfirmAsync(CancellationToken token)
+        public override Task ConfirmAsync(CancellationToken token)
         {
             _producer?.Flush(token);
 
             return Task.CompletedTask;
         }
 
-        public virtual ValueTask DisposeAsync()
+        public override ValueTask DisposeAsync()
         {
             if (_producer != null)
             {
@@ -70,7 +70,7 @@ namespace PgOutput2Json.Kafka
             return ValueTask.CompletedTask;
         }
 
-        public Task<ulong?> GetLastPublishedWalSeq(CancellationToken cancellationToken)
+        public override Task<ulong> GetLastPublishedWalSeq(CancellationToken cancellationToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for {Topic}", _options.Topic);
 
@@ -126,7 +126,7 @@ namespace PgOutput2Json.Kafka
 
             _logger?.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}", _options.Topic, lastWalSeq);
 
-            return Task.FromResult<ulong?>(lastWalSeq);
+            return Task.FromResult(lastWalSeq);
         }
 
         private List<PartitionMetadata> GetPartitionMetadata()

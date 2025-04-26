@@ -10,7 +10,7 @@ using Microsoft.Data.Sqlite;
 
 namespace PgOutput2Json.Sqlite
 {
-    public class SqlitePublisher : IMessagePublisher
+    public class SqlitePublisher : MessagePublisher
     {
         private readonly SqlitePublisherOptions _options;
         private readonly ReplicationListenerOptions _listenerOptions;
@@ -30,7 +30,7 @@ namespace PgOutput2Json.Sqlite
             _logger = logger;
         }
 
-        public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             var connection = await EnsureConnectionInTransaction(token).ConfigureAwait(false);
 
@@ -41,7 +41,7 @@ namespace PgOutput2Json.Sqlite
             await ParseRow(connection, tableName, doc, token).ConfigureAwait(false);
         }
 
-        public async Task ConfirmAsync(CancellationToken token)
+        public override async Task ConfirmAsync(CancellationToken token)
         {
             if (_transaction == null) return;
 
@@ -49,14 +49,14 @@ namespace PgOutput2Json.Sqlite
             _transaction = null;
         }
 
-        public async Task<ulong?> GetLastPublishedWalSeq(CancellationToken token)
+        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
         {
             var cn = await EnsureConnection(token).ConfigureAwait(false);
 
             return await cn.GetWalEnd(token).ConfigureAwait(false);
         }
 
-        public async ValueTask DisposeAsync()
+        public override async ValueTask DisposeAsync()
         {
             if (_connection != null)
             {
