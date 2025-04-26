@@ -6,5 +6,7 @@
 
         public const string DataCopyProgress = "DataCopyProgress";
         public const string DataCopyProgressCompleted = "\"completed\"";
+
+        public const string Schema = "Schema";
     }
 }

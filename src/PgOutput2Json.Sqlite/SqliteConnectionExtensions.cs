@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -43,6 +44,20 @@ namespace PgOutput2Json.Sqlite
         public static bool IsDataCopyCompleted(this string? cfgValue)
         {
             return cfgValue != null && cfgValue == ConfigKey.DataCopyProgressCompleted;
+        }
+
+        public static async Task SetSchema(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
+        {
+            await SaveConfig(cn, $"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
+        }
+
+        public static async Task<List<ColumnInfo>?> GetSchema(this SqliteConnection cn, string tableName, CancellationToken token)
+        {
+            var cfgValue = await GetConfig(cn, $"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
+
+            if (cfgValue == null) return null;
+
+            return JsonSerializer.Deserialize<List<ColumnInfo>>(cfgValue);
         }
 
         public static async Task SaveConfig(this SqliteConnection cn, string key, string value, CancellationToken token)
@@ -91,12 +106,53 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task TryCreateTable(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        public static async Task CreateOrAlterTable(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        {
+            string tableName = GetTableName(fullTableName);
+
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = $"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{tableName}'";
+
+            if (await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) != null)
+            {
+                await AlterTable(cn, tableName, columns, token).ConfigureAwait(false);
+            }
+            else
+            {
+                await CreateTable(cn, tableName, columns, token).ConfigureAwait(false);
+            }
+        }
+
+        private static async Task AlterTable(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        {
+            var cmd = cn.CreateCommand();
+
+            cmd.CommandText = $"PRAGMA table_info(\"{tableName}\")";
+
+            var existingCols = new List<string>();
+
+            using (var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false))
+            {
+                while (reader.Read())
+                {
+                    // The column name is in the second column (index 1)
+                    existingCols.Add(reader.GetString(1)); 
+                }
+            }
+
+            foreach (var col in columns.Where(c => !existingCols.Contains(c.Name)))
+            {
+                cmd.CommandText = $"ALTER TABLE \"{tableName}\" ADD \"{col.Name}\" {col.GetSqliteType()}";
+
+                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+        }
+
+        private static async Task CreateTable(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
             var sqlBuilder = new StringBuilder(256);
             var keyBuilder = new StringBuilder(256);
-
-            string tableName = GetTableName(fullTableName);
 
             sqlBuilder.Append($"CREATE TABLE IF NOT EXISTS \"{tableName}\" (");
 
@@ -109,7 +165,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 if (colInfo.IsKey)
                 {
                     if (keyBuilder.Length > 0) keyBuilder.Append(", ");
-                    keyBuilder.Append(colInfo.Name);
+                    keyBuilder.Append($"\"{colInfo.Name}\"");
                 }
                 i++;
             }

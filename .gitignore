@@ -400,3 +400,5 @@ FodyWeavers.xsd
 
 # Test SQLite database
 /src/PgOutput2Json.TestWorker/test_database.s3db
+/src/PgOutput2Json.TestWorker/test_database.s3db-shm
+/src/PgOutput2Json.TestWorker/test_database.s3db-wal

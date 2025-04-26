@@ -19,7 +19,7 @@ namespace PgOutput2Json.Sqlite
         private SqliteConnection? _connection;
         private DbTransaction? _transaction;
 
-        private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = new();
+        private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = [];
 
         public SqlitePublisher(SqlitePublisherOptions options,
                                ReplicationListenerOptions listenerOptions,
@@ -101,7 +101,17 @@ namespace PgOutput2Json.Sqlite
 
         private async Task ParseRow(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
         {
-            if (!_tableColumns.TryGetValue(tableName, out var columns)) throw new Exception("Missing table schema: " + tableName);
+            if (!_tableColumns.TryGetValue(tableName, out var columns))
+            {
+                columns = await connection.GetSchema(tableName, token).ConfigureAwait(false);
+
+                if (columns != null)
+                {
+                    _tableColumns[tableName] = columns;
+                }
+            }
+
+            if (columns == null) throw new Exception("Missing table schema: " + tableName);
 
             if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
             if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
@@ -146,7 +156,9 @@ namespace PgOutput2Json.Sqlite
 
             _tableColumns[tableName] = columns;
 
-            await connection.TryCreateTable(tableName, columns, token).ConfigureAwait(false);
+            await connection.CreateOrAlterTable(tableName, columns, token).ConfigureAwait(false);
+
+            await connection.SetSchema(tableName, columns, token).ConfigureAwait(false);
 
             if (walSeq > 0 && _listenerOptions.CopyData)
             {
@@ -165,6 +177,11 @@ namespace PgOutput2Json.Sqlite
             await _connection.OpenAsync(token).ConfigureAwait(false);
 
             await _connection.CreateConfigTable(token).ConfigureAwait(false);
+
+            if (_options.PostConnectionSetup != null)
+            {
+                await _options.PostConnectionSetup(_connection).ConfigureAwait(false);
+            }
 
             return _connection;
         }
