@@ -41,8 +41,6 @@ namespace PgOutput2Json
                 logger.SafeLogInfo("Exporting data from table {TableName} {RowFilter}", publication.TableName, publication.RowFilter);
 
                 await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, json, keyVal, token).ConfigureAwait(false);
-
-                await publisher.ReportDataCopyCompleted(publication.TableName, token).ConfigureAwait(false);
             }
         }
 
@@ -127,21 +125,15 @@ namespace PgOutput2Json
                 currentBatch--;
                 if (currentBatch <= 0)
                 {
+                    await publisher.ReportDataCopyProgress(publication.TableName, lastJsonString, token).ConfigureAwait(false);
+
                     await publisher.ConfirmAsync(token).ConfigureAwait(false);
-
-                    await publisher.ReportDataCopyProgress(publication.TableName, lastJsonString, token).ConfigureAwait(false);
                 }
             }
 
-            if (currentBatch > 0)
-            {
-                await publisher.ConfirmAsync(token).ConfigureAwait(false);
+            await publisher.ReportDataCopyCompleted(publication.TableName, token).ConfigureAwait(false);
 
-                if (lastJsonString != null)
-                {
-                    await publisher.ReportDataCopyProgress(publication.TableName, lastJsonString, token).ConfigureAwait(false);
-                }
-            }
+            await publisher.ConfirmAsync(token).ConfigureAwait(false);
         }
 
         private static int WriteRow(IReadOnlyList<ColumnInfo> cols,
@@ -280,7 +272,7 @@ namespace PgOutput2Json
             {
                 var pubNames = string.Join(',', listenerOptions.PublicationNames.Select(x => $"'{x}'"));
 
-                cmd.CommandText = $"SELECT schemaname, tablename, rowfilter FROM pg_catalog.pg_publication_tables WHERE pubname in ({pubNames}) ORDER BY schemaname, tablename";
+                cmd.CommandText = $"SELECT schemaname, tablename, rowfilter FROM pg_catalog.pg_publication_tables WHERE pubname in ({pubNames})";
 
                 using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
 

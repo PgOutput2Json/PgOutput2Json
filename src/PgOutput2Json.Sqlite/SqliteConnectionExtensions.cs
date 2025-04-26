@@ -25,6 +25,26 @@ namespace PgOutput2Json.Sqlite
             await SaveConfig(cn, ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
         }
 
+        public static async Task<string?> GetDataCopyProgress(this SqliteConnection cn, string tableName, CancellationToken token)
+        {
+            return await GetConfig(cn, $"{ConfigKey.DataCopyProgress}_{tableName}", token).ConfigureAwait(false);
+        }
+
+        public static async Task SetDataCopyProgress(this SqliteConnection cn, string tableName, string lastJson, CancellationToken token)
+        {
+            await SaveConfig(cn, $"{ConfigKey.DataCopyProgress}_{tableName}", lastJson, token).ConfigureAwait(false);
+        }
+
+        public static async Task SetDataCopyCompleted(this SqliteConnection cn, string tableName, CancellationToken token)
+        {
+            await SaveConfig(cn, $"{ConfigKey.DataCopyProgress}_{tableName}", ConfigKey.DataCopyProgressCompleted, token).ConfigureAwait(false);
+        }
+
+        public static bool IsDataCopyCompleted(this string? cfgValue)
+        {
+            return cfgValue != null && cfgValue == ConfigKey.DataCopyProgressCompleted;
+        }
+
         public static async Task SaveConfig(this SqliteConnection cn, string key, string value, CancellationToken token)
         {
             using var cmd = cn.CreateCommand();
