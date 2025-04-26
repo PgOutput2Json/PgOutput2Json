@@ -36,7 +36,7 @@ namespace PgOutput2Json.Sqlite
 
             using var doc = JsonDocument.Parse(json);
 
-            await TryParseSchema(connection, tableName, doc, token).ConfigureAwait(false);
+            await TryParseSchema(connection, tableName, walSeqNo, doc, token).ConfigureAwait(false);
 
             await ParseRow(connection, tableName, doc, token).ConfigureAwait(false);
         }
@@ -112,7 +112,7 @@ namespace PgOutput2Json.Sqlite
                 .ConfigureAwait(false);
         }
 
-        private async Task TryParseSchema(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task TryParseSchema(SqliteConnection connection, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
         {
             if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
 
@@ -145,6 +145,13 @@ namespace PgOutput2Json.Sqlite
             _tableColumns[tableName] = columns;
 
             await connection.TryCreateTable(tableName, columns, token).ConfigureAwait(false);
+
+            if (walSeq > 0 && _listenerOptions.CopyData)
+            {
+                // if this is a WAL event, and data copy is enabled, it means we can mark it as data copy completed,
+                // because we will receive the rest of the data through replication
+                await connection.SetDataCopyCompleted(tableName, token).ConfigureAwait(false);
+            }
         }
 
         private async Task<SqliteConnection> EnsureConnection(CancellationToken token)
