@@ -49,7 +49,7 @@ namespace PgOutput2Json
 
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
 
-                    var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken) ?? 0);
+                    var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken).ConfigureAwait(false));
 
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);
 

@@ -8,7 +8,7 @@ using StackExchange.Redis;
 
 namespace PgOutput2Json.Redis
 {
-    public class RedisPublisher : IMessagePublisher
+    public class RedisPublisher : MessagePublisher
     {
         public RedisPublisher(RedisPublisherOptions options, ILogger<RedisPublisher>? logger = null)
         {
@@ -16,7 +16,7 @@ namespace PgOutput2Json.Redis
             _logger = logger;
         }
 
-        public async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
@@ -60,7 +60,7 @@ namespace PgOutput2Json.Redis
             }
         }
 
-        public async Task ConfirmAsync(CancellationToken token)
+        public override async Task ConfirmAsync(CancellationToken token)
         {
             foreach (var pt in _publishedTasks)
             {
@@ -70,7 +70,7 @@ namespace PgOutput2Json.Redis
             DisposeTasks();
         }
 
-        public async Task<ulong?> GetLastPublishedWalSeq(CancellationToken token)
+        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
         {
             if (_options.PublishMode == PublishMode.Channel) return 0; // cannot do de-duplication with channels
 
@@ -112,7 +112,7 @@ namespace PgOutput2Json.Redis
             _publishedTasks.Clear();
         }
 
-        public virtual async ValueTask DisposeAsync()
+        public override async ValueTask DisposeAsync()
         {
             DisposeTasks();
 
