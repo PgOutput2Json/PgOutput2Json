@@ -30,17 +30,17 @@ namespace PgOutput2Json
 
         public virtual Task ReportDataCopyProgress(string tableName, string lastJson, CancellationToken token)
         {
-            return Task.CompletedTask;
+            throw new NotImplementedException();
         }
 
         public virtual Task ReportDataCopyCompleted(string tableName, CancellationToken token)
         {
-            return Task.CompletedTask;
+            throw new NotImplementedException();
         }
 
         public virtual Task<DataCopyStatus> GetDataCopyStatus(string tableName, CancellationToken token)
         {
-            return Task.FromResult(new DataCopyStatus { IsCompleted = false });
+            throw new NotImplementedException();
         }
     }
 
