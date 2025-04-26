@@ -4,6 +4,7 @@ using PgOutput2Json.RabbitMqStreams;
 using PgOutput2Json.Redis;
 using PgOutput2Json.Sqlite;
 using System.Net;
+using System.Text.Json;
 
 namespace PgOutput2Json.TestWorker
 {
@@ -37,8 +38,30 @@ namespace PgOutput2Json.TestWorker
                 .WithPgConnectionString("Host=localhost;Database=test_db;Username=postgres;Password=postgres")
                 .WithPgPublications("test_publication")
                 .WithPgReplicationSlot("test_slot")
+                //.WithBatchSize(1000) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
                 //.CopyData(true) // supported only by Sqlite at the moment (warning be logged if used with other publishers)
+                //.WithDataCopyStatusHandler((tableName, status) =>
+                //{
+                //    // optional, allows implementing logic to continue data copy from a specific point
+                //
+                //    if (tableName == "public.test_table")
+                //    {
+                //        status.OrderByColumns = "id";
+
+                //        if (status.LastJson != null)
+                //        {
+                //            var doc = JsonDocument.Parse(status.LastJson);
+
+                //            // sqlite uses compact write mode, so the rows are arrays, and the first item is the id
+                //            if (doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array && row.GetArrayLength() > 0)
+                //            {
+                //                status.AdditionalRowFilter = $"id > {row[0].GetInt32()}";
+                //            }
+                //        }
+                //    }
+
+                //})
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;

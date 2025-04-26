@@ -34,9 +34,10 @@ namespace PgOutput2Json
 
             foreach (var publication in publications)
             {
+                DataCopyStatus dataCopyStatus;
                 try
                 {
-                    var dataCopyStatus = await publisher.GetDataCopyStatus(publication.TableName, token).ConfigureAwait(false);
+                    dataCopyStatus = await GetDataCopyStatus(publisher, publication, listenerOptions, token).ConfigureAwait(false);
 
                     if (dataCopyStatus.IsCompleted) continue;
                 }
@@ -48,8 +49,20 @@ namespace PgOutput2Json
 
                 logger.SafeLogInfo("Exporting data from table {TableName} {RowFilter}", publication.TableName, publication.RowFilter);
 
-                await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, json, keyVal, token).ConfigureAwait(false);
+                await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, json, keyVal, token).ConfigureAwait(false);
             }
+        }
+
+        private static async Task<DataCopyStatus> GetDataCopyStatus(IMessagePublisher publisher, PublicationInfo publication, ReplicationListenerOptions listenerOptions, CancellationToken token)
+        {
+            var dataCopyStatus = await publisher.GetDataCopyStatus(publication.TableName, token).ConfigureAwait(false);
+
+            if (!dataCopyStatus.IsCompleted)
+            {
+                listenerOptions.DataCopyStatusHandler.Invoke(publication.TableName, dataCopyStatus);
+            }
+
+            return dataCopyStatus;
         }
 
         private static async Task ExportData(NpgsqlConnection connection,
@@ -58,6 +71,7 @@ namespace PgOutput2Json
                                              ReplicationListenerOptions listenerOptions,
                                              JsonOptions jsonOptions,
                                              PublicationInfo publication,
+                                             DataCopyStatus dataCopyStatus,
                                              StringBuilder json,
                                              StringBuilder keyVal,
                                              CancellationToken token)
@@ -67,9 +81,28 @@ namespace PgOutput2Json
 
             // Export two columns to table data
             var selectStatement = $"SELECT * FROM {publication.QuotedTableName}";
+
+            var whereClause = "";
+
             if (!string.IsNullOrWhiteSpace(publication.RowFilter))
             {
-                selectStatement += " WHERE " + publication.RowFilter;
+                whereClause = publication.RowFilter;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dataCopyStatus.AdditionalRowFilter))
+            {
+                if (whereClause.Length > 0) whereClause += " AND ";
+                whereClause += $"({dataCopyStatus.AdditionalRowFilter})";
+            }
+
+            if (whereClause.Length > 0)
+            {
+                selectStatement += " WHERE " + whereClause;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+            {
+                selectStatement += " ORDER BY " + dataCopyStatus.OrderByColumns;
             }
 
             using var reader = connection.BeginTextExport($"COPY ({selectStatement}) TO STDOUT");

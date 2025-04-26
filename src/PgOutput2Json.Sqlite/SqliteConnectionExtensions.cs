@@ -150,29 +150,14 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             if (changeType == "I")
             {
-                try
-                {
-                    await cn.Insert(fullTableName, columns, rowElement, token).ConfigureAwait(false);
-                }
-                catch (SqliteException ex)
-                {
-                    if (!ex.IsPrimaryKeyViolation())
-                    {
-                        throw;
-                    }
-
-                    if (logger != null && logger.IsEnabled(LogLevel.Warning))
-                    {
-                        logger.LogWarning("Skipping existing row for table {TableName}", fullTableName);
-                    }
-                }
+                await cn.Insert(fullTableName, columns, rowElement, true, token).ConfigureAwait(false);
             }
             else if (changeType == "U")
             {
                 var count = await cn.Update(fullTableName, columns, keyElement, rowElement, token).ConfigureAwait(false);
                 if (count == 0)
                 {
-                    await cn.Insert(fullTableName, columns, rowElement, token).ConfigureAwait(false);
+                    await cn.Insert(fullTableName, columns, rowElement, false, token).ConfigureAwait(false);
                 }
             }
             else if (changeType == "D")
@@ -183,7 +168,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cn.SetWalEnd(walEnd, token).ConfigureAwait(false);
         }
 
-        public static async Task Insert(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, CancellationToken token)
+        public static async Task Insert(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
 
@@ -213,6 +198,11 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             }
 
             sqlBuilder.Append(')');
+
+            if (ignoreConflicts)
+            {
+                sqlBuilder.Append(" ON CONFLICT DO NOTHING");
+            }
 
             using var cmd = cn.CreateCommand();
 
