@@ -38,9 +38,9 @@ namespace PgOutput2Json.TestWorker
                 .WithPgConnectionString("Host=localhost;Database=test_db;Username=postgres;Password=postgres")
                 .WithPgPublications("test_publication")
                 .WithPgReplicationSlot("test_slot")
-                //.WithBatchSize(1000) // default is 100
+                //.WithBatchSize(10_000) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
-                //.CopyData(true) // supported only by Sqlite at the moment (warning be logged if used with other publishers)
+                //.WithInitialDataCopy(true) // supported only by Sqlite at the moment (warning be logged if used with other publishers)
                 //.WithDataCopyStatusHandler((tableName, status) =>
                 //{
                 //    // optional, allows implementing logic to continue data copy from a specific point
