@@ -131,13 +131,6 @@ namespace PgOutput2Json.Sqlite
             await connection.CreateOrAlterTable(tableName, columns, token).ConfigureAwait(false);
 
             await connection.SetSchema(tableName, columns, token).ConfigureAwait(false);
-
-            if (walSeq > 0 && _listenerOptions.CopyData)
-            {
-                // if this is a WAL event, and data copy is enabled, it means we can mark it as data copy completed,
-                // because we will receive the rest of the data through replication
-                await connection.SetDataCopyCompleted(tableName, token).ConfigureAwait(false);
-            }
         }
 
         private async Task<SqliteConnection> EnsureConnection(CancellationToken token)
