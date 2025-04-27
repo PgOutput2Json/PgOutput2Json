@@ -97,148 +97,160 @@ namespace PgOutput2Json
                                              ILogger? logger, 
                                              CancellationToken token)
         {
-            listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
-            listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
+            string? lastJsonString = null;
 
-            // Export two columns to table data
-
-            var whereClause = "";
-
-            if (!string.IsNullOrWhiteSpace(publication.RowFilter))
+            try
             {
-                whereClause = publication.RowFilter;
-            }
+                listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
+                listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
 
-            if (!string.IsNullOrWhiteSpace(dataCopyStatus.AdditionalRowFilter))
-            {
-                if (whereClause.Length > 0) whereClause += " AND ";
-                whereClause += $"({dataCopyStatus.AdditionalRowFilter})";
-            }
+                // Export two columns to table data
 
-            var source = publication.QuotedTableName;
+                var whereClause = "";
 
-            if (whereClause.Length != 0 || !string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
-            {
-                source = $"(SELECT * FROM {publication.QuotedTableName}";
-
-                if (whereClause.Length > 0)
+                if (!string.IsNullOrWhiteSpace(publication.RowFilter))
                 {
-                    source += " WHERE " + whereClause;
+                    whereClause = publication.RowFilter;
                 }
 
-                if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+                if (!string.IsNullOrWhiteSpace(dataCopyStatus.AdditionalRowFilter))
                 {
-                    source += " ORDER BY " + dataCopyStatus.OrderByColumns;
+                    if (whereClause.Length > 0) whereClause += " AND ";
+                    whereClause += $"({dataCopyStatus.AdditionalRowFilter})";
                 }
 
-                source += ")";
-            }
+                var source = publication.QuotedTableName;
 
-            using (var cmd = connection.CreateCommand())
-            {
-                cmd.CommandText = "SET DATESTYLE TO ISO";
-                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-            }
-
-            var json = new StringBuilder(256);
-            var keyValues = new StringBuilder(256);
-            var value = new StringBuilder(256);
-
-            var currentBatch = 0;
-            var schemaWritten = false;
-
-            var values = new List<string>(100);
-
-            using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
-
-            var isHeader = true;
-
-            string? line;
-            while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
-            {
-                if (isHeader)
+                if (whereClause.Length != 0 || !string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
                 {
-                    isHeader = false;
+                    source = $"(SELECT * FROM {publication.QuotedTableName}";
+
+                    if (whereClause.Length > 0)
+                    {
+                        source += " WHERE " + whereClause;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+                    {
+                        source += " ORDER BY " + dataCopyStatus.OrderByColumns;
+                    }
+
+                    source += ")";
+                }
+
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.CommandText = "SET DATESTYLE TO ISO";
+                    await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                }
+
+                var json = new StringBuilder(256);
+                var keyValues = new StringBuilder(256);
+                var value = new StringBuilder(256);
+
+                var currentBatch = 0;
+                var schemaWritten = false;
+
+                var values = new List<string>(100);
+
+                using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
+
+                var isHeader = true;
+
+                string? line;
+                while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
+                {
+                    if (isHeader)
+                    {
+                        isHeader = false;
+                        GetValues(values, value, line, logger);
+
+                        var columnsFromHeader = new List<ColumnInfo>();
+
+                        for (var i = 0; i < values.Count; i++)
+                        {
+                            var col = publication.Columns.FirstOrDefault(c => c.ColumnName == values[i])
+                                ?? throw new Exception($"Invalid column in exported data. Column: {values[i]}");
+
+                            columnsFromHeader.Add(col);
+                        }
+
+                        // use columns from the header
+                        publication.Columns = columnsFromHeader;
+                        continue;
+                    }
+
+                    json.Clear();
+                    keyValues.Clear();
+
                     GetValues(values, value, line, logger);
 
-                    var columnsFromHeader = new List<ColumnInfo>();
-
-                    for (var i = 0; i < values.Count; i++)
+                    if (values.Count != publication.Columns.Count)
                     {
-                        var col = publication.Columns.FirstOrDefault(c => c.ColumnName == values[i]) 
-                            ?? throw new Exception($"Invalid column in exported data. Column: {values[i]}");
-
-                        columnsFromHeader.Add(col);
+                        throw new Exception("Inconsistent column count between COPY output and table metadata");
                     }
 
-                    // use columns from the header
-                    publication.Columns = columnsFromHeader;
-                    continue;
-                }
-
-                json.Clear();
-                keyValues.Clear();
-
-                GetValues(values, value, line, logger);
-
-                if (values.Count != publication.Columns.Count)
-                {
-                    throw new Exception("Inconsistent column count between COPY output and table metadata");
-                }
-
-                if (currentBatch == 0)
-                {
-                    currentBatch = listenerOptions.BatchSize;
-                }
-
-                json.Append("{\"c\":\"I\"");
-                json.Append(",\"w\":0");
-
-                if (jsonOptions.WriteTableNames)
-                {
-                    json.Append(",\"t\":\"");
-                    JsonUtils.EscapeText(json, publication.TableName);
-                    json.Append('"');
-                }
-
-                if (!schemaWritten)
-                {
-                    schemaWritten = true;
-
-                    json.Append(',');
-                    switch (jsonOptions.WriteMode)
+                    if (currentBatch == 0)
                     {
-                        case JsonWriteMode.Compact:
-                            WriteSchemaCompact(json, publication, includedColumns);
-                            break;
-                        default:
-                            WriteSchemaDefault(json, publication, includedColumns);
-                            break;
+                        currentBatch = listenerOptions.BatchSize;
+                    }
+
+                    json.Append("{\"c\":\"I\"");
+                    json.Append(",\"w\":0");
+
+                    if (jsonOptions.WriteTableNames)
+                    {
+                        json.Append(",\"t\":\"");
+                        JsonUtils.EscapeText(json, publication.TableName);
+                        json.Append('"');
+                    }
+
+                    if (!schemaWritten)
+                    {
+                        schemaWritten = true;
+
+                        json.Append(',');
+                        switch (jsonOptions.WriteMode)
+                        {
+                            case JsonWriteMode.Compact:
+                                WriteSchemaCompact(json, publication, includedColumns);
+                                break;
+                            default:
+                                WriteSchemaDefault(json, publication, includedColumns);
+                                break;
+                        }
+                    }
+
+                    var hash = WriteRow(publication.Columns, values, json, keyValues, jsonOptions, includedColumns);
+
+                    json.Append('}');
+
+                    var partition = partitionCount > 0 ? hash % partitionCount : 0;
+
+                    lastJsonString = json.ToString();
+
+                    await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
+
+                    currentBatch--;
+                    if (currentBatch <= 0)
+                    {
+                        await publisher.ConfirmAsync(token).ConfigureAwait(false);
+                        await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, token).ConfigureAwait(false);
                     }
                 }
 
-                var hash = WriteRow(publication.Columns, values, json, keyValues, jsonOptions, includedColumns);
-
-                json.Append('}');
-
-                var partition = partitionCount > 0 ? hash % partitionCount : 0;
-
-                var lastJsonString = json.ToString();
-
-                await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
-
-                currentBatch--;
-                if (currentBatch <= 0)
-                {
-                    await publisher.ConfirmAsync(token).ConfigureAwait(false);
-
-                    await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, token).ConfigureAwait(false);
-                }
+                await publisher.ConfirmAsync(token).ConfigureAwait(false);
+                await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, true, null, token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                logger.SafeLogWarn("Cancelling data export from table {TableName}", publication.TableName);
 
-            await publisher.ConfirmAsync(token).ConfigureAwait(false);
+                // try to confirm the final batch, so we minimize the duplication
 
-            await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, true, null, token).ConfigureAwait(false);
+                await publisher.ConfirmAsync(CancellationToken.None).ConfigureAwait(false);
+                await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, CancellationToken.None).ConfigureAwait(false);
+            }
         }
 
         /// <summary>
