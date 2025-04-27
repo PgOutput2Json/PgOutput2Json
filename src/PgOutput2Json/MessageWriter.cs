@@ -18,7 +18,7 @@ namespace PgOutput2Json
     {
         public int Partition;
         public string Json = "";
-        public string TableNames = "";
+        public string TableName = "";
         public string KeyKolValue = "";
     }
 
@@ -121,7 +121,7 @@ namespace PgOutput2Json
 
             _result.Partition = partition;
             _result.Json = _jsonBuilder.ToString();
-            _result.TableNames = _tableNameBuilder.ToString();
+            _result.TableName = _tableNameBuilder.ToString();
             _result.KeyKolValue = _keyColValueBuilder.ToString();
 
             return _result;

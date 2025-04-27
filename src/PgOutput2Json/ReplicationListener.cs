@@ -146,7 +146,7 @@ namespace PgOutput2Json
 
                                 if (message is RelationMessage rel)
                                 {
-                                    hasRelationChanged = true; 
+                                    hasRelationChanged = true;
 
                                     // Relation Message has WalEnd=0/0
                                     continue;
@@ -175,6 +175,14 @@ namespace PgOutput2Json
                                 var result = await _writer.WriteMessage(message, commitTimeStamp, hasRelationChanged, cancellationToken)
                                     .ConfigureAwait(false);
 
+                                if (hasRelationChanged && _options.CopyData)
+                                {
+                                    // if data copy is on, we will mark this table as copied,
+                                    // to avoid copying tables created after the inital copy
+                                    await DataCopyProgress.SetDataCopyProgress(result.TableName, _options, true, null, cancellationToken)
+                                        .ConfigureAwait(false);
+                                }
+
                                 hasRelationChanged = false;
 
                                 if (result.Partition < 0)
@@ -188,7 +196,7 @@ namespace PgOutput2Json
                                     continue;
                                 }
                                 
-                                await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableNames, result.KeyKolValue, result.Partition, cancellationToken)
+                                await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableName, result.KeyKolValue, result.Partition, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 MetricsHelper.IncrementPublishCounter();

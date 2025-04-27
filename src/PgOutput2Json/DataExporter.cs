@@ -23,6 +23,8 @@ namespace PgOutput2Json
                 return;
             }
 
+            await DataCopyProgress.CreateDataCopyProgressTable(listenerOptions, token).ConfigureAwait(false);
+
             List<PublicationInfo> publications;
 
             using (var connection = new NpgsqlConnection(listenerOptions.ConnectionString))
@@ -52,18 +54,7 @@ namespace PgOutput2Json
 
                     await connection.OpenAsync(linkedToken).ConfigureAwait(false);
 
-                    DataCopyStatus dataCopyStatus;
-                    try
-                    {
-                        dataCopyStatus = await GetDataCopyStatus(publisher, publication, listenerOptions, linkedToken).ConfigureAwait(false);
-
-                        if (dataCopyStatus.IsCompleted) return;
-                    }
-                    catch (NotImplementedException)
-                    {
-                        logger.SafeLogWarn("Data copying is not supported in this publisher. Only PgOutput2Json.Sqlite publisher supports it at the moment");
-                        return;
-                    }
+                    var dataCopyStatus = await GetDataCopyStatus(publication, listenerOptions, linkedToken).ConfigureAwait(false);
 
                     logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
 
@@ -80,10 +71,10 @@ namespace PgOutput2Json
                 }
             });
         }
-
-        private static async Task<DataCopyStatus> GetDataCopyStatus(IMessagePublisher publisher, PublicationInfo publication, ReplicationListenerOptions listenerOptions, CancellationToken token)
+        
+        private static async Task<DataCopyStatus> GetDataCopyStatus(PublicationInfo publication, ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
-            var dataCopyStatus = await publisher.GetDataCopyStatus(publication.TableName, token).ConfigureAwait(false);
+            var dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, token).ConfigureAwait(false);
 
             if (!dataCopyStatus.IsCompleted)
             {
@@ -236,15 +227,15 @@ namespace PgOutput2Json
                 currentBatch--;
                 if (currentBatch <= 0)
                 {
-                    await publisher.ReportDataCopyProgress(publication.TableName, lastJsonString, token).ConfigureAwait(false);
-
                     await publisher.ConfirmAsync(token).ConfigureAwait(false);
+
+                    await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, token).ConfigureAwait(false);
                 }
             }
 
-            await publisher.ReportDataCopyCompleted(publication.TableName, token).ConfigureAwait(false);
-
             await publisher.ConfirmAsync(token).ConfigureAwait(false);
+
+            await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, true, null, token).ConfigureAwait(false);
         }
 
         /// <summary>
