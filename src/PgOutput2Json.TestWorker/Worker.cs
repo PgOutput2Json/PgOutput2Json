@@ -40,11 +40,11 @@ namespace PgOutput2Json.TestWorker
                 .WithPgReplicationSlot("test_slot")
                 //.WithBatchSize(10_000) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
-                //.WithInitialDataCopy(true) // supported only by Sqlite at the moment (warning be logged if used with other publishers)
+                //.WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate database named pg_output2json must be created on the source (to track the progress)
                 //.WithDataCopyStatusHandler((tableName, status) =>
                 //{
                 //    // optional, allows implementing logic to continue data copy from a specific point
-                //
+
                 //    if (tableName == "public.test_table")
                 //    {
                 //        status.OrderByColumns = "id";
@@ -53,10 +53,15 @@ namespace PgOutput2Json.TestWorker
                 //        {
                 //            var doc = JsonDocument.Parse(status.LastJson);
 
-                //            // sqlite uses compact write mode, so the rows are arrays, and the first item is the id
-                //            if (doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array && row.GetArrayLength() > 0)
+                //            //// use this for compact write mode (sqlite uses is by default)
+                //            //if (doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array && row.GetArrayLength() > 0)
+                //            //{
+                //            //    status.AdditionalRowFilter = $"id > {row[0].GetInt32()}";
+                //            //}
+
+                //            if (doc.RootElement.TryGetProperty("r", out var row) && row.TryGetProperty("id", out var id))
                 //            {
-                //                status.AdditionalRowFilter = $"id > {row[0].GetInt32()}";
+                //                status.AdditionalRowFilter = $"id > {id.GetInt32()}";
                 //            }
                 //        }
                 //    }
