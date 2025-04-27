@@ -56,9 +56,12 @@ namespace PgOutput2Json
 
                     var dataCopyStatus = await GetDataCopyStatus(publication, listenerOptions, linkedToken).ConfigureAwait(false);
 
-                    logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
+                    if (!dataCopyStatus.IsCompleted)
+                    {
+                        logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
 
-                    await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
+                        await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
