@@ -13,7 +13,7 @@ namespace PgOutput2Json.Sqlite
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
         {
-            return new SqlitePublisher(_options, listenerOptions, loggerFactory?.CreateLogger<SqlitePublisher>());
+            return new SqlitePublisher(_options, loggerFactory?.CreateLogger<SqlitePublisher>());
         }
     }
 }

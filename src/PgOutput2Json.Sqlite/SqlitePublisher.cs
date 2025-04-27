@@ -13,7 +13,6 @@ namespace PgOutput2Json.Sqlite
     public class SqlitePublisher : MessagePublisher
     {
         private readonly SqlitePublisherOptions _options;
-        private readonly ReplicationListenerOptions _listenerOptions;
         private readonly ILogger<SqlitePublisher>? _logger;
 
         private SqliteConnection? _connection;
@@ -21,12 +20,9 @@ namespace PgOutput2Json.Sqlite
 
         private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = [];
 
-        public SqlitePublisher(SqlitePublisherOptions options,
-                               ReplicationListenerOptions listenerOptions,
-                               ILogger<SqlitePublisher>? logger)
+        public SqlitePublisher(SqlitePublisherOptions options, ILogger<SqlitePublisher>? logger)
         {
             _options = options;
-            _listenerOptions = listenerOptions;
             _logger = logger;
         }
 
