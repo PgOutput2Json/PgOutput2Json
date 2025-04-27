@@ -1,3 +1,5 @@
+CREATE DATABASE pg_output2json;
+
 CREATE DATABASE test_db;
 
 \connect test_db
