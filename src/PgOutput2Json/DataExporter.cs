@@ -29,9 +29,6 @@ namespace PgOutput2Json
 
             var publications = await GetPublicationInfo(connection, listenerOptions, token).ConfigureAwait(false);
 
-            var json = new StringBuilder(256);
-            var keyVal = new StringBuilder(256);
-
             foreach (var publication in publications)
             {
                 DataCopyStatus dataCopyStatus;
@@ -49,7 +46,7 @@ namespace PgOutput2Json
 
                 logger.SafeLogInfo("Exporting data from table {TableName} {RowFilter}", publication.TableName, publication.RowFilter);
 
-                await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, json, keyVal, token).ConfigureAwait(false);
+                await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, token).ConfigureAwait(false);
             }
         }
 
@@ -72,15 +69,13 @@ namespace PgOutput2Json
                                              JsonOptions jsonOptions,
                                              PublicationInfo publication,
                                              DataCopyStatus dataCopyStatus,
-                                             StringBuilder json,
-                                             StringBuilder keyVal,
+                                             ILogger? logger, 
                                              CancellationToken token)
         {
             listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
             listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
 
             // Export two columns to table data
-            var selectStatement = $"SELECT * FROM {publication.QuotedTableName}";
 
             var whereClause = "";
 
@@ -95,32 +90,49 @@ namespace PgOutput2Json
                 whereClause += $"({dataCopyStatus.AdditionalRowFilter})";
             }
 
-            if (whereClause.Length > 0)
+            var source = publication.QuotedTableName;
+
+            if (whereClause.Length != 0 || !string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
             {
-                selectStatement += " WHERE " + whereClause;
+                source = $"(SELECT * FROM {publication.QuotedTableName}";
+
+                if (whereClause.Length > 0)
+                {
+                    source += " WHERE " + whereClause;
+                }
+
+                if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+                {
+                    source += " ORDER BY " + dataCopyStatus.OrderByColumns;
+                }
+
+                source += ")";
             }
 
-            if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+            using (var cmd = connection.CreateCommand())
             {
-                selectStatement += " ORDER BY " + dataCopyStatus.OrderByColumns;
+                cmd.CommandText = "SET DATESTYLE TO ISO";
+                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }
 
-            using var reader = connection.BeginTextExport($"COPY ({selectStatement}) TO STDOUT");
+            var json = new StringBuilder(256);
+            var keyValues = new StringBuilder(256);
+            var value = new StringBuilder(256);
 
             var currentBatch = 0;
             var schemaWritten = false;
 
-            string? lastJsonString = null;
+            var values = new string[publication.Columns.Count];
+
+            using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT");
 
             string? line;
             while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
             {
-                var values = line.Split('\t');
-
-                if (values.Length != publication.Columns.Count) throw new Exception("Inconsistent column count between COPY output and table metadata");
-
                 json.Clear();
-                keyVal.Clear();
+                keyValues.Clear();
+
+                GetValues(values, value, line, logger);
 
                 if (currentBatch == 0)
                 {
@@ -153,15 +165,15 @@ namespace PgOutput2Json
                     }
                 }
 
-                var hash = WriteRow(publication.Columns, values, json, keyVal, jsonOptions, includedColumns);
+                var hash = WriteRow(publication.Columns, values, json, keyValues, jsonOptions, includedColumns);
 
                 json.Append('}');
 
                 var partition = partitionCount > 0 ? hash % partitionCount : 0;
 
-                lastJsonString = json.ToString();
+                var lastJsonString = json.ToString();
 
-                await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyVal.ToString(), partition, token).ConfigureAwait(false);
+                await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
 
                 currentBatch--;
                 if (currentBatch <= 0)
@@ -175,6 +187,90 @@ namespace PgOutput2Json
             await publisher.ReportDataCopyCompleted(publication.TableName, token).ConfigureAwait(false);
 
             await publisher.ConfirmAsync(token).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Writes row values to the provided values array. Escape sequences are unescaped.
+        /// See: https://www.postgresql.org/docs/current/sql-copy.html
+        /// </summary>
+        /// <param name="values"></param>
+        /// <param name="value"></param>
+        /// <param name="line"></param>
+        /// <param name="logger"></param>
+        /// <exception cref="Exception"></exception>
+        private static void GetValues(string[] values, StringBuilder value, string line, ILogger? logger)
+        {
+            var colIndex = 0;
+            var escape = false;
+
+            value.Clear();
+
+            foreach (var c in line)
+            {
+                if (c == '\t')
+                {
+                    if (colIndex >= values.Length) throw new Exception("Inconsistent column count between COPY output and table metadata");
+
+                    values[colIndex] = value.ToString();
+
+                    value.Clear();
+                    colIndex++;
+                }
+                else if (escape)
+                {
+                    escape = false;
+
+                    switch (c)
+                    {
+                        case '\\':
+                            value.Append('\\');
+                            break;
+                        case 'b':
+                            value.Append('\b');
+                            break;
+                        case 'f':
+                            value.Append('\f');
+                            break;
+                        case 'n':
+                            value.Append('\n');
+                            break;
+                        case 'r':
+                            value.Append('\r');
+                            break;
+                        case 't':
+                            value.Append('\t');
+                            break;
+                        case 'v':
+                            value.Append('\v');
+                            break;
+                        case 'N':
+                            value.Append('\\');
+                            value.Append('N');
+                            break;
+                        default:
+                            logger?.LogWarning("Skipping unknown escape char: \\{char}", c);
+                            break;
+                    }
+                }
+                else if (c == '\\')
+                {
+                    escape = true;
+                }
+                else
+                {
+                    value.Append(c);
+                }
+            }
+
+            if (value.Length > 0)
+            {
+                if (colIndex >= values.Length) throw new Exception("Inconsistent column count between COPY output and table metadata");
+
+                values[colIndex] = value.ToString();
+                colIndex++;
+            }
+
+            if (colIndex != values.Length) throw new Exception("Inconsistent column count between COPY output and table metadata");
         }
 
         private static int WriteRow(IReadOnlyList<ColumnInfo> cols,
