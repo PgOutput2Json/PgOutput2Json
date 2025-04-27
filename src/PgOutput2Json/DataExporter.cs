@@ -11,11 +11,11 @@ namespace PgOutput2Json
 {
     internal static class DataExporter
     {
-        public static async Task MaybeExportData(IMessagePublisher publisher,
+        public static async Task MaybeExportData(IMessagePublisherFactory publisherFactory,
                                                  IMessageWriter writer,
                                                  ReplicationListenerOptions listenerOptions,
                                                  JsonOptions jsonOptions,
-                                                 ILogger? logger,
+                                                 ILoggerFactory? loggerFactory,
                                                  CancellationToken token)
         {
             if (!listenerOptions.CopyData)
@@ -23,31 +23,62 @@ namespace PgOutput2Json
                 return;
             }
 
-            using var connection = new NpgsqlConnection(listenerOptions.ConnectionString);
+            List<PublicationInfo> publications;
 
-            await connection.OpenAsync(token).ConfigureAwait(false);
-
-            var publications = await GetPublicationInfo(connection, listenerOptions, token).ConfigureAwait(false);
-
-            foreach (var publication in publications)
+            using (var connection = new NpgsqlConnection(listenerOptions.ConnectionString))
             {
-                DataCopyStatus dataCopyStatus;
+                await connection.OpenAsync(token).ConfigureAwait(false);
+
+                publications = await GetPublicationInfo(connection, listenerOptions, token).ConfigureAwait(false);
+            }
+
+            using var cts = new CancellationTokenSource();
+
+            var parallelOptions = new ParallelOptions
+            {
+                CancellationToken = CancellationTokenSource.CreateLinkedTokenSource(token).Token,
+                MaxDegreeOfParallelism = listenerOptions.MaxParallelCopyJobs,
+            };
+
+            await Parallel.ForEachAsync(publications, parallelOptions, async (publication, linkedToken) =>
+            {
+                var logger = loggerFactory?.CreateLogger<ReplicationListener>();
+
                 try
                 {
-                    dataCopyStatus = await GetDataCopyStatus(publisher, publication, listenerOptions, token).ConfigureAwait(false);
+                    await using var publisher = publisherFactory.CreateMessagePublisher(listenerOptions, loggerFactory);
 
-                    if (dataCopyStatus.IsCompleted) continue;
+                    using var connection = new NpgsqlConnection(listenerOptions.ConnectionString);
+
+                    await connection.OpenAsync(linkedToken).ConfigureAwait(false);
+
+                    DataCopyStatus dataCopyStatus;
+                    try
+                    {
+                        dataCopyStatus = await GetDataCopyStatus(publisher, publication, listenerOptions, linkedToken).ConfigureAwait(false);
+
+                        if (dataCopyStatus.IsCompleted) return;
+                    }
+                    catch (NotImplementedException)
+                    {
+                        logger.SafeLogWarn("Data copying is not supported in this publisher. Only PgOutput2Json.Sqlite publisher supports it at the moment");
+                        return;
+                    }
+
+                    logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
+
+                    await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
                 }
-                catch (NotImplementedException)
+                catch (OperationCanceledException)
                 {
-                    logger.SafeLogWarn("Data copying is not supported in this publisher. Only PgOutput2Json.Sqlite publisher supports it at the moment");
-                    break;
+                    logger.SafeLogWarn("Cancelling data export from table {TableName}", publication.TableName);
                 }
-
-                logger.SafeLogInfo("Exporting data from table {TableName} {RowFilter}", publication.TableName, publication.RowFilter);
-
-                await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, token).ConfigureAwait(false);
-            }
+                catch (Exception ex)
+                {
+                    logger.SafeLogError(ex, "Error while exporting data");
+                    cts.Cancel();
+                }
+            });
         }
 
         private static async Task<DataCopyStatus> GetDataCopyStatus(IMessagePublisher publisher, PublicationInfo publication, ReplicationListenerOptions listenerOptions, CancellationToken token)
@@ -122,17 +153,44 @@ namespace PgOutput2Json
             var currentBatch = 0;
             var schemaWritten = false;
 
-            var values = new string[publication.Columns.Count];
+            var values = new List<string>(100);
 
-            using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT");
+            using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
+
+            var isHeader = true;
 
             string? line;
             while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
             {
+                if (isHeader)
+                {
+                    isHeader = false;
+                    GetValues(values, value, line, logger);
+
+                    var columnsFromHeader = new List<ColumnInfo>();
+
+                    for (var i = 0; i < values.Count; i++)
+                    {
+                        var col = publication.Columns.FirstOrDefault(c => c.ColumnName == values[i]) 
+                            ?? throw new Exception($"Invalid column in exported data. Column: {values[i]}");
+
+                        columnsFromHeader.Add(col);
+                    }
+
+                    // use columns from the header
+                    publication.Columns = columnsFromHeader;
+                    continue;
+                }
+
                 json.Clear();
                 keyValues.Clear();
 
                 GetValues(values, value, line, logger);
+
+                if (values.Count != publication.Columns.Count)
+                {
+                    throw new Exception("Inconsistent column count between COPY output and table metadata");
+                }
 
                 if (currentBatch == 0)
                 {
@@ -198,23 +256,19 @@ namespace PgOutput2Json
         /// <param name="line"></param>
         /// <param name="logger"></param>
         /// <exception cref="Exception"></exception>
-        private static void GetValues(string[] values, StringBuilder value, string line, ILogger? logger)
+        private static void GetValues(List<string> values, StringBuilder value, string line, ILogger? logger)
         {
-            var colIndex = 0;
-            var escape = false;
-
+            values.Clear();
             value.Clear();
+
+            var escape = false;
 
             foreach (var c in line)
             {
                 if (c == '\t')
                 {
-                    if (colIndex >= values.Length) throw new Exception("Inconsistent column count between COPY output and table metadata");
-
-                    values[colIndex] = value.ToString();
-
+                    values.Add(value.ToString());
                     value.Clear();
-                    colIndex++;
                 }
                 else if (escape)
                 {
@@ -264,17 +318,12 @@ namespace PgOutput2Json
 
             if (value.Length > 0)
             {
-                if (colIndex >= values.Length) throw new Exception("Inconsistent column count between COPY output and table metadata");
-
-                values[colIndex] = value.ToString();
-                colIndex++;
+                values.Add(value.ToString());
             }
-
-            if (colIndex != values.Length) throw new Exception("Inconsistent column count between COPY output and table metadata");
         }
 
         private static int WriteRow(IReadOnlyList<ColumnInfo> cols,
-                                    string[] values,
+                                    List<string> values,
                                     StringBuilder json,
                                     StringBuilder keyVal,
                                     JsonOptions jsonOptions,
@@ -449,6 +498,7 @@ WHERE
     a.attrelid = '{publication.QuotedTableName}'::regclass
     AND a.attnum > 0
     AND NOT a.attisdropped
+    AND a.attgenerated = ''
 ORDER BY
     a.attnum;
 ";

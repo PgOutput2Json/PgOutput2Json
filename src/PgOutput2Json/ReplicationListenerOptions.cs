@@ -22,7 +22,9 @@ namespace PgOutput2Json
         /// The publisher must support storing the last WAL LSN, because it is used to decide weather to initiate the copy or not.
         /// The copy is initiated only if the last published WAL LSN == 0.
         /// </summary>
-        public bool CopyData { get; private set; } = false;
+        public bool CopyData { get; private set; }
+
+        public int MaxParallelCopyJobs { get; private set; }
 
         public Action<string, DataCopyStatus> DataCopyStatusHandler { get; private set; }
 
@@ -36,6 +38,7 @@ namespace PgOutput2Json
                                           IReadOnlyDictionary<string, IReadOnlyList<string>> includedColumns, 
                                           PartitionFilter? partitionFilter = null,
                                           bool copyData = false,
+                                          int maxParallelCopyJobs = 1,
                                           Action<string, DataCopyStatus>? dataCopyStatusHandler = null)
         {
             ConnectionString = connectionString;
@@ -48,6 +51,7 @@ namespace PgOutput2Json
             IncludedColumns = new Dictionary<string, IReadOnlyList<string>>(includedColumns);
             PartitionFilter = partitionFilter;
             CopyData = copyData;
+            MaxParallelCopyJobs = maxParallelCopyJobs;
             DataCopyStatusHandler = dataCopyStatusHandler ?? ((tableName, status) => { });
         }
     }

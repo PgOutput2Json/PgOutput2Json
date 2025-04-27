@@ -21,6 +21,8 @@ namespace PgOutput2Json
         private int _batchSize = 100;
 
         private bool _copyData = false;
+        private int _maxParallelCopyJobs = 1;
+
         private Action<string, DataCopyStatus>? _dataCopyStatusHandler;
 
         public static PgOutput2JsonBuilder Create()
@@ -112,9 +114,10 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder CopyData(bool copyData = false)
+        public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 1)
         {
             _copyData = copyData;
+            _maxParallelCopyJobs = maxParallelJobs;
             return this;
         }
 
@@ -152,6 +155,8 @@ namespace PgOutput2Json
 
             cnStringBuilder.Timezone ??= "UTC";
 
+            if (_maxParallelCopyJobs <= 0) _maxParallelCopyJobs = 1;
+
             var options = new ReplicationListenerOptions(cnStringBuilder.ConnectionString,
                                                          _useTemporarySlot,
                                                          _replicationSlotName,
@@ -162,6 +167,7 @@ namespace PgOutput2Json
                                                          _columns,
                                                          _partitionFilter,
                                                          _copyData,
+                                                         _maxParallelCopyJobs,
                                                          _dataCopyStatusHandler);
 
             var listener = new ReplicationListener(_messagePublisherFactory, options, _jsonOptions, _loggerFactory);
