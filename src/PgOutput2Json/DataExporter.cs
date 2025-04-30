@@ -54,7 +54,7 @@ namespace PgOutput2Json
 
                     await connection.OpenAsync(linkedToken).ConfigureAwait(false);
 
-                    var dataCopyStatus = await GetDataCopyStatus(publication, listenerOptions, linkedToken).ConfigureAwait(false);
+                    var dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
 
                     if (!dataCopyStatus.IsCompleted)
                     {
@@ -74,18 +74,6 @@ namespace PgOutput2Json
                 }
             });
         }
-        
-        private static async Task<DataCopyStatus> GetDataCopyStatus(PublicationInfo publication, ReplicationListenerOptions listenerOptions, CancellationToken token)
-        {
-            var dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, token).ConfigureAwait(false);
-
-            if (!dataCopyStatus.IsCompleted)
-            {
-                listenerOptions.DataCopyStatusHandler.Invoke(publication.TableName, dataCopyStatus);
-            }
-
-            return dataCopyStatus;
-        }
 
         private static async Task ExportData(NpgsqlConnection connection,
                                              IMessagePublisher publisher,
@@ -94,163 +82,159 @@ namespace PgOutput2Json
                                              JsonOptions jsonOptions,
                                              PublicationInfo publication,
                                              DataCopyStatus dataCopyStatus,
-                                             ILogger? logger, 
-                                             CancellationToken token)
+                                             ILogger? logger,
+                                             CancellationToken cancellationToken)
         {
             string? lastJsonString = null;
 
-            try
+            listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
+            listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
+
+            // Export two columns to table data
+
+            var whereClause = "";
+
+            if (!string.IsNullOrWhiteSpace(publication.RowFilter))
             {
-                listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
-                listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
+                whereClause = publication.RowFilter;
+            }
 
-                // Export two columns to table data
+            if (!string.IsNullOrWhiteSpace(dataCopyStatus.AdditionalRowFilter))
+            {
+                if (whereClause.Length > 0) whereClause += " AND ";
+                whereClause += $"({dataCopyStatus.AdditionalRowFilter})";
+            }
 
-                var whereClause = "";
+            var source = publication.QuotedTableName;
 
-                if (!string.IsNullOrWhiteSpace(publication.RowFilter))
+            if (whereClause.Length != 0 || !string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+            {
+                source = $"(SELECT * FROM {publication.QuotedTableName}";
+
+                if (whereClause.Length > 0)
                 {
-                    whereClause = publication.RowFilter;
+                    source += " WHERE " + whereClause;
                 }
 
-                if (!string.IsNullOrWhiteSpace(dataCopyStatus.AdditionalRowFilter))
+                if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
                 {
-                    if (whereClause.Length > 0) whereClause += " AND ";
-                    whereClause += $"({dataCopyStatus.AdditionalRowFilter})";
+                    source += " ORDER BY " + dataCopyStatus.OrderByColumns;
                 }
 
-                var source = publication.QuotedTableName;
+                source += ")";
+            }
 
-                if (whereClause.Length != 0 || !string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
+            using (var cmd = connection.CreateCommand())
+            {
+                cmd.CommandText = "SET DATESTYLE TO ISO";
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var json = new StringBuilder(256);
+            var keyValues = new StringBuilder(256);
+            var value = new StringBuilder(256);
+
+            var currentBatch = 0;
+            var schemaWritten = false;
+
+            var values = new List<string>(100);
+
+            using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
+
+            var isHeader = true;
+
+            var token = CancellationToken.None; // we will check cancellation manually after each line
+
+            string? line;
+            while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
+            {
+                if (isHeader)
                 {
-                    source = $"(SELECT * FROM {publication.QuotedTableName}";
-
-                    if (whereClause.Length > 0)
-                    {
-                        source += " WHERE " + whereClause;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
-                    {
-                        source += " ORDER BY " + dataCopyStatus.OrderByColumns;
-                    }
-
-                    source += ")";
-                }
-
-                using (var cmd = connection.CreateCommand())
-                {
-                    cmd.CommandText = "SET DATESTYLE TO ISO";
-                    await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-                }
-
-                var json = new StringBuilder(256);
-                var keyValues = new StringBuilder(256);
-                var value = new StringBuilder(256);
-
-                var currentBatch = 0;
-                var schemaWritten = false;
-
-                var values = new List<string>(100);
-
-                using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
-
-                var isHeader = true;
-
-                string? line;
-                while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
-                {
-                    if (isHeader)
-                    {
-                        isHeader = false;
-                        GetValues(values, value, line, logger);
-
-                        var columnsFromHeader = new List<ColumnInfo>();
-
-                        for (var i = 0; i < values.Count; i++)
-                        {
-                            var col = publication.Columns.FirstOrDefault(c => c.ColumnName == values[i])
-                                ?? throw new Exception($"Invalid column in exported data. Column: {values[i]}");
-
-                            columnsFromHeader.Add(col);
-                        }
-
-                        // use columns from the header
-                        publication.Columns = columnsFromHeader;
-                        continue;
-                    }
-
-                    json.Clear();
-                    keyValues.Clear();
-
+                    isHeader = false;
                     GetValues(values, value, line, logger);
 
-                    if (values.Count != publication.Columns.Count)
+                    var columnsFromHeader = new List<PgColumnInfo>();
+
+                    for (var i = 0; i < values.Count; i++)
                     {
-                        throw new Exception("Inconsistent column count between COPY output and table metadata");
+                        var col = publication.Columns.FirstOrDefault(c => c.ColumnName == values[i])
+                            ?? throw new Exception($"Invalid column in exported data. Column: {values[i]}");
+
+                        columnsFromHeader.Add(col);
                     }
 
-                    if (currentBatch == 0)
+                    // use columns from the header
+                    publication.Columns = columnsFromHeader;
+                    continue;
+                }
+
+                // we check here, to make sure header is read at least
+
+                if (cancellationToken.IsCancellationRequested) break;
+
+                json.Clear();
+                keyValues.Clear();
+
+                GetValues(values, value, line, logger);
+
+                if (values.Count != publication.Columns.Count)
+                {
+                    throw new Exception("Inconsistent column count between COPY output and table metadata");
+                }
+
+                if (currentBatch == 0)
+                {
+                    currentBatch = listenerOptions.BatchSize;
+                }
+
+                json.Append("{\"c\":\"I\"");
+                json.Append(",\"w\":0");
+
+                if (jsonOptions.WriteTableNames)
+                {
+                    json.Append(",\"t\":\"");
+                    JsonUtils.EscapeText(json, publication.TableName);
+                    json.Append('"');
+                }
+
+                if (!schemaWritten)
+                {
+                    schemaWritten = true;
+
+                    json.Append(',');
+                    switch (jsonOptions.WriteMode)
                     {
-                        currentBatch = listenerOptions.BatchSize;
-                    }
-
-                    json.Append("{\"c\":\"I\"");
-                    json.Append(",\"w\":0");
-
-                    if (jsonOptions.WriteTableNames)
-                    {
-                        json.Append(",\"t\":\"");
-                        JsonUtils.EscapeText(json, publication.TableName);
-                        json.Append('"');
-                    }
-
-                    if (!schemaWritten)
-                    {
-                        schemaWritten = true;
-
-                        json.Append(',');
-                        switch (jsonOptions.WriteMode)
-                        {
-                            case JsonWriteMode.Compact:
-                                WriteSchemaCompact(json, publication, includedColumns);
-                                break;
-                            default:
-                                WriteSchemaDefault(json, publication, includedColumns);
-                                break;
-                        }
-                    }
-
-                    var hash = WriteRow(publication.Columns, values, json, keyValues, jsonOptions, includedColumns);
-
-                    json.Append('}');
-
-                    var partition = partitionCount > 0 ? hash % partitionCount : 0;
-
-                    lastJsonString = json.ToString();
-
-                    await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
-
-                    currentBatch--;
-                    if (currentBatch <= 0)
-                    {
-                        await publisher.ConfirmAsync(token).ConfigureAwait(false);
-                        await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, token).ConfigureAwait(false);
+                        case JsonWriteMode.Compact:
+                            WriteSchemaCompact(json, publication, includedColumns);
+                            break;
+                        default:
+                            WriteSchemaDefault(json, publication, includedColumns);
+                            break;
                     }
                 }
 
-                await publisher.ConfirmAsync(token).ConfigureAwait(false);
-                await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, true, null, token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                logger.SafeLogWarn("Cancelling data export from table {TableName}", publication.TableName);
+                var hash = WriteRow(publication.Columns, values, json, keyValues, jsonOptions, includedColumns);
 
-                // try to confirm the final batch, so we minimize the duplication
+                json.Append('}');
 
-                await publisher.ConfirmAsync(CancellationToken.None).ConfigureAwait(false);
-                await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, CancellationToken.None).ConfigureAwait(false);
+                var partition = partitionCount > 0 ? hash % partitionCount : 0;
+
+                lastJsonString = json.ToString();
+
+                await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
+
+                currentBatch--;
+                if (currentBatch <= 0)
+                {
+                    await publisher.ConfirmAsync(token).ConfigureAwait(false);
+                    await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, publication.Columns, token).ConfigureAwait(false);
+                }
             }
+
+            var completed = !cancellationToken.IsCancellationRequested;
+
+            await publisher.ConfirmAsync(token).ConfigureAwait(false);
+            await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, completed, lastJsonString, publication.Columns, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -328,7 +312,7 @@ namespace PgOutput2Json
             }
         }
 
-        private static int WriteRow(IReadOnlyList<ColumnInfo> cols,
+        private static int WriteRow(IReadOnlyList<PgColumnInfo> cols,
                                     List<string> values,
                                     StringBuilder json,
                                     StringBuilder keyVal,
@@ -513,7 +497,7 @@ ORDER BY
 
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
-                publication.Columns.Add(new ColumnInfo
+                publication.Columns.Add(new PgColumnInfo
                 {
                     ColumnName = reader.GetString(0),
                     DataTypeId = (uint)reader.GetValue(1),
@@ -523,7 +507,7 @@ ORDER BY
             }
         }
 
-        private static bool IsIncluded(IReadOnlyList<string>? includedCols, ColumnInfo col)
+        private static bool IsIncluded(IReadOnlyList<string>? includedCols, PgColumnInfo col)
         {
             if (includedCols == null) return true; // if not specified, included by default
 
@@ -626,15 +610,7 @@ ORDER BY
             public required string QuotedTableName { get; set; }
             public string? RowFilter { get; set; }
 
-            public List<ColumnInfo> Columns { get; set; } = [];
-        }
-
-        private class ColumnInfo
-        {
-            public required string ColumnName { get; set; }
-            public bool IsKey { get; set; }
-            public uint DataTypeId { get; set; }
-            public int TypeModifier { get; set; }
+            public List<PgColumnInfo> Columns { get; set; } = [];
         }
     }
 }

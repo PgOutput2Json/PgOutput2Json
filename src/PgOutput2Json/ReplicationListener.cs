@@ -179,7 +179,7 @@ namespace PgOutput2Json
                                 {
                                     // if data copy is on, we will mark this table as copied,
                                     // to avoid copying tables created after the inital copy
-                                    await DataCopyProgress.SetDataCopyProgress(result.TableName, _options, true, null, cancellationToken)
+                                    await DataCopyProgress.SetDataCopyProgress(result.TableName, _options, true, null, null, cancellationToken)
                                         .ConfigureAwait(false);
                                 }
 

@@ -3,7 +3,6 @@
     public class DataCopyStatus
     {
         public bool IsCompleted { get; set; }
-        public string? LastJson { get; set; }
 
         /// <summary>
         /// This is optionally populated by the client app, not used by the publisher.
