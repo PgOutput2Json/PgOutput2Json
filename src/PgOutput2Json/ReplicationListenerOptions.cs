@@ -15,6 +15,7 @@ namespace PgOutput2Json
 
         public Dictionary<string, int> TablePartitions { get; private set; } 
         public Dictionary<string, IReadOnlyList<string>> IncludedColumns { get; private set; }
+        public Dictionary<string, IReadOnlyList<string>> OrderedKeys { get; private set; }
         public PartitionFilter? PartitionFilter { get; private set; }
 
         /// <summary>
@@ -26,8 +27,6 @@ namespace PgOutput2Json
 
         public int MaxParallelCopyJobs { get; private set; }
 
-        public Action<string, DataCopyStatus> DataCopyStatusHandler { get; private set; }
-
         public ReplicationListenerOptions(string connectionString,
                                           bool useTemporarySlot,
                                           string replicationSlotName,
@@ -36,10 +35,10 @@ namespace PgOutput2Json
                                           int batchSize,
                                           IReadOnlyDictionary<string, int> tablePartitions,
                                           IReadOnlyDictionary<string, IReadOnlyList<string>> includedColumns, 
+                                          IReadOnlyDictionary<string, IReadOnlyList<string>> orderedKeys, 
                                           PartitionFilter? partitionFilter = null,
                                           bool copyData = false,
-                                          int maxParallelCopyJobs = 1,
-                                          Action<string, DataCopyStatus>? dataCopyStatusHandler = null)
+                                          int maxParallelCopyJobs = 1)
         {
             ConnectionString = connectionString;
             UseTemporarySlot = useTemporarySlot;
@@ -49,10 +48,10 @@ namespace PgOutput2Json
             ReplicationSlotName = replicationSlotName;
             TablePartitions = new Dictionary<string, int>(tablePartitions);
             IncludedColumns = new Dictionary<string, IReadOnlyList<string>>(includedColumns);
+            OrderedKeys = new Dictionary<string, IReadOnlyList<string>>(orderedKeys);
             PartitionFilter = partitionFilter;
             CopyData = copyData;
             MaxParallelCopyJobs = maxParallelCopyJobs;
-            DataCopyStatusHandler = dataCopyStatusHandler ?? ((tableName, status) => { });
         }
     }
 }

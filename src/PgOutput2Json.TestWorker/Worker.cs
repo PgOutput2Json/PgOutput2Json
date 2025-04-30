@@ -40,33 +40,8 @@ namespace PgOutput2Json.TestWorker
                 .WithPgReplicationSlot("test_slot")
                 //.WithBatchSize(10_000) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
-                //.WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate database named pg_output2json must be created on the source (to track the progress)
-                //.WithDataCopyStatusHandler((tableName, status) =>
-                //{
-                //    // optional, allows implementing logic to continue data copy from a specific point
-
-                //    if (tableName == "public.test_table")
-                //    {
-                //        status.OrderByColumns = "id";
-
-                //        if (status.LastJson != null)
-                //        {
-                //            var doc = JsonDocument.Parse(status.LastJson);
-
-                //            //// use this for compact write mode (sqlite uses is by default)
-                //            //if (doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array && row.GetArrayLength() > 0)
-                //            //{
-                //            //    status.AdditionalRowFilter = $"id > {row[0].GetInt32()}";
-                //            //}
-
-                //            if (doc.RootElement.TryGetProperty("r", out var row) && row.TryGetProperty("id", out var id))
-                //            {
-                //                status.AdditionalRowFilter = $"id > {id.GetInt32()}";
-                //            }
-                //        }
-                //    }
-
-                //})
+                //.WithPgOrderedKeyColumns("public.test_table", "id") // used for initial data copy, to support ordering and resuming an interrupted initial data copy process
+                //.WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate schema named pgoutput2json must be created in the source db (to track the progress)
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;

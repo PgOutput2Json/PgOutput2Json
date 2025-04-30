@@ -1,5 +1,3 @@
-CREATE DATABASE pg_output2json;
-
 CREATE DATABASE test_db;
 
 \connect test_db
@@ -11,4 +9,6 @@ CREATE TABLE test_table (
   CONSTRAINT pk_test_table PRIMARY KEY (id)
 );
 
-CREATE PUBLICATION test_publication FOR ALL TABLES WITH (publish = 'insert, update, delete');
+CREATE PUBLICATION test_publication FOR TABLES IN SCHEMA public WITH (publish = 'insert, update, delete');
+
+CREATE SCHEMA pgoutput2json;

@@ -12,6 +12,7 @@ namespace PgOutput2Json
         private string[]? _publicationNames;
         private Dictionary<string, int> _tablePartitions = new Dictionary<string, int>();
         private Dictionary<string, IReadOnlyList<string>> _columns = new Dictionary<string, IReadOnlyList<string>>();
+        private Dictionary<string, IReadOnlyList<string>> _orderedKeys = new Dictionary<string, IReadOnlyList<string>>();
         private IMessagePublisherFactory? _messagePublisherFactory;
         private int _idleFlushTimeSec = 2;
         private ILoggerFactory? _loggerFactory;
@@ -22,8 +23,6 @@ namespace PgOutput2Json
 
         private bool _copyData = false;
         private int _maxParallelCopyJobs = 1;
-
-        private Action<string, DataCopyStatus>? _dataCopyStatusHandler;
 
         public static PgOutput2JsonBuilder Create()
         {
@@ -69,6 +68,19 @@ namespace PgOutput2Json
         public PgOutput2JsonBuilder WithPgColumns(string tableName, params string[] columnNames)
         {
             _columns[tableName] = columnNames;
+            return this;
+        }
+
+        /// <summary>
+        /// Specifies which table columns to are to be used for ordering during the initial data copy, AND for resuming an interrupted initial data copy.
+        /// If a table is not specified at all, then no ordering will be used during the initial data copy, and resuming will not be supported.
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="orderedKeyColumns"></param>
+        /// <returns></returns>
+        public PgOutput2JsonBuilder WithPgOrderedKeyColumns(string tableName, params string[] orderedKeyColumns)
+        {
+            _orderedKeys[tableName] = orderedKeyColumns;
             return this;
         }
 
@@ -121,12 +133,6 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithDataCopyStatusHandler(Action<string, DataCopyStatus> handler)
-        {
-            _dataCopyStatusHandler = handler;
-            return this;
-        }
-
         public IPgOutput2Json Build()
         {
             if (string.IsNullOrWhiteSpace(_connectionString)) 
@@ -165,10 +171,10 @@ namespace PgOutput2Json
                                                          _batchSize,
                                                          _tablePartitions,
                                                          _columns,
+                                                         _orderedKeys,
                                                          _partitionFilter,
                                                          _copyData,
-                                                         _maxParallelCopyJobs,
-                                                         _dataCopyStatusHandler);
+                                                         _maxParallelCopyJobs);
 
             var listener = new ReplicationListener(_messagePublisherFactory, options, _jsonOptions, _loggerFactory);
 

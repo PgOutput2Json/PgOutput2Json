@@ -1,5 +1,8 @@
 ﻿using Npgsql;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -9,118 +12,219 @@ namespace PgOutput2Json
     {
         public static async Task<DataCopyStatus> GetDataCopyStatus(string tableName, ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
-            var (DatabaseName, SlotName, ConnectionString) = GetPgoutput2JsonInfo(listenerOptions);
+            listenerOptions.OrderedKeys.TryGetValue(tableName, out var orderByKeys);
 
-            if (SlotName == null) return new DataCopyStatus {  IsCompleted = false }; // temporary slot, no use remembering where we left off
+            var result = new DataCopyStatus
+            {
+                IsCompleted = false,
+                OrderByColumns = orderByKeys != null ? string.Join(',', orderByKeys.Select(k => $"\"{k}\"")) : null,
+            };
 
-            using var cn = new NpgsqlConnection(ConnectionString);
+            var slotName = GetSlotNameForDataCopyProgress(listenerOptions);
+
+            if (slotName == null)
+            {
+                // temporary slot, no use remembering where we left off
+                return result;
+            }
+
+            using var cn = new NpgsqlConnection(listenerOptions.ConnectionString);
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
             using var cmd = cn.CreateCommand();
 
             cmd.CommandText = @"
-SELECT is_completed, last_message 
-FROM data_copy_progress 
-WHERE database_name = @database_name
-    AND table_name = @table_name
+SELECT is_completed, last_message, column_names
+FROM pgoutput2json.data_copy_progress 
+WHERE table_name = @table_name
     AND slot_name = @slot_name
 ";
-            cmd.Parameters.AddWithValue("database_name", DatabaseName);
             cmd.Parameters.AddWithValue("table_name", tableName);
-            cmd.Parameters.AddWithValue("slot_name", SlotName);
+            cmd.Parameters.AddWithValue("slot_name", slotName);
 
             using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
 
-            var result = new DataCopyStatus();
+            string? lastMessage = null;
+            string? columnNames = null;
 
             if (await reader.ReadAsync(token).ConfigureAwait(false))
             {
                 result.IsCompleted = reader.GetBoolean(0);
-                result.LastJson = reader.IsDBNull(1) ? null : reader.GetString(1);
+
+                lastMessage = reader.IsDBNull(1) ? null : reader.GetString(1);
+                columnNames = reader.IsDBNull(2) ? null : reader.GetString(2);
             }
 
+            result.AdditionalRowFilter = GetRowFilter(tableName, orderByKeys, columnNames, lastMessage);
             await reader.CloseAsync().ConfigureAwait(false);
 
             return result;
         }
 
-        public static async Task SetDataCopyProgress(string tableName, ReplicationListenerOptions listenerOptions, bool isCompleted, string? lastJson, CancellationToken token)
+        private static string? GetRowFilter(string tableName, IReadOnlyList<string>? orderByKeys, string? columNames, string? lastMessage)
         {
-            var (DatabaseName, SlotName, ConnectionString) = GetPgoutput2JsonInfo(listenerOptions);
+            if (lastMessage == null || orderByKeys == null || orderByKeys.Count == 0)
+            {
+                return null;
+            }
 
-            if (SlotName == null) return;
+            var doc = JsonDocument.Parse(lastMessage);
+            if (!doc.RootElement.TryGetProperty("r", out var rowElement)) throw new Exception($"Missing row element in the last message stored for table {tableName}");
 
-            using var cn = new NpgsqlConnection(ConnectionString);
+            var conditions = new List<List<(string Column, string Value)>>();
+
+            var runningList = new List<(string Column, string Value)>();
+
+            if (rowElement.ValueKind == JsonValueKind.Array)
+            {
+                // compact mode
+                if (columNames == null)
+                {
+                    throw new Exception($"Column names not found for table {tableName} when trying to get data copy status");
+                }
+
+                var cols = JsonSerializer.Deserialize<List<string>>(columNames) ?? throw new Exception("Could not deserialize column names");
+
+                for (int i = 0; i < orderByKeys.Count; i++)
+                {
+                    var colIndex = cols.FindIndex(c => c == orderByKeys[i]);
+
+                    if (colIndex < 0) 
+                    {
+                        throw new Exception($"Column for the provided ordered key '{orderByKeys[i]}' not found in table {tableName}");
+                    }
+
+                    if (colIndex >= rowElement.GetArrayLength())
+                    {
+                        throw new Exception($"Too few values in the last message stored for table {tableName}. Expected at least {colIndex + 1} values");
+                    }
+
+                    runningList.Add((orderByKeys[i], FormatValue(rowElement[colIndex])));
+
+                    conditions.Add([..runningList]);
+                }
+            }
+            else
+            {
+                // default mode
+                for (int i = 0; i < orderByKeys.Count; i++)
+                {
+                    if (!rowElement.TryGetProperty(orderByKeys[i], out var valueElement))
+                    {
+                        throw new Exception($"Property for the provided ordered key {orderByKeys[i]} not found in the last message stored for table {tableName}.");
+                    }
+
+                    runningList.Add((orderByKeys[i], FormatValue(valueElement)));
+
+                    conditions.Add([..runningList]);
+                }
+            }
+
+            string rowFilter = "";
+
+            foreach (var cond in conditions)
+            {
+                if (rowFilter != "") rowFilter += " OR ";
+
+                rowFilter += "(";
+
+                for (var i = 0; i < cond.Count; i++)
+                {
+                    if (i > 0) rowFilter += " AND ";
+
+                    var op = i < cond.Count - 1 ? "=" : ">";
+
+                    rowFilter += $"{cond[i].Column}{op}{cond[i].Value}";
+                }
+
+                rowFilter += ")";
+            }
+
+            return rowFilter;
+        }
+
+        private static string FormatValue(JsonElement jsonElement)
+        {
+            return jsonElement.ValueKind switch
+            {
+                JsonValueKind.String => $"'{jsonElement.GetString()}'",
+                JsonValueKind.Number => $"{jsonElement}",
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => $"'{jsonElement.GetRawText()}'",
+            };
+        }
+
+        public static async Task SetDataCopyProgress(string tableName,
+                                                     ReplicationListenerOptions listenerOptions,
+                                                     bool isCompleted,
+                                                     string? lastMessage,
+                                                     IReadOnlyList<PgColumnInfo>? columns,
+                                                     CancellationToken token)
+        {
+            var slotName = GetSlotNameForDataCopyProgress(listenerOptions);
+
+            if (slotName == null) return;
+
+            using var cn = new NpgsqlConnection(listenerOptions.ConnectionString);
 
             await cn.OpenAsync(token).ConfigureAwait(false);
-
 
             using var cmd = cn.CreateCommand();
 
             cmd.CommandText = @"
-INSERT INTO data_copy_progress (database_name, table_name, slot_name, is_completed, last_message)
-VALUES (@database_name, @table_name, @slot_name, @is_completed, @last_message)
-ON CONFLICT (database_name, table_name, slot_name)
+INSERT INTO pgoutput2json.data_copy_progress (table_name, slot_name, is_completed, last_message, column_names, updated_at)
+VALUES (@table_name, @slot_name, @is_completed, @last_message::jsonb, @column_names::jsonb, now())
+ON CONFLICT (table_name, slot_name)
 DO UPDATE SET
     is_completed = EXCLUDED.is_completed,
-    last_message = EXCLUDED.last_message
+    last_message = EXCLUDED.last_message,
+    column_names = EXCLUDED.column_names,
+    updated_at = EXCLUDED.updated_at
 ";
-            cmd.Parameters.AddWithValue("is_completed", isCompleted);
-            cmd.Parameters.AddWithValue("last_message", lastJson ?? (object)DBNull.Value);
-
-            cmd.Parameters.AddWithValue("database_name", DatabaseName);
             cmd.Parameters.AddWithValue("table_name", tableName);
-            cmd.Parameters.AddWithValue("slot_name", SlotName);
+            cmd.Parameters.AddWithValue("slot_name", slotName);
+
+            cmd.Parameters.AddWithValue("is_completed", isCompleted);
+            cmd.Parameters.AddWithValue("last_message", lastMessage ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("column_names", columns != null ? JsonSerializer.Serialize(columns.Select(c => c.ColumnName)) : DBNull.Value);
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
         public static async Task CreateDataCopyProgressTable(ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
-            var (DatabaseName, SlotName, ConnectionString) = GetPgoutput2JsonInfo(listenerOptions);
-
-            if (SlotName == null) return;
-
-            using var cn = new NpgsqlConnection(ConnectionString);
+            using var cn = new NpgsqlConnection(listenerOptions.ConnectionString);
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
             using var cmd = cn.CreateCommand();
 
             cmd.CommandText = @"
-CREATE TABLE IF NOT EXISTS data_copy_progress (
+CREATE TABLE IF NOT EXISTS pgoutput2json.data_copy_progress (
     table_name TEXT NOT NULL,
-    database_name TEXT NOT NULL,
     slot_name TEXT NOT NULL,
     is_completed bool NOT NULL DEFAULT false,
-    last_message TEXT,
-    CONSTRAINT pk_data_copy_progress PRIMARY KEY (table_name, database_name, slot_name)
+    last_message jsonb,
+    column_names jsonb,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now(),
+    CONSTRAINT pk_data_copy_progress PRIMARY KEY (table_name, slot_name)
 )";
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        private static (string DatabaseName, string? SlotName, string ConnectionString) GetPgoutput2JsonInfo(ReplicationListenerOptions listenerOptions)
+        private static string? GetSlotNameForDataCopyProgress(ReplicationListenerOptions listenerOptions)
         {
-            string? slotName;
             if (string.IsNullOrWhiteSpace(listenerOptions.ReplicationSlotName) || listenerOptions.UseTemporarySlot)
             {
-                slotName = null;
-            }
-            else
-            {
-                slotName = listenerOptions.ReplicationSlotName;
+                // we don't store progress for temporary slots
+                return null;
             }
 
-            var cnBuilder = new NpgsqlConnectionStringBuilder(listenerOptions.ConnectionString);
-
-            var databaseName = cnBuilder.Database ?? throw new Exception("Database name not set in connection string");
-
-            cnBuilder.Database = "pg_output2json";
-            var ourConnectionString = cnBuilder.ConnectionString;
-
-            return (databaseName, slotName, ourConnectionString);
+            return listenerOptions.ReplicationSlotName;
         }
     }
 }
