@@ -22,6 +22,7 @@ namespace PgOutput2Json
         private int _batchSize = 100;
 
         private bool _copyData = false;
+        private int _copyDatsBatchSize = 0;
         private int _maxParallelCopyJobs = 1;
 
         public static PgOutput2JsonBuilder Create()
@@ -126,10 +127,11 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 1)
+        public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 1, int copyDataBatchSize = 0)
         {
             _copyData = copyData;
             _maxParallelCopyJobs = maxParallelJobs;
+            _copyDatsBatchSize = copyDataBatchSize;
             return this;
         }
 
@@ -174,6 +176,7 @@ namespace PgOutput2Json
                                                          _orderedKeys,
                                                          _partitionFilter,
                                                          _copyData,
+                                                         _copyDatsBatchSize,
                                                          _maxParallelCopyJobs);
 
             var listener = new ReplicationListener(_messagePublisherFactory, options, _jsonOptions, _loggerFactory);

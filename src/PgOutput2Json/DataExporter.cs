@@ -56,11 +56,20 @@ namespace PgOutput2Json
 
                     var dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
 
-                    if (!dataCopyStatus.IsCompleted)
+                    if (dataCopyStatus.IsCompleted)
                     {
-                        logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
+                        return;
+                    }
 
-                        await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
+                    logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
+
+                    while (!linkedToken.IsCancellationRequested)
+                    {
+                        var completed = await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
+                        if (completed) break;
+
+                        // needed for continuation of the next batch
+                        dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
                     }
                 }
                 catch (OperationCanceledException)
@@ -75,7 +84,7 @@ namespace PgOutput2Json
             });
         }
 
-        private static async Task ExportData(NpgsqlConnection connection,
+        private static async Task<bool> ExportData(NpgsqlConnection connection,
                                              IMessagePublisher publisher,
                                              IMessageWriter writer,
                                              ReplicationListenerOptions listenerOptions,
@@ -106,6 +115,7 @@ namespace PgOutput2Json
             }
 
             var source = publication.QuotedTableName;
+            var copyBatchSize = 0;
 
             if (whereClause.Length != 0 || !string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
             {
@@ -119,6 +129,12 @@ namespace PgOutput2Json
                 if (!string.IsNullOrWhiteSpace(dataCopyStatus.OrderByColumns))
                 {
                     source += " ORDER BY " + dataCopyStatus.OrderByColumns;
+
+                    if (listenerOptions.CopyDataBatchSize > 0)
+                    {
+                        source += " LIMIT " + listenerOptions.CopyDataBatchSize;
+                        copyBatchSize = listenerOptions.CopyDataBatchSize;
+                    }
                 }
 
                 source += ")";
@@ -135,6 +151,7 @@ namespace PgOutput2Json
             var value = new StringBuilder(256);
 
             var currentBatch = 0;
+            var totalRows = 0;
             var schemaWritten = false;
 
             var values = new List<string>(100);
@@ -223,6 +240,8 @@ namespace PgOutput2Json
 
                 await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
 
+                totalRows++;
+
                 currentBatch--;
                 if (currentBatch <= 0)
                 {
@@ -231,10 +250,13 @@ namespace PgOutput2Json
                 }
             }
 
-            var completed = !cancellationToken.IsCancellationRequested;
+            var completed = !cancellationToken.IsCancellationRequested 
+                && (copyBatchSize == 0 || totalRows < copyBatchSize);
 
             await publisher.ConfirmAsync(token).ConfigureAwait(false);
             await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, completed, lastJsonString, publication.Columns, token).ConfigureAwait(false);
+
+            return completed;
         }
 
         /// <summary>
