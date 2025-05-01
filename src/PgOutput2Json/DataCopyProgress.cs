@@ -57,6 +57,7 @@ WHERE table_name = @table_name
             }
 
             result.AdditionalRowFilter = GetRowFilter(tableName, orderByKeys, columnNames, lastMessage);
+
             await reader.CloseAsync().ConfigureAwait(false);
 
             return result;
@@ -72,9 +73,7 @@ WHERE table_name = @table_name
             var doc = JsonDocument.Parse(lastMessage);
             if (!doc.RootElement.TryGetProperty("r", out var rowElement)) throw new Exception($"Missing row element in the last message stored for table {tableName}");
 
-            var conditions = new List<List<(string Column, string Value)>>();
-
-            var runningList = new List<(string Column, string Value)>();
+            var lastSeenValues = new List<(string Column, string Value)>();
 
             if (rowElement.ValueKind == JsonValueKind.Array)
             {
@@ -100,9 +99,7 @@ WHERE table_name = @table_name
                         throw new Exception($"Too few values in the last message stored for table {tableName}. Expected at least {colIndex + 1} values");
                     }
 
-                    runningList.Add((orderByKeys[i], FormatValue(rowElement[colIndex])));
-
-                    conditions.Add([..runningList]);
+                    lastSeenValues.Add((orderByKeys[i], FormatValue(rowElement[colIndex])));
                 }
             }
             else
@@ -115,33 +112,14 @@ WHERE table_name = @table_name
                         throw new Exception($"Property for the provided ordered key {orderByKeys[i]} not found in the last message stored for table {tableName}.");
                     }
 
-                    runningList.Add((orderByKeys[i], FormatValue(valueElement)));
-
-                    conditions.Add([..runningList]);
+                    lastSeenValues.Add((orderByKeys[i], FormatValue(valueElement)));
                 }
             }
 
-            string rowFilter = "";
+            var strCols = string.Join(',', lastSeenValues.Select(x => $"\"{x.Column}\""));
+            var strVals = string.Join(',', lastSeenValues.Select(x => x.Value));
 
-            foreach (var cond in conditions)
-            {
-                if (rowFilter != "") rowFilter += " OR ";
-
-                rowFilter += "(";
-
-                for (var i = 0; i < cond.Count; i++)
-                {
-                    if (i > 0) rowFilter += " AND ";
-
-                    var op = i < cond.Count - 1 ? "=" : ">";
-
-                    rowFilter += $"{cond[i].Column}{op}{cond[i].Value}";
-                }
-
-                rowFilter += ")";
-            }
-
-            return rowFilter;
+            return $"({strCols}) > ({strVals})";
         }
 
         private static string FormatValue(JsonElement jsonElement)
