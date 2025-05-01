@@ -25,6 +25,11 @@ namespace PgOutput2Json
         /// </summary>
         public bool CopyData { get; private set; }
 
+        /// <summary>
+        /// This is only used if initial data copy is enabled AND ordered key columns are provided
+        /// </summary>
+        public int CopyDataBatchSize { get; private set; } = 0;
+
         public int MaxParallelCopyJobs { get; private set; }
 
         public ReplicationListenerOptions(string connectionString,
@@ -38,6 +43,7 @@ namespace PgOutput2Json
                                           IReadOnlyDictionary<string, IReadOnlyList<string>> orderedKeys, 
                                           PartitionFilter? partitionFilter = null,
                                           bool copyData = false,
+                                          int copyDataBatchSize = 0,
                                           int maxParallelCopyJobs = 1)
         {
             ConnectionString = connectionString;
@@ -51,6 +57,7 @@ namespace PgOutput2Json
             OrderedKeys = new Dictionary<string, IReadOnlyList<string>>(orderedKeys);
             PartitionFilter = partitionFilter;
             CopyData = copyData;
+            CopyDataBatchSize = copyDataBatchSize;
             MaxParallelCopyJobs = maxParallelCopyJobs;
         }
     }
