@@ -255,7 +255,9 @@ namespace PgOutput2Json
                     continue;
                 }
 
-                if (!IsIncluded(includedCols, col) || (isKeyRow && !isKeyColumn) || (!value.IsDBNull && value.Kind != TupleDataKind.TextValue))
+                if (!IsIncluded(includedCols, col) 
+                    || (isKeyRow && !isKeyColumn) 
+                    || (!value.IsDBNull && !value.IsUnchangedToastedValue && value.Kind != TupleDataKind.TextValue))
                 {
                     if (!value.IsDBNull)
                     {
@@ -300,7 +302,12 @@ namespace PgOutput2Json
                     _jsonBuilder.Append(':');
                 }
 
-                if (value.IsDBNull)
+                if (value.IsUnchangedToastedValue)
+                {
+                    _jsonBuilder.Append("\"__TOAST__\"");
+                    keyColBuilder?.Append("\"__TOAST__\"");
+                }
+                else if (value.IsDBNull)
                 {
                     _jsonBuilder.Append("null");
                     keyColBuilder?.Append("null");
