@@ -284,7 +284,12 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                     i++;
                     continue;
-                } 
+                }
+
+                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == "__TOAST__")
+                {
+                    continue; // skip unchanged toasted columns
+                }
 
                 if (setFieldsBuilder.Length > 0) setFieldsBuilder.Append(", ");
 
