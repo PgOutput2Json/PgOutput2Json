@@ -42,7 +42,15 @@ namespace PgOutput2Json.Sqlite
             if (_transaction == null) return;
 
             await _transaction.CommitAsync(token).ConfigureAwait(false);
+
             _transaction = null;
+
+            if (_options.UseWal)
+            {
+                var cn = await EnsureConnection(token).ConfigureAwait(false);
+
+                await cn.WalCheckpoint(_options.WalCheckpointType, _options.WalCheckpointTryCount, token).ConfigureAwait(false);
+            }
         }
 
         public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
@@ -136,6 +144,11 @@ namespace PgOutput2Json.Sqlite
             _connection = new SqliteConnection(_options.ConnectionStringBuilder.ConnectionString);
 
             await _connection.OpenAsync(token).ConfigureAwait(false);
+
+            if (_options.UseWal)
+            {
+                await _connection.UseWal(token).ConfigureAwait(false);
+            }
 
             await _connection.CreateConfigTable(token).ConfigureAwait(false);
 

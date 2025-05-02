@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -71,6 +72,45 @@ namespace PgOutput2Json.Sqlite
 
             return result?.ToString();
         }
+
+        public static async Task UseWal(this SqliteConnection cn, CancellationToken token)
+        {
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = @"PRAGMA journal_mode=WAL;";
+
+            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        public static async Task WalCheckpoint(this SqliteConnection cn, WalCheckpointType checkpointType, int tryCount, CancellationToken token)
+        {
+            using var cmd = cn.CreateCommand();
+
+            var typeStr = checkpointType == WalCheckpointType.Truncate ? "TRUNCATE"
+                : checkpointType == WalCheckpointType.Restart ? "RESTART"
+                : "FULL";
+
+            cmd.CommandText = @$"PRAGMA wal_checkpoint({typeStr});";
+
+            var success = false;
+
+            while (--tryCount >= 0)
+            {
+                using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+
+                if (await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    if (reader.GetInt32(0) == 0) // not busy
+                    {
+                        success = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!success) throw new Exception("Could not perform checkpoint - SQLite busy");
+        }
+
 
         public static async Task CreateConfigTable(this SqliteConnection cn, CancellationToken token)
         {
@@ -208,6 +248,8 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         {
             var tableName = GetTableName(fullTableName);
 
+            var blobs = new List<(ColumnInfo Col, string Val)>();
+
             var sqlBuilder = new StringBuilder($"INSERT INTO \"{tableName}\" (");
 
             int i;
@@ -228,7 +270,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             {
                 if (i > 0) sqlBuilder.Append(", ");
 
-                WriteColumnValue(sqlBuilder, valElement, columns[i]);
+                WriteColumnValue(sqlBuilder, valElement, columns[i], blobs);
 
                 i++;
             }
@@ -244,12 +286,24 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             cmd.CommandText = sqlBuilder.ToString();
 
-            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            var affectedCount = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+
+            if (affectedCount > 0 && blobs.Count > 0)
+            {
+                cmd.CommandText = "SELECT last_insert_rowid()";
+
+                var rowId = Convert.ToInt64(await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) ?? 0L);
+
+                // store blobs;
+                StoreBlobs(cn, tableName, rowId, blobs);
+            }
         }
 
         public static async Task<int> Update(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
+
+            var blobs = new List<(ColumnInfo Col, string Val)>();
 
             var setFieldsBuilder = new StringBuilder();
             var whereBuilder = new StringBuilder();
@@ -265,7 +319,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                     if (whereBuilder.Length > 0) whereBuilder.Append(" AND ");
 
-                    WriteColumnValueAssignment(whereBuilder, keyElement[i], column, true);
+                    WriteColumnValueAssignment(whereBuilder, keyElement[i], column, null, true);
 
                     i++;
                 }
@@ -280,7 +334,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 {
                     if (whereBuilder.Length > 0) whereBuilder.Append(" AND ");
 
-                    WriteColumnValueAssignment(whereBuilder, rowElement[i], column);
+                    WriteColumnValueAssignment(whereBuilder, rowElement[i], column, null);
 
                     i++;
                     continue;
@@ -293,7 +347,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                 if (setFieldsBuilder.Length > 0) setFieldsBuilder.Append(", ");
 
-                WriteColumnValueAssignment(setFieldsBuilder, rowElement[i], column);
+                WriteColumnValueAssignment(setFieldsBuilder, rowElement[i], column, blobs);
 
                 i++;
             }
@@ -307,7 +361,22 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             cmd.CommandText = sqlBuilder.ToString();
 
-            return await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            var affectedCount = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+
+            if (affectedCount > 0 && blobs.Count > 0)
+            {
+                sqlBuilder.Clear();
+                sqlBuilder.Append($"SELECT ROWID FROM \"{tableName}\" WHERE ");
+                sqlBuilder.Append(whereBuilder);
+
+                cmd.CommandText = sqlBuilder.ToString();
+
+                var rowId = Convert.ToInt64(await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) ?? 0);
+
+                StoreBlobs(cn, tableName, rowId, blobs);
+            }
+
+            return affectedCount;
         }
 
         public static async Task Delete(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
@@ -324,7 +393,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                 if (i > 0) sqlBuilder.Append(" AND ");
 
-                WriteColumnValueAssignment(sqlBuilder, keyElement[i], column, true);
+                WriteColumnValueAssignment(sqlBuilder, keyElement[i], column, null, true);
 
                 i++;
             }
@@ -336,7 +405,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        private static void WriteColumnValueAssignment(StringBuilder keysBuilder, JsonElement rowElement, ColumnInfo column, bool isWhereStatement = false)
+        private static void WriteColumnValueAssignment(StringBuilder keysBuilder, JsonElement rowElement, ColumnInfo column, List<(ColumnInfo, string)>? blobs, bool isWhereStatement = false)
         {
             if (isWhereStatement && rowElement.ValueKind == JsonValueKind.Null)
             {
@@ -345,11 +414,11 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             else
             {
                 keysBuilder.Append($"\"{column.Name}\"=");
-                WriteColumnValue(keysBuilder, rowElement, column);
+                WriteColumnValue(keysBuilder, rowElement, column, blobs);
             }
         }
 
-        private static void WriteColumnValue(StringBuilder sqlBuilder, JsonElement valElement, ColumnInfo column)
+        private static void WriteColumnValue(StringBuilder sqlBuilder, JsonElement valElement, ColumnInfo column, List<(ColumnInfo, string)>? blobs)
         {
             switch (valElement.ValueKind)
             {
@@ -380,6 +449,12 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                         var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
                         AppendEscapedSqlString(sqlBuilder, dateTime.ToString("O"));
                     }
+                    else if (column.IsBlob())
+                    {
+                        var blobValue = valElement.GetString()!;
+                        sqlBuilder.Append($"zeroblob({blobValue.Length / 2})");
+                        blobs?.Add((column, blobValue));
+                    }
                     else
                     {
                         AppendEscapedSqlString(sqlBuilder, valElement.GetString() ?? "");
@@ -400,6 +475,24 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 sql.Append(c);
             }
             sql.Append('\'');
+        }
+
+        private static void StoreBlobs(SqliteConnection cn, string tableName, long rowId, List<(ColumnInfo Col, string Val)> blobs)
+        {
+            if (rowId <= 0) return;
+
+            foreach (var (Col, Val) in blobs)
+            {
+                using var writeStream = new SqliteBlob(cn, $"{tableName}", $"{Col.Name}", rowId);
+
+                for (int i = 0; i < Val.Length; i += 2)
+                {
+                    byte b = Convert.ToByte(Val.Substring(i, 2), 16);
+                    writeStream.WriteByte(b);
+                }
+
+                writeStream.Flush();
+            }
         }
     }
 
@@ -437,6 +530,12 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         {
             return ((PgOid)DataType).IsTimestamp();
         }
+
+        public readonly bool IsBlob()
+        {
+            return ((PgOid)DataType) == PgOid.BYTEAOID;
+        }
+
 
         private static string GetPrecisionAndScale(int typeModifier)
         {
