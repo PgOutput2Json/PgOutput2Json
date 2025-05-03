@@ -34,6 +34,8 @@ namespace PgOutput2Json
                 publications = await GetPublicationInfo(connection, listenerOptions, token).ConfigureAwait(false);
             }
 
+            bool hasErrors = false;
+
             using var cts = new CancellationTokenSource();
 
             var parallelOptions = new ParallelOptions
@@ -78,10 +80,18 @@ namespace PgOutput2Json
                 }
                 catch (Exception ex)
                 {
-                    logger.SafeLogError(ex, "Error while exporting data");
+                    hasErrors = true;
+
+                    logger.SafeLogError(ex, "Error in data export from table {TableName}", publication.TableName);
+
                     cts.Cancel();
                 }
             });
+
+            if (hasErrors)
+            {
+                throw new OperationCanceledException(); // cancel further processing (errors already logged)
+            }
         }
 
         private static async Task<bool> ExportData(NpgsqlConnection connection,
