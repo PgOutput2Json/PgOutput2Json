@@ -12,7 +12,6 @@ namespace PgOutput2Json
     internal static class DataExporter
     {
         public static async Task MaybeExportData(IMessagePublisherFactory publisherFactory,
-                                                 IMessageWriter writer,
                                                  ReplicationListenerOptions listenerOptions,
                                                  JsonOptions jsonOptions,
                                                  ILoggerFactory? loggerFactory,
@@ -67,7 +66,7 @@ namespace PgOutput2Json
 
                     while (!linkedToken.IsCancellationRequested)
                     {
-                        var completed = await ExportData(connection, publisher, writer, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
+                        var completed = await ExportData(connection, publisher, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
                         if (completed) break;
 
                         // needed for continuation of the next batch
@@ -95,14 +94,13 @@ namespace PgOutput2Json
         }
 
         private static async Task<bool> ExportData(NpgsqlConnection connection,
-                                             IMessagePublisher publisher,
-                                             IMessageWriter writer,
-                                             ReplicationListenerOptions listenerOptions,
-                                             JsonOptions jsonOptions,
-                                             PublicationInfo publication,
-                                             DataCopyStatus dataCopyStatus,
-                                             ILogger? logger,
-                                             CancellationToken cancellationToken)
+                                                   IMessagePublisher publisher,
+                                                   ReplicationListenerOptions listenerOptions,
+                                                   JsonOptions jsonOptions,
+                                                   PublicationInfo publication,
+                                                   DataCopyStatus dataCopyStatus,
+                                                   ILogger? logger,
+                                                   CancellationToken cancellationToken)
         {
             string? lastJsonString = null;
 

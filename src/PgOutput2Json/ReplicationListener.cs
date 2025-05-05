@@ -81,7 +81,7 @@ namespace PgOutput2Json
                         }
                     
                         // start data export after creating the temporary replication slot
-                        await DataExporter.MaybeExportData(_messagePublisherFactory, _writer, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
+                        await DataExporter.MaybeExportData(_messagePublisherFactory, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
                         var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
 
