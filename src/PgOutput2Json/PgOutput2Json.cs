@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -37,12 +38,34 @@ namespace PgOutput2Json
             }
         }
 
+        public Task<bool> WhenReplicationStarts(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            return WhenLsnReaches("0/0", timeout, cancellationToken);
+        }
+
+        public async Task<bool> WhenLsnReaches(string expectedLsn, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+            try
+            {
+                await _listener.WhenLsnReaches(expectedLsn, linkedCts.Token);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                if (timeoutCts.Token.IsCancellationRequested) return false;
+                throw;
+            }
+        }
+
         public void Dispose()
         {
             lock (_lock)
             {
-                _cancellationTokenSource?.Cancel();
-                _cancellationTokenSource?.TryDispose(_logger);
+                _cancellationTokenSource.TryCancel(_logger);
+                _cancellationTokenSource.TryDispose(_logger);
                 _cancellationTokenSource = null;
             }
         }
