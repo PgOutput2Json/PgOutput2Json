@@ -173,6 +173,8 @@ DO UPDATE SET
 
         public static async Task CreateDataCopyProgressTable(ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
+            if (!ShouldTrackProgress(listenerOptions)) return; // no need to create table if no progress tracking
+
             using var cn = new NpgsqlConnection(listenerOptions.ConnectionString);
 
             await cn.OpenAsync(token).ConfigureAwait(false);
@@ -196,13 +198,15 @@ CREATE TABLE IF NOT EXISTS pgoutput2json.data_copy_progress (
 
         private static string? GetSlotNameForDataCopyProgress(ReplicationListenerOptions listenerOptions)
         {
-            if (string.IsNullOrWhiteSpace(listenerOptions.ReplicationSlotName) || listenerOptions.UseTemporarySlot)
-            {
-                // we don't store progress for temporary slots
-                return null;
-            }
+            return ShouldTrackProgress(listenerOptions) 
+                ? listenerOptions.ReplicationSlotName 
+                : null;
+        }
 
-            return listenerOptions.ReplicationSlotName;
+        private static bool ShouldTrackProgress(ReplicationListenerOptions listenerOptions)
+        {
+            // we don't store progress for temporary slots
+            return !string.IsNullOrWhiteSpace(listenerOptions.ReplicationSlotName) && !listenerOptions.UseTemporarySlot;
         }
     }
 }
