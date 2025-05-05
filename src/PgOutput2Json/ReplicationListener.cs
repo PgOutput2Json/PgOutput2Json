@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -12,6 +13,12 @@ namespace PgOutput2Json
 {
     internal sealed class ReplicationListener
     {
+        private class WalAwaiter
+        {
+            public TaskCompletionSource Source { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public NpgsqlLogSequenceNumber ExpectedWalEnd { get; set; }
+        }
+
         private readonly ILoggerFactory? _loggerFactory;
         private readonly ILogger<ReplicationListener>? _logger;
 
@@ -23,6 +30,10 @@ namespace PgOutput2Json
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
         private readonly AsyncLock _lock = new AsyncLock();
+
+        private readonly List<WalAwaiter> _walAwaiters = [];
+
+        private NpgsqlLogSequenceNumber? _committedWal;
 
         public ReplicationListener(IMessagePublisherFactory messagePublisherFactory,
                                    ReplicationListenerOptions options,
@@ -40,6 +51,59 @@ namespace PgOutput2Json
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
         }
 
+        public async Task WhenLsnReaches(string expectedLsn, CancellationToken cancellationToken)
+        {
+            WalAwaiter awaiter;
+            CancellationTokenRegistration registration;
+
+            var expectedWal = NpgsqlLogSequenceNumber.Parse(expectedLsn);
+
+            using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (_committedWal.HasValue && _committedWal.Value >= expectedWal)
+                {
+                    return;
+                }
+
+                awaiter = new WalAwaiter {  ExpectedWalEnd = expectedWal };
+
+                registration = cancellationToken.Register(() => awaiter.Source.TrySetCanceled(cancellationToken));
+
+                _walAwaiters.Add(awaiter);
+            }
+
+            try
+            {
+                await awaiter.Source.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                registration.Dispose();
+
+                using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    _walAwaiters.Remove(awaiter);
+                }
+            }
+        }
+
+        /// <summary>
+        /// This is always called from inside async lock, so it's ok to iterate through awaiters
+        /// </summary>
+        /// <param name="walEnd"></param>
+        private void SetCommittedWal(NpgsqlLogSequenceNumber walEnd)
+        {
+            _committedWal = walEnd;
+
+            foreach (var awaiter in _walAwaiters)
+            {
+                if (_committedWal.Value >= awaiter.ExpectedWalEnd)
+                {
+                    awaiter.Source.TrySetResult();
+                }
+            }
+        }
+
         public async Task ListenForChanges(CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -47,12 +111,9 @@ namespace PgOutput2Json
                 IMessagePublisher? messagePublisher = null; 
                 try
                 {
-                    messagePublisher =_messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
 
                     if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
-
-                    var _lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken).ConfigureAwait(false));
-
+                 
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);
 
                     await using (connection.ConfigureAwait(false))
@@ -83,12 +144,21 @@ namespace PgOutput2Json
                         // start data export after creating the temporary replication slot
                         await DataExporter.MaybeExportData(_messagePublisherFactory, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
+                        messagePublisher =_messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
+
+                        var lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken).ConfigureAwait(false));
+
+                        using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
+                        {
+                            SetCommittedWal(lastWalEnd);
+                        }
+
                         var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
 
                         DateTime commitTimeStamp = DateTime.UtcNow;
 
                         // we will use cts to cancel the loop, if the idle confirm fails
-                        using var cts = new CancellationTokenSource();
+                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
                         var unconfirmedCount = 0;
 
@@ -103,10 +173,12 @@ namespace PgOutput2Json
 
                                 using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                                 {
-                                    if (unconfirmedCount > 0)
+                                    if (unconfirmedCount > 0 && messagePublisher != null)
                                     {
                                         await messagePublisher.ConfirmAsync(cancellationToken)
                                             .ConfigureAwait(false);
+
+                                        SetCommittedWal(lastWalEnd);
                                     }
 
                                     unconfirmedCount = 0;
@@ -127,16 +199,14 @@ namespace PgOutput2Json
                                 _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
 
                                 // if force confirm fails, stop the replication loop, and dispose the publisher
-                                cts.TryCancel(_logger);
+                                linkedCts.TryCancel(_logger);
                             }
                         });
 
-                        // linkedCts.Token is used only in this foreach loop,
-                        // since lock ensures idle confirm cannot happen at the same time
-                        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
-
                         var hasRelationChanged = true;
 
+                        // linkedCts.Token is used only in this foreach loop,
+                        // since lock ensures idle confirm cannot happen at the same time
                         await foreach (var message in connection.StartReplication(slot, replicationOptions, linkedCts.Token)
                             .ConfigureAwait(false))
                         {
@@ -164,13 +234,13 @@ namespace PgOutput2Json
                                     continue;
                                 }
 
-                                if (message.WalEnd <= _lastWalEnd)
+                                if (message.WalEnd <= lastWalEnd)
                                 {
                                     // already published
                                     continue;
                                 }
 
-                                _lastWalEnd = message.WalEnd;
+                                lastWalEnd = message.WalEnd;
 
                                 var result = await _writer.WriteMessage(message, commitTimeStamp, hasRelationChanged, cancellationToken)
                                     .ConfigureAwait(false);
@@ -211,6 +281,8 @@ namespace PgOutput2Json
                                 await messagePublisher.ConfirmAsync(cancellationToken)
                                     .ConfigureAwait(false);
 
+                                SetCommittedWal(lastWalEnd);
+
                                 unconfirmedCount = 0;
 
                                 await connection.SendStatusUpdate(cancellationToken)
@@ -243,8 +315,13 @@ namespace PgOutput2Json
                 }
                 finally
                 {
-                    await messagePublisher.TryDisposeAsync(_logger)
-                        .ConfigureAwait(false);
+                    using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        await messagePublisher.TryDisposeAsync(_logger)
+                            .ConfigureAwait(false);
+
+                        messagePublisher = null;
+                    }
                 }
 
                 await Delay(10_000, cancellationToken)
