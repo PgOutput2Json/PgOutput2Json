@@ -342,6 +342,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                 if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == "__TOAST__")
                 {
+                    i++;
                     continue; // skip unchanged toasted columns
                 }
 
