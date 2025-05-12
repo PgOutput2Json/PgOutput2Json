@@ -66,6 +66,9 @@
 
         XMLOID = 142,
         A_XMLOID = 143, // array of xml
+
+        UUIDOID = 2950,
+        A_UUIDOID = 2951,
     }
 
     public static class PgOidExtensions
@@ -91,6 +94,11 @@
             return pgOid == PgOid.BYTEAOID;
         }
 
+        public static bool IsUuid(this PgOid pgOid)
+        {
+            return pgOid == PgOid.UUIDOID;
+        }
+
         public static bool IsArrayOfNumber(this PgOid pgOid)
         {
             return pgOid == PgOid.A_INT2OID
@@ -107,7 +115,8 @@
             return pgOid == PgOid.A_BPCHAROID
                 || pgOid == PgOid.A_VARCHAROID
                 || pgOid == PgOid.A_JSONOID
-                || pgOid == PgOid.A_XMLOID;
+                || pgOid == PgOid.A_XMLOID
+                || pgOid == PgOid.A_UUIDOID; // we're sending array of uuids as array of texts
         }
 
         public static bool IsArrayOfBoolean(this PgOid pgOid)
