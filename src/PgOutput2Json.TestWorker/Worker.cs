@@ -1,10 +1,15 @@
+using System.Net;
+using System.Text.Json;
+
+using MongoDB.Driver;
+using MongoDB.Driver.Core.Configuration;
+
 using PgOutput2Json.Kafka;
+using PgOutput2Json.MongoDb;
 using PgOutput2Json.RabbitMq;
 using PgOutput2Json.RabbitMqStreams;
 using PgOutput2Json.Redis;
 using PgOutput2Json.Sqlite;
-using System.Net;
-using System.Text.Json;
 
 namespace PgOutput2Json.TestWorker
 {
@@ -41,7 +46,7 @@ namespace PgOutput2Json.TestWorker
                 //.WithBatchSize(10_000) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
                 //.WithPgOrderedKeyColumns("public.test_table", "id") // used for initial data copy, to support ordering and resuming an interrupted initial data copy process
-                //.WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate schema named pgoutput2json must be created in the source db (to track the progress)
+                .WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate schema named pgoutput2json must be created in the source db (to track the progress)
                 .WithJsonOptions(options =>
                 {
                     //options.WriteNulls = true;
@@ -87,6 +92,16 @@ namespace PgOutput2Json.TestWorker
                 //.UseSqlite(options =>
                 //{
                 //    options.ConnectionStringBuilder.DataSource = "test_database.s3db";
+                //})
+                //.UseMongoDb(options =>
+                //{
+                //    options.DatabaseName = "test_database";
+                //    options.ClientSettings = new MongoClientSettings
+                //    {
+                //        Server = new MongoServerAddress("localhost", 27017),
+                //        Scheme = ConnectionStringScheme.MongoDB,
+                //        Credential = MongoCredential.CreateCredential("admin", "admin", "secret"),
+                //    };
                 //})
                 .Build();
 
