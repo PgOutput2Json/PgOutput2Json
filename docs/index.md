@@ -20,7 +20,8 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Kafka**
 - ✅ **RabbitMQ** (Streams + Classic Queues)
 - ✅ **Redis** (Streams + Pub/Sub Channels)
-- ✅ **SQLite**
+- ✅ **SQLite** (used by [PgFreshCache](https://github.com/PgOutput2Json/PgFreshCache))
+- ✅ **MongoDB**
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -204,6 +205,7 @@ dotnet add package PgOutput2Json.RabbitMq
 In your `Worker.cs`, add the following code:
 
 ```csharp
+using PgOutput2Json;
 using PgOutput2Json.RabbitMq;
 
 public class Worker : BackgroundService  
@@ -266,6 +268,7 @@ dotnet add package PgOutput2Json.RabbitMqStreams
 In your `Worker.cs`, add the following code to use RabbitMQ Streams:
 
 ```csharp
+using PgOutput2Json;
 using PgOutput2Json.RabbitMqStreams;
 
 public class Worker : BackgroundService  
@@ -328,6 +331,7 @@ dotnet add package PgOutput2Json.Kafka
 In your `Worker.cs`, use the following code to publish changes to Kafka:
 
 ```csharp
+using PgOutput2Json;
 using PgOutput2Json.Kafka;
 
 public class Worker : BackgroundService  
@@ -381,6 +385,7 @@ dotnet add package PgOutput2Json.Redis
 In your `Worker.cs`, use the following code to publish change events to Redis:
 
 ```csharp
+using PgOutput2Json;
 using PgOutput2Json.Redis;
 
 public class Worker : BackgroundService  
@@ -419,9 +424,10 @@ JSON messages will be published to the specified Redis stream. If a stream name 
 
 ## 7. Using SQLite
 
-PgOutput2Json supports copying modified PostgreSQL rows to SQLite. Rows are copied only when they change, using logical replication and compact JSON messages. 
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. My default, rows are copied only when they change, using logical replication and compact JSON messages. 
+Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
-The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified. This means that once a table is created, DDL changes are not replicated.
+The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.
 
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
 
@@ -436,6 +442,7 @@ dotnet add package PgOutput2Json.Sqlite
 In your `Worker.cs`, use the following code to configure change propagation to SQLite:
 
 ```csharp
+using PgOutput2Json;
 using PgOutput2Json.SQLite;
 
 public class Worker : BackgroundService  
@@ -458,6 +465,62 @@ public class Worker : BackgroundService
             {
                 options.ConnectionStringBuilder.DataSource = "my_database.s3db";
             }) 
+            .Build();  
+
+        await pgOutput2Json.Start(stoppingToken);  
+    }  
+}
+```
+
+## 8. Using MongoDB
+
+PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
+
+The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. Collections are created the first time a row belonging to the respective table is changed. Additionally, one unique index is created for each collection, covering the fields that are a part of the primary key.
+
+> ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
+
+### 8.1 Create a .NET Worker Service
+
+Set up a new **.NET Worker Service** and add the following package reference:
+
+```
+dotnet add package PgOutput2Json.MongoDb
+```
+
+In your `Worker.cs`, use the following code to configure change propagation to MongoDB:
+
+```csharp
+using PgOutput2Json;
+using PgOutput2Json.MongoDb;
+
+public class Worker : BackgroundService  
+{  
+    private readonly ILoggerFactory _loggerFactory;  
+
+    public Worker(ILoggerFactory loggerFactory)  
+    {  
+        _loggerFactory = loggerFactory;  
+    }  
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
+    {  
+        // This code assumes PostgreSQL is running on localhost  
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
+            .WithLoggerFactory(_loggerFactory)  
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
+            .WithPgPublications("my_publication")
+            .UseMongoDb(options =>
+            {
+                options.DatabaseName = "my_mongo_database";
+                options.ClientSettings = new MongoClientSettings
+                {
+                    Server = new MongoServerAddress("localhost", 27017),
+                    Scheme = ConnectionStringScheme.MongoDB,
+                    Credential = MongoCredential.CreateCredential("admin", "admin", "__your_mongo_password_here__"),
+                };
+            })
             .Build();  
 
         await pgOutput2Json.Start(stoppingToken);  
