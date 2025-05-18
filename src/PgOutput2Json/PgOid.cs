@@ -61,8 +61,14 @@
         A_BPCHAROID = 1014,
         A_VARCHAROID = 1015,
 
+        A_TIMESTAMPOID = 1115,
+        A_TIMESTAMPTZOID = 1185,
+
         JSONOID = 114,
         A_JSONOID = 199, // array of json
+
+        JSONBOID = 3802,
+        A_JSONBOID = 3807,
 
         XMLOID = 142,
         A_XMLOID = 143, // array of xml
@@ -115,6 +121,7 @@
             return pgOid == PgOid.A_BPCHAROID
                 || pgOid == PgOid.A_VARCHAROID
                 || pgOid == PgOid.A_JSONOID
+                || pgOid == PgOid.A_JSONBOID
                 || pgOid == PgOid.A_XMLOID
                 || pgOid == PgOid.A_UUIDOID; // we're sending array of uuids as array of texts
         }
@@ -135,15 +142,27 @@
                 || pgOid == PgOid.TIMESTAMPTZOID;
         }
 
-
-        /*
-        public static bool IsArray(this PgOid pgOid)
+        public static bool IsArrayOfTimestamp(this PgOid pgOid)
         {
-            return IsArrayOfBoolean(pgOid)
-                || IsArrayOfByte(pgOid)
-                || IsArrayOfNumber(pgOid)
-                || IsArrayOfString(pgOid);
+            return pgOid == PgOid.A_TIMESTAMPOID
+                || pgOid == PgOid.A_TIMESTAMPTZOID;
         }
-        */
+
+        public static bool IsJson(this PgOid pgOid)
+        {
+            return pgOid == PgOid.JSONOID
+                || pgOid == PgOid.JSONBOID;
+        }
+
+        public static bool IsArrayOfJson(this PgOid pgOid)
+        {
+            return pgOid == PgOid.A_JSONOID
+                || pgOid == PgOid.A_JSONBOID;
+        }
+
+        public static bool IsArrayOfUuid(this PgOid pgOid)
+        {
+            return pgOid == PgOid.A_UUIDOID;
+        }
     }
 }

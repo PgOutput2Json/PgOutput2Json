@@ -166,15 +166,108 @@ namespace PgOutput2Json.MongoDb
             await collection.DeleteOneAsync(Builders<BsonDocument>.Filter.And(filters), token).ConfigureAwait(false);
         }
 
-        private static object? GetColumnValue(JsonElement valElement, ColumnInfo column)
+        private static BsonValue GetColumnValue(JsonElement valElement, ColumnInfo column)
         {
             switch (valElement.ValueKind)
             {
+                case JsonValueKind.String:
+                    if (column.PgOid.IsTimestamp())
+                    {
+                        var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
+                        return new BsonDateTime(dateTime.ToUnixTimeMilliseconds());
+                    }
+                    else if (column.PgOid.IsByte())
+                    {
+                        var data = valElement.GetString();
+                        return data != null ? new BsonBinaryData(GetBinaryData(data)) : BsonNull.Value;
+                    }
+                    else if (column.PgOid.IsUuid())
+                    {
+                        var data = valElement.GetString();
+                        return data != null ? new BsonBinaryData(Guid.Parse(data), GuidRepresentation.Standard) : BsonNull.Value;
+                    }
+                    else if (column.PgOid.IsJson())
+                    {
+                        var data = valElement.GetString();
+                        return data != null ? BsonDocument.Parse(data) : BsonNull.Value;
+                    }
+                    else
+                    {
+                        return valElement.GetString();
+                    }
+                case JsonValueKind.Array:
+                    if (column.PgOid.IsArrayOfTimestamp())
+                    {
+                        return ConvertArray(valElement, v => new BsonDateTime(DateTimeOffset.Parse(v, CultureInfo.InvariantCulture).ToUnixTimeMilliseconds()), "1970-01-01 00:00:00");
+                    }
+                    else if (column.PgOid.IsArrayOfByte())
+                    {
+                        return ConvertArray(valElement, v => new BsonBinaryData(GetBinaryData(v)));
+                    }
+                    else if (column.PgOid.IsArrayOfUuid())
+                    {
+                        return ConvertArray(valElement, v => new BsonBinaryData(Guid.Parse(v), GuidRepresentation.Standard));
+                    }
+                    else if (column.PgOid.IsArrayOfJson())
+                    {
+                        return ConvertArray(valElement, BsonDocument.Parse);
+                    }
+                    else
+                    {
+                        return ConvertJsonElementToBsonArray(valElement);
+                    }
+                default:
+                    return ConvertJsonElementToBsonValue(valElement);
+            }
+        }
+
+        private static BsonArray ConvertArray(JsonElement element, Func<string, BsonValue> converter, string? nullResult = null) 
+        {
+            var result = new BsonArray();
+
+            foreach (var item in element.EnumerateArray())
+            {
+                var val = item.GetString() ?? nullResult;
+
+                if (val == null)
+                {
+                    result.Add(BsonNull.Value);
+                }
+                else
+                {
+                    result.Add(converter(val));
+                }
+            }
+
+            return result;
+        }
+
+        public static BsonArray ConvertJsonElementToBsonArray(JsonElement jsonArray)
+        {
+            if (jsonArray.ValueKind != JsonValueKind.Array)
+                throw new ArgumentException("Expected JsonValueKind.Array", nameof(jsonArray));
+
+            var bsonArray = new BsonArray();
+
+            foreach (var element in jsonArray.EnumerateArray())
+            {
+                bsonArray.Add(ConvertJsonElementToBsonValue(element));
+            }
+
+            return bsonArray;
+        }
+
+        public static BsonValue ConvertJsonElementToBsonValue(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
                 case JsonValueKind.Undefined:
                 case JsonValueKind.Null:
-                    return null;
+                    return BsonNull.Value;
+                case JsonValueKind.String:
+                    return new BsonString(element.GetString());
                 case JsonValueKind.Number:
-                    if (valElement.TryGetInt64(out var longValue))
+                    if (element.TryGetInt64(out var longValue))
                     {
                         if (longValue >= int.MinValue && longValue <= int.MaxValue)
                         {
@@ -183,40 +276,35 @@ namespace PgOutput2Json.MongoDb
 
                         return longValue;
                     }
+                    else if (element.TryGetSingle(out var floatValue))
+                    {
+                        return floatValue;
+                    }
+                    else if (element.TryGetDouble(out var doubleValue))
+                    {
+                        return doubleValue;
+                    }
                     else
                     {
-                        valElement.TryGetDecimal(out var decimalValue);
+                        element.TryGetDecimal(out var decimalValue);
                         return decimalValue;
                     }
                 case JsonValueKind.True:
-                    return true;
                 case JsonValueKind.False:
-                    return false;
-                case JsonValueKind.String:
-                    if (column.IsDateTime())
+                    return new BsonBoolean(element.GetBoolean());
+                case JsonValueKind.Object:
                     {
-                        var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
-                        return new BsonDateTime(dateTime.ToUnixTimeMilliseconds());
+                        var obj = new BsonDocument();
+                        foreach (var prop in element.EnumerateObject())
+                        {
+                            obj[prop.Name] = ConvertJsonElementToBsonValue(prop.Value);
+                        }
+                        return obj;
                     }
-                    else if (column.IsBlob())
-                    {
-                        var data = valElement.GetString();
-
-                        return data != null
-                            ? (object)new BsonBinaryData(GetBinaryData(data))
-                            : null;
-                    }
-                    else if (column.IsUuid())
-                    {
-                        var data = valElement.GetString();
-                        return data != null ? new BsonBinaryData(Guid.Parse(data), GuidRepresentation.Standard) : null;
-                    }
-                    else
-                    {
-                        return valElement.GetString();
-                    }
+                case JsonValueKind.Array:
+                    return ConvertJsonElementToBsonArray(element);
                 default:
-                    return valElement.GetRawText();
+                    return element.GetRawText();
             }
         }
 
@@ -224,10 +312,11 @@ namespace PgOutput2Json.MongoDb
         {
             var bytes = new byte[data.Length / 2];
 
+            var j = 0;
             for (int i = 0; i < data.Length; i += 2)
             {
                 byte b = Convert.ToByte(data.Substring(i, 2), 16);
-                bytes[i] = b;
+                bytes[j++] = b;
             }
 
             return bytes;
@@ -283,19 +372,6 @@ namespace PgOutput2Json.MongoDb
         public uint DataType { get; set; }
         public int TypeModifier { get; set; }
 
-        public readonly bool IsDateTime()
-        {
-            return ((PgOid)DataType).IsTimestamp();
-        }
-
-        public readonly bool IsBlob()
-        {
-            return (PgOid)DataType == PgOid.BYTEAOID;
-        }
-
-        public readonly bool IsUuid()
-        {
-            return ((PgOid)DataType).IsUuid();
-        }
+        public readonly PgOid PgOid { get {  return (PgOid)DataType; } }
     }
 }
