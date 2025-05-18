@@ -10,7 +10,7 @@ namespace PgOutput2Json
 {
     internal static class DataCopyProgress
     {
-        public static async Task<DataCopyStatus> GetDataCopyStatus(string tableName, ReplicationListenerOptions listenerOptions, CancellationToken token)
+        public static async Task<DataCopyStatus> GetDataCopyStatusAsync(string tableName, ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
             listenerOptions.OrderedKeys.TryGetValue(tableName, out var orderByKeys);
 
@@ -52,8 +52,8 @@ WHERE table_name = @table_name
             {
                 result.IsCompleted = reader.GetBoolean(0);
 
-                lastMessage = reader.IsDBNull(1) ? null : reader.GetString(1);
-                columnNames = reader.IsDBNull(2) ? null : reader.GetString(2);
+                lastMessage = await reader.IsDBNullAsync(1, token).ConfigureAwait(false) ? null : reader.GetString(1);
+                columnNames = await reader.IsDBNullAsync(2, token).ConfigureAwait(false) ? null : reader.GetString(2);
             }
 
             result.AdditionalRowFilter = GetRowFilter(tableName, orderByKeys, columnNames, lastMessage);
@@ -134,12 +134,12 @@ WHERE table_name = @table_name
             };
         }
 
-        public static async Task SetDataCopyProgress(string tableName,
-                                                     ReplicationListenerOptions listenerOptions,
-                                                     bool isCompleted,
-                                                     string? lastMessage,
-                                                     IReadOnlyList<PgColumnInfo>? columns,
-                                                     CancellationToken token)
+        public static async Task SetDataCopyProgressAsync(string tableName,
+                                                          ReplicationListenerOptions listenerOptions,
+                                                          bool isCompleted,
+                                                          string? lastMessage,
+                                                          IReadOnlyList<PgColumnInfo>? columns,
+                                                          CancellationToken token)
         {
             var slotName = GetSlotNameForDataCopyProgress(listenerOptions);
 
@@ -171,7 +171,7 @@ DO UPDATE SET
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task CreateDataCopyProgressTable(ReplicationListenerOptions listenerOptions, CancellationToken token)
+        public static async Task CreateDataCopyProgressTableAsync(ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
             if (!ShouldTrackProgress(listenerOptions)) return; // no need to create table if no progress tracking
 

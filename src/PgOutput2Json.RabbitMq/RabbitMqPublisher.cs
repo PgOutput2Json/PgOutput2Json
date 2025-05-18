@@ -21,7 +21,7 @@ namespace PgOutput2Json.RabbitMq
 
         public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var channel = await EnsureConnection(token)
+            var channel = await EnsureConnectionAsync(token)
                 .ConfigureAwait(false);
 
             if (_options.PersistencyConfigurationByTable.Count == 0 
@@ -77,7 +77,7 @@ namespace PgOutput2Json.RabbitMq
                 .ConfigureAwait(false);
         }
 
-        private async ValueTask<IChannel> EnsureConnection(CancellationToken token)
+        private async ValueTask<IChannel> EnsureConnectionAsync(CancellationToken token)
         {
             if (_channel != null) return _channel;
 
@@ -86,10 +86,10 @@ namespace PgOutput2Json.RabbitMq
             _connection = await _options.ConnectionFactory.CreateConnectionAsync(_options.HostNames, token)
                 .ConfigureAwait(false);
 
-            _connection.CallbackExceptionAsync += ConnectionOnCallbackException;
-            _connection.ConnectionBlockedAsync += ConnectionOnConnectionBlocked;
-            _connection.ConnectionUnblockedAsync += ConnectionOnConnectionUnblocked;
-            _connection.ConnectionShutdownAsync += ConnectionOnConnectionShutdown;
+            _connection.CallbackExceptionAsync += ConnectionOnCallbackExceptionAsync;
+            _connection.ConnectionBlockedAsync += ConnectionOnConnectionBlockedAsync;
+            _connection.ConnectionUnblockedAsync += ConnectionOnConnectionUnblockedAsync;
+            _connection.ConnectionShutdownAsync += ConnectionOnConnectionShutdownAsync;
 
             _logger.SafeLogInfo("Connected to RabbitMQ");
 
@@ -103,25 +103,25 @@ namespace PgOutput2Json.RabbitMq
             return _channel;
         }
 
-        private Task ConnectionOnCallbackException(object? sender, CallbackExceptionEventArgs args)
+        private Task ConnectionOnCallbackExceptionAsync(object? sender, CallbackExceptionEventArgs args)
         {
             _logger.SafeLogError(args.Exception, "Callback error");
             return Task.CompletedTask;
         }
 
-        private Task ConnectionOnConnectionShutdown(object? sender, ShutdownEventArgs args)
+        private Task ConnectionOnConnectionShutdownAsync(object? sender, ShutdownEventArgs args)
         {
             _logger.SafeLogInfo($"Disconnected from RabbitMQ ({args.ReplyText})");
             return Task.CompletedTask;
         }
 
-        private Task ConnectionOnConnectionUnblocked(object? sender, AsyncEventArgs args)
+        private Task ConnectionOnConnectionUnblockedAsync(object? sender, AsyncEventArgs args)
         {
             _logger.SafeLogInfo($"Connection unblocked");
             return Task.CompletedTask;
         }
 
-        private Task ConnectionOnConnectionBlocked(object? sender, ConnectionBlockedEventArgs args)
+        private Task ConnectionOnConnectionBlockedAsync(object? sender, ConnectionBlockedEventArgs args)
         {
             _logger.SafeLogInfo($"Connection blocked");
             return Task.CompletedTask;

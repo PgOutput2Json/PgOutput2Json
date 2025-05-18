@@ -11,18 +11,18 @@ namespace PgOutput2Json
 {
     internal static class DataExporter
     {
-        public static async Task MaybeExportData(IMessagePublisherFactory publisherFactory,
-                                                 ReplicationListenerOptions listenerOptions,
-                                                 JsonOptions jsonOptions,
-                                                 ILoggerFactory? loggerFactory,
-                                                 CancellationToken token)
+        public static async Task MaybeExportDataAsync(IMessagePublisherFactory publisherFactory,
+                                                      ReplicationListenerOptions listenerOptions,
+                                                      JsonOptions jsonOptions,
+                                                      ILoggerFactory? loggerFactory,
+                                                      CancellationToken token)
         {
             if (!listenerOptions.CopyData)
             {
                 return;
             }
 
-            await DataCopyProgress.CreateDataCopyProgressTable(listenerOptions, token).ConfigureAwait(false);
+            await DataCopyProgress.CreateDataCopyProgressTableAsync(listenerOptions, token).ConfigureAwait(false);
 
             List<PublicationInfo> publications;
 
@@ -30,7 +30,7 @@ namespace PgOutput2Json
             {
                 await connection.OpenAsync(token).ConfigureAwait(false);
 
-                publications = await GetPublicationInfo(connection, listenerOptions, token).ConfigureAwait(false);
+                publications = await GetPublicationInfoAsync(connection, listenerOptions, token).ConfigureAwait(false);
             }
 
             bool hasErrors = false;
@@ -55,7 +55,7 @@ namespace PgOutput2Json
 
                     await connection.OpenAsync(linkedToken).ConfigureAwait(false);
 
-                    var dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
+                    var dataCopyStatus = await DataCopyProgress.GetDataCopyStatusAsync(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
 
                     if (dataCopyStatus.IsCompleted)
                     {
@@ -66,11 +66,11 @@ namespace PgOutput2Json
 
                     while (!linkedToken.IsCancellationRequested)
                     {
-                        var completed = await ExportData(connection, publisher, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
+                        var completed = await ExportDataAsync(connection, publisher, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
                         if (completed) break;
 
                         // needed for continuation of the next batch
-                        dataCopyStatus = await DataCopyProgress.GetDataCopyStatus(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
+                        dataCopyStatus = await DataCopyProgress.GetDataCopyStatusAsync(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
                     }
                 }
                 catch (OperationCanceledException)
@@ -83,9 +83,9 @@ namespace PgOutput2Json
 
                     logger.SafeLogError(ex, "Error in data export from table {TableName}", publication.TableName);
 
-                    cts.Cancel();
+                    await cts.CancelAsync().ConfigureAwait(false);
                 }
-            });
+            }).ConfigureAwait(false);
 
             if (hasErrors)
             {
@@ -93,14 +93,14 @@ namespace PgOutput2Json
             }
         }
 
-        private static async Task<bool> ExportData(NpgsqlConnection connection,
-                                                   IMessagePublisher publisher,
-                                                   ReplicationListenerOptions listenerOptions,
-                                                   JsonOptions jsonOptions,
-                                                   PublicationInfo publication,
-                                                   DataCopyStatus dataCopyStatus,
-                                                   ILogger? logger,
-                                                   CancellationToken cancellationToken)
+        private static async Task<bool> ExportDataAsync(NpgsqlConnection connection,
+                                                        IMessagePublisher publisher,
+                                                        ReplicationListenerOptions listenerOptions,
+                                                        JsonOptions jsonOptions,
+                                                        PublicationInfo publication,
+                                                        DataCopyStatus dataCopyStatus,
+                                                        ILogger? logger,
+                                                        CancellationToken cancellationToken)
         {
             string? lastJsonString = null;
 
@@ -254,7 +254,7 @@ namespace PgOutput2Json
                 if (currentBatch <= 0)
                 {
                     await publisher.ConfirmAsync(token).ConfigureAwait(false);
-                    await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, false, lastJsonString, publication.Columns, token).ConfigureAwait(false);
+                    await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, false, lastJsonString, publication.Columns, token).ConfigureAwait(false);
                 }
             }
 
@@ -262,7 +262,7 @@ namespace PgOutput2Json
                 && (copyBatchSize == 0 || totalRows < copyBatchSize);
 
             await publisher.ConfirmAsync(token).ConfigureAwait(false);
-            await DataCopyProgress.SetDataCopyProgress(publication.TableName, listenerOptions, completed, lastJsonString, publication.Columns, token).ConfigureAwait(false);
+            await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, completed, lastJsonString, publication.Columns, token).ConfigureAwait(false);
 
             return completed;
         }
@@ -470,7 +470,7 @@ namespace PgOutput2Json
             return finalHash;
         }
 
-        private static async Task<List<PublicationInfo>> GetPublicationInfo(NpgsqlConnection connection, ReplicationListenerOptions listenerOptions, CancellationToken token)
+        private static async Task<List<PublicationInfo>> GetPublicationInfoAsync(NpgsqlConnection connection, ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
             var result = new List<PublicationInfo>();
 
@@ -488,20 +488,20 @@ namespace PgOutput2Json
                     {
                         TableName = $"{reader.GetString(0)}.{reader.GetString(1)}",
                         QuotedTableName = $"\"{reader.GetString(0)}\".\"{reader.GetString(1)}\"",
-                        RowFilter = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        RowFilter = await reader.IsDBNullAsync(2, token).ConfigureAwait(false) ? null : reader.GetString(2),
                     });
                 }
             }
 
             foreach (var publication in result)
             {
-                await PopulateColumns(connection, publication, token).ConfigureAwait(false);
+                await PopulateColumnsAsync(connection, publication, token).ConfigureAwait(false);
             }
 
             return result;
         }
 
-        private static async Task PopulateColumns(NpgsqlConnection connection, PublicationInfo publication, CancellationToken token)
+        private static async Task PopulateColumnsAsync(NpgsqlConnection connection, PublicationInfo publication, CancellationToken token)
         {
             using var cmd = connection.CreateCommand();
 

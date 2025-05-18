@@ -51,7 +51,7 @@ namespace PgOutput2Json
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
         }
 
-        public async Task WhenLsnReaches(string expectedLsn, CancellationToken cancellationToken)
+        public async Task WhenLsnReachesAsync(string expectedLsn, CancellationToken cancellationToken)
         {
             WalAwaiter awaiter;
             CancellationTokenRegistration registration;
@@ -74,11 +74,15 @@ namespace PgOutput2Json
 
             try
             {
+#pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks
+
                 await awaiter.Source.Task.ConfigureAwait(false);
+
+#pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
             }
             finally
             {
-                registration.Dispose();
+                await registration.DisposeAsync().ConfigureAwait(false);
 
                 using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                 {
@@ -104,7 +108,7 @@ namespace PgOutput2Json
             }
         }
 
-        public async Task ListenForChanges(CancellationToken cancellationToken)
+        public async Task ListenForChangesAsync(CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -142,11 +146,11 @@ namespace PgOutput2Json
                         }
                     
                         // start data export after creating the temporary replication slot
-                        await DataExporter.MaybeExportData(_messagePublisherFactory, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
+                        await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
                         messagePublisher =_messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
 
-                        var lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeq(cancellationToken).ConfigureAwait(false));
+                        var lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
 
                         using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                         {
@@ -162,7 +166,7 @@ namespace PgOutput2Json
 
                         var unconfirmedCount = 0;
 
-                        using var idleConfirmTimer = new Timer(async (_) =>
+                        async Task TimerCallbackAsync()
                         {
                             try
                             {
@@ -201,6 +205,11 @@ namespace PgOutput2Json
                                 // if force confirm fails, stop the replication loop, and dispose the publisher
                                 linkedCts.TryCancel(_logger);
                             }
+                        }
+
+                        using var idleConfirmTimer = new Timer(_ =>
+                        {
+                            _ = TimerCallbackAsync(); // fire and forget
                         });
 
                         var hasRelationChanged = true;
@@ -242,14 +251,14 @@ namespace PgOutput2Json
 
                                 lastWalEnd = message.WalEnd;
 
-                                var result = await _writer.WriteMessage(message, commitTimeStamp, hasRelationChanged, cancellationToken)
+                                var result = await _writer.WriteMessageAsync(message, commitTimeStamp, hasRelationChanged, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 if (hasRelationChanged && _options.CopyData)
                                 {
                                     // if data copy is on, we will mark this table as copied,
                                     // to avoid copying tables created after the inital copy
-                                    await DataCopyProgress.SetDataCopyProgress(result.TableName, _options, true, null, null, cancellationToken)
+                                    await DataCopyProgress.SetDataCopyProgressAsync(result.TableName, _options, true, null, null, cancellationToken)
                                         .ConfigureAwait(false);
                                 }
 
@@ -324,14 +333,14 @@ namespace PgOutput2Json
                     }
                 }
 
-                await Delay(10_000, cancellationToken)
+                await DelayAsync(10_000, cancellationToken)
                     .ConfigureAwait(false);
             }
 
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
         }
 
-        private async Task Delay(int time, CancellationToken cancellationToken)
+        private async Task DelayAsync(int time, CancellationToken cancellationToken)
         {
             try
             {

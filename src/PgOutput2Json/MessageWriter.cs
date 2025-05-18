@@ -11,7 +11,7 @@ namespace PgOutput2Json
 {
     interface IMessageWriter
     {
-        Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message, DateTime commitTimeStamp, bool hasRelationChanged, CancellationToken cancellationToken);
+        Task<MessageWriterResult> WriteMessageAsync(PgOutputReplicationMessage message, DateTime commitTimeStamp, bool hasRelationChanged, CancellationToken cancellationToken);
     }
 
     class MessageWriterResult
@@ -39,83 +39,83 @@ namespace PgOutput2Json
             _listenerOptions = listenerOptions;
         }
 
-        public async Task<MessageWriterResult> WriteMessage(PgOutputReplicationMessage message,
-                                                            DateTime commitTimeStamp,
-                                                            bool hasRelationChanged,
-                                                            CancellationToken token)
+        public async Task<MessageWriterResult> WriteMessageAsync(PgOutputReplicationMessage message,
+                                                                 DateTime commitTimeStamp,
+                                                                 bool hasRelationChanged,
+                                                                 CancellationToken token)
         {
             var partition = -1;
 
             if (message is InsertMessage insertMsg)
             {
-                partition = await WriteTuple(insertMsg,
-                                             insertMsg.Relation,
-                                             insertMsg.NewRow,
-                                             null,
-                                             "I",
-                                             commitTimeStamp,
-                                             hasRelationChanged,
-                                             token)
+                partition = await WriteTupleAsync(insertMsg,
+                                                  insertMsg.Relation,
+                                                  insertMsg.NewRow,
+                                                  null,
+                                                  "I",
+                                                  commitTimeStamp,
+                                                  hasRelationChanged,
+                                                  token)
                     .ConfigureAwait(false);
             }
             else if (message is DefaultUpdateMessage updateMsg)
             {
-                partition = await WriteTuple(updateMsg,
-                                             updateMsg.Relation,
-                                             updateMsg.NewRow,
-                                             null,
-                                             "U",
-                                             commitTimeStamp,
-                                             hasRelationChanged,
-                                             token)
+                partition = await WriteTupleAsync(updateMsg,
+                                                  updateMsg.Relation,
+                                                  updateMsg.NewRow,
+                                                  null,
+                                                  "U",
+                                                  commitTimeStamp,
+                                                  hasRelationChanged,
+                                                  token)
                     .ConfigureAwait(false);
             }
             else if (message is FullUpdateMessage fullUpdateMsg)
             {
-                partition = await WriteTuple(fullUpdateMsg,
-                                             fullUpdateMsg.Relation,
-                                             fullUpdateMsg.NewRow,
-                                             fullUpdateMsg.OldRow,
-                                             "U",
-                                             commitTimeStamp,
-                                             hasRelationChanged,
-                                             token)
+                partition = await WriteTupleAsync(fullUpdateMsg,
+                                                  fullUpdateMsg.Relation,
+                                                  fullUpdateMsg.NewRow,
+                                                  fullUpdateMsg.OldRow,
+                                                  "U",
+                                                  commitTimeStamp,
+                                                  hasRelationChanged,
+                                                  token)
                     .ConfigureAwait(false);
             }
             else if (message is IndexUpdateMessage indexUpdateMsg)
             {
-                partition = await WriteTuple(indexUpdateMsg,
-                                             indexUpdateMsg.Relation,
-                                             indexUpdateMsg.NewRow,
-                                             indexUpdateMsg.Key,
-                                             "U",
-                                             commitTimeStamp,
-                                             hasRelationChanged,
-                                             token)
+                partition = await WriteTupleAsync(indexUpdateMsg,
+                                                  indexUpdateMsg.Relation,
+                                                  indexUpdateMsg.NewRow,
+                                                  indexUpdateMsg.Key,
+                                                  "U",
+                                                  commitTimeStamp,
+                                                  hasRelationChanged,
+                                                  token)
                     .ConfigureAwait(false);
             }
             else if (message is KeyDeleteMessage keyDeleteMsg)
             {
-                partition = await WriteTuple(keyDeleteMsg,
-                                             keyDeleteMsg.Relation,
-                                             null,
-                                             keyDeleteMsg.Key,
-                                             "D",
-                                             commitTimeStamp,
-                                             hasRelationChanged,
-                                             token)
+                partition = await WriteTupleAsync(keyDeleteMsg,
+                                                  keyDeleteMsg.Relation,
+                                                  null,
+                                                  keyDeleteMsg.Key,
+                                                  "D",
+                                                  commitTimeStamp,
+                                                  hasRelationChanged,
+                                                  token)
                     .ConfigureAwait(false);
             }
             else if (message is FullDeleteMessage fullDeleteMsg)
             {
-                partition = await WriteTuple(fullDeleteMsg,
-                                             fullDeleteMsg.Relation,
-                                             null,
-                                             fullDeleteMsg.OldRow,
-                                             "D",
-                                             commitTimeStamp,
-                                             hasRelationChanged,
-                                             token)
+                partition = await WriteTupleAsync(fullDeleteMsg,
+                                                  fullDeleteMsg.Relation,
+                                                  null,
+                                                  fullDeleteMsg.OldRow,
+                                                  "D",
+                                                  commitTimeStamp,
+                                                  hasRelationChanged,
+                                                  token)
                     .ConfigureAwait(false);
             }
 
@@ -127,14 +127,14 @@ namespace PgOutput2Json
             return _result;
         }
 
-        private async Task<int> WriteTuple(TransactionalMessage msg,
-                                           RelationMessage relation,
-                                           ReplicationTuple? newRow,
-                                           ReplicationTuple? keyRow,
-                                           string changeType,
-                                           DateTime commitTimeStamp,
-                                           bool hasRelationChanged,
-                                           CancellationToken cancellationToken)
+        private async Task<int> WriteTupleAsync(TransactionalMessage msg,
+                                                RelationMessage relation,
+                                                ReplicationTuple? newRow,
+                                                ReplicationTuple? keyRow,
+                                                string changeType,
+                                                DateTime commitTimeStamp,
+                                                bool hasRelationChanged,
+                                                CancellationToken cancellationToken)
         {
             _tableNameBuilder.Clear();
             _tableNameBuilder.Append(relation.Namespace);
@@ -208,7 +208,7 @@ namespace PgOutput2Json
 
                 var writeToKeyBuilder = newRow == null; // only write key values if new row is not present (deletes)
                 
-                hash = await WriteValues(keyRow, relation, writeToKeyBuilder, includedCols, true, cancellationToken)
+                hash = await WriteValuesAsync(keyRow, relation, writeToKeyBuilder, includedCols, true, cancellationToken)
                         .ConfigureAwait(false);
 
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
@@ -219,7 +219,7 @@ namespace PgOutput2Json
                 _jsonBuilder.Append(",\"r\":");
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
-                hash = await WriteValues(newRow, relation, true, includedCols, false, cancellationToken)
+                hash = await WriteValuesAsync(newRow, relation, true, includedCols, false, cancellationToken)
                     .ConfigureAwait(false);
 
                 _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
@@ -230,12 +230,12 @@ namespace PgOutput2Json
             return hash.HasValue ? hash.Value % partitionCount : 0;
         }
 
-        private async Task<int> WriteValues(ReplicationTuple tuple,
-                                            RelationMessage relation,
-                                            bool writeToKeyValueBuilder,
-                                            IReadOnlyList<string>? includedCols,
-                                            bool isKeyRow,
-                                            CancellationToken cancellationToken)
+        private async Task<int> WriteValuesAsync(ReplicationTuple tuple,
+                                                 RelationMessage relation,
+                                                 bool writeToKeyValueBuilder,
+                                                 IReadOnlyList<string>? includedCols,
+                                                 bool isKeyRow,
+                                                 CancellationToken cancellationToken)
         {
             int finalHash = 0x12345678;
 

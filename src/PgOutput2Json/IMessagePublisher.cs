@@ -9,7 +9,7 @@ namespace PgOutput2Json
         Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token);
         Task ConfirmAsync(CancellationToken token);
 
-        Task<ulong> GetLastPublishedWalSeq(CancellationToken token);
+        Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token);
     }
 
     public abstract class MessagePublisher : IMessagePublisher
@@ -18,7 +18,7 @@ namespace PgOutput2Json
         public abstract Task ConfirmAsync(CancellationToken token);
         public abstract ValueTask DisposeAsync();
 
-        public virtual Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public virtual Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             return Task.FromResult<ulong>(0);
         }

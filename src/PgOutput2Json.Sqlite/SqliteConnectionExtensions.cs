@@ -15,33 +15,33 @@ namespace PgOutput2Json.Sqlite
 {
     internal static class SqliteConnectionExtensions
     {
-        public static async Task<ulong> GetWalEnd(this SqliteConnection cn, CancellationToken token)
+        public static async Task<ulong> GetWalEndAsync(this SqliteConnection cn, CancellationToken token)
         {
-            var cfgValue = await GetConfig(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var cfgValue = await GetConfigAsync(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
             
             return cfgValue != null ? ulong.Parse(cfgValue, CultureInfo.InvariantCulture) : 0;
         }
 
-        public static async Task SetWalEnd(this SqliteConnection cn, ulong walEnd, CancellationToken token)
+        public static async Task SetWalEndAsync(this SqliteConnection cn, ulong walEnd, CancellationToken token)
         {
-            await SaveConfig(cn, ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
+            await SaveConfigAsync(cn, ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
         }
 
-        public static async Task SetSchema(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
+        public static async Task SetSchemaAsync(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            await SaveConfig(cn, $"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
+            await SaveConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
         }
 
-        public static async Task<List<ColumnInfo>?> GetSchema(this SqliteConnection cn, string tableName, CancellationToken token)
+        public static async Task<List<ColumnInfo>?> GetSchemaAsync(this SqliteConnection cn, string tableName, CancellationToken token)
         {
-            var cfgValue = await GetConfig(cn, $"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
+            var cfgValue = await GetConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
 
             if (cfgValue == null) return null;
 
             return JsonSerializer.Deserialize<List<ColumnInfo>>(cfgValue);
         }
 
-        public static async Task SaveConfig(this SqliteConnection cn, string key, string value, CancellationToken token)
+        public static async Task SaveConfigAsync(this SqliteConnection cn, string key, string value, CancellationToken token)
         {
             using var cmd = cn.CreateCommand();
 
@@ -60,7 +60,7 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        public static async Task<string?> GetConfig(this SqliteConnection cn, string key, CancellationToken token)
+        public static async Task<string?> GetConfigAsync(this SqliteConnection cn, string key, CancellationToken token)
         {
             using var cmd = cn.CreateCommand();
 
@@ -73,7 +73,7 @@ namespace PgOutput2Json.Sqlite
             return result?.ToString();
         }
 
-        public static async Task UseWal(this SqliteConnection cn, CancellationToken token)
+        public static async Task UseWalAsync(this SqliteConnection cn, CancellationToken token)
         {
             using var cmd = cn.CreateCommand();
 
@@ -82,7 +82,7 @@ namespace PgOutput2Json.Sqlite
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task WalCheckpoint(this SqliteConnection cn, WalCheckpointType checkpointType, int tryCount, CancellationToken token)
+        public static async Task WalCheckpointAsync(this SqliteConnection cn, WalCheckpointType checkpointType, int tryCount, CancellationToken token)
         {
             using var cmd = cn.CreateCommand();
 
@@ -112,7 +112,7 @@ namespace PgOutput2Json.Sqlite
         }
 
 
-        public static async Task CreateConfigTable(this SqliteConnection cn, CancellationToken token)
+        public static async Task CreateConfigTableAsync(this SqliteConnection cn, CancellationToken token)
         {
             using var cmd = cn.CreateCommand();
 
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task CreateOrAlterTable(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        public static async Task CreateOrAlterTableAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
             string tableName = GetTableName(fullTableName);
 
@@ -136,15 +136,15 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             if (await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) != null)
             {
-                await AlterTable(cn, tableName, columns, token).ConfigureAwait(false);
+                await AlterTableAsync(cn, tableName, columns, token).ConfigureAwait(false);
             }
             else
             {
-                await CreateTable(cn, tableName, columns, token).ConfigureAwait(false);
+                await CreateTableAsync(cn, tableName, columns, token).ConfigureAwait(false);
             }
         }
 
-        private static async Task AlterTable(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        private static async Task AlterTableAsync(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
             var cmd = cn.CreateCommand();
 
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             using (var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false))
             {
-                while (reader.Read())
+                while (await reader.ReadAsync(token).ConfigureAwait(false))
                 {
                     // The column name is in the second column (index 1)
                     existingCols.Add(reader.GetString(1)); 
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             }
         }
 
-        private static async Task CreateTable(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        private static async Task CreateTableAsync(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
             var sqlBuilder = new StringBuilder(256);
             var keyBuilder = new StringBuilder(256);
@@ -212,39 +212,39 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return nameParts.Length > 1 ? nameParts[1] : nameParts[0];
         }
 
-        public static async Task UpdateOrInsert(this SqliteConnection cn,
-                                                ulong walEnd,
-                                                string fullTableName,
-                                                IReadOnlyList<ColumnInfo> columns,
-                                                JsonElement changeTypeElement,
-                                                JsonElement keyElement,
-                                                JsonElement rowElement,
-                                                ILogger? logger,
-                                                CancellationToken token)
+        public static async Task UpdateOrInsertAsync(this SqliteConnection cn,
+                                                     ulong walEnd,
+                                                     string fullTableName,
+                                                     IReadOnlyList<ColumnInfo> columns,
+                                                     JsonElement changeTypeElement,
+                                                     JsonElement keyElement,
+                                                     JsonElement rowElement,
+                                                     ILogger? logger,
+                                                     CancellationToken token)
         {
             var changeType = changeTypeElement.GetString();
 
             if (changeType == "I")
             {
-                await cn.Insert(fullTableName, columns, rowElement, true, token).ConfigureAwait(false);
+                await cn.InsertAsync(fullTableName, columns, rowElement, true, token).ConfigureAwait(false);
             }
             else if (changeType == "U")
             {
-                var count = await cn.Update(fullTableName, columns, keyElement, rowElement, token).ConfigureAwait(false);
+                var count = await cn.UpdateAsync(fullTableName, columns, keyElement, rowElement, token).ConfigureAwait(false);
                 if (count == 0)
                 {
-                    await cn.Insert(fullTableName, columns, rowElement, false, token).ConfigureAwait(false);
+                    await cn.InsertAsync(fullTableName, columns, rowElement, false, token).ConfigureAwait(false);
                 }
             }
             else if (changeType == "D")
             {
-                await cn.Delete(fullTableName, columns, keyElement, token).ConfigureAwait(false);
+                await cn.DeleteAsync(fullTableName, columns, keyElement, token).ConfigureAwait(false);
             }
 
-            await cn.SetWalEnd(walEnd, token).ConfigureAwait(false);
+            await cn.SetWalEndAsync(walEnd, token).ConfigureAwait(false);
         }
 
-        public static async Task Insert(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
+        public static async Task InsertAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
 
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             }
         }
 
-        public static async Task<int> Update(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
+        public static async Task<int> UpdateAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
 
@@ -380,7 +380,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return affectedCount;
         }
 
-        public static async Task Delete(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
+        public static async Task DeleteAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
 

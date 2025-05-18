@@ -70,14 +70,16 @@ namespace PgOutput2Json.Redis
             DisposeTasks();
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             if (_options.PublishMode == PublishMode.Channel) return 0; // cannot do de-duplication with channels
 
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
 
-            var entries = _redis.GetDatabase().StreamRange(_options.StreamName, "-", "+", count: 1, messageOrder: Order.Descending, flags: CommandFlags.DemandMaster);
+            var entries = await _redis.GetDatabase()
+                .StreamRangeAsync(_options.StreamName, "-", "+", count: 1, messageOrder: Order.Descending, flags: CommandFlags.DemandMaster)
+                .ConfigureAwait(false);
 
             if (entries.Length == 0)
             {

@@ -27,13 +27,13 @@ namespace PgOutput2Json.MongoDb
 
         public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var client = await EnsureDatabase(token).ConfigureAwait(false);
+            var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
             using var doc = JsonDocument.Parse(json);
 
-            await TryParseSchema(client, tableName, walSeqNo, doc, token).ConfigureAwait(false);
+            await TryParseSchemaAsync(client, tableName, walSeqNo, doc, token).ConfigureAwait(false);
 
-            await ParseRow(client, tableName, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
         }
 
         public override Task ConfirmAsync(CancellationToken token)
@@ -42,11 +42,11 @@ namespace PgOutput2Json.MongoDb
             return Task.CompletedTask;
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            var client = await EnsureDatabase(token).ConfigureAwait(false);
+            var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            return await client.GetWalEnd(token).ConfigureAwait(false);
+            return await client.GetWalEndAsync(token).ConfigureAwait(false);
         }
 
         public override ValueTask DisposeAsync()
@@ -70,11 +70,11 @@ namespace PgOutput2Json.MongoDb
             return ValueTask.CompletedTask;
         }
 
-        private async Task ParseRow(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
         {
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
-                columns = await db.GetSchema(tableName, token).ConfigureAwait(false);
+                columns = await db.GetSchemaAsync(tableName, token).ConfigureAwait(false);
 
                 if (columns != null)
                 {
@@ -91,11 +91,11 @@ namespace PgOutput2Json.MongoDb
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
-            await db.UpsertOrDelete(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, token)
+            await db.UpsertOrDeleteAsync(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, token)
                 .ConfigureAwait(false);
         }
 
-        private async Task TryParseSchema(IMongoDatabase db, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
+        private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
         {
             if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
 
@@ -129,10 +129,10 @@ namespace PgOutput2Json.MongoDb
 
             await db.EnsureUniqueKeyIndexAsync(tableName, columns, token).ConfigureAwait(false);
 
-            await db.SetSchema(tableName, columns, token).ConfigureAwait(false);
+            await db.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
         }
 
-        private async Task<IMongoDatabase> EnsureDatabase(CancellationToken token)
+        private async Task<IMongoDatabase> EnsureDatabaseAsync(CancellationToken token)
         {
             if (_db != null) return _db;
 

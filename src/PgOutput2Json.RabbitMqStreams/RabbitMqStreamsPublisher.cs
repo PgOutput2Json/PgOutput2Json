@@ -23,7 +23,7 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public async override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var producer = await EnsureProducer();
+            var producer = await EnsureProducerAsync().ConfigureAwait(false);
 
             lock (_confirmationLock)
             {
@@ -51,8 +51,11 @@ namespace PgOutput2Json.RabbitMqStreams
             {
                 using (token.Register(() => _confirmationTaskCompletionSource.TrySetCanceled(token)))
                 {
-                    await _confirmationTaskCompletionSource.Task
-                        .ConfigureAwait(false);
+#pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks
+
+                    await _confirmationTaskCompletionSource.Task.ConfigureAwait(false);
+
+#pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
                 }
             }
         }
@@ -89,7 +92,7 @@ namespace PgOutput2Json.RabbitMqStreams
             _streamSystem = null;
         }
 
-        private async Task<StreamSystem> EnsureStreamSystem()
+        private async Task<StreamSystem> EnsureStreamSystemAsync()
         {
             if (_streamSystem != null && !_streamSystem.IsClosed) return _streamSystem;
 
@@ -103,11 +106,11 @@ namespace PgOutput2Json.RabbitMqStreams
             return _streamSystem;
         }
 
-        private async Task<Producer> EnsureProducer()
+        private async Task<Producer> EnsureProducerAsync()
         {
             if (_producer != null && _producer.IsOpen()) return _producer;
             
-            var streamSystem = await EnsureStreamSystem().ConfigureAwait(false);
+            var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
             _logger?.LogInformation("Creating producer for: {StreamName}", _options.StreamName);
 
@@ -162,15 +165,15 @@ namespace PgOutput2Json.RabbitMqStreams
             return _producer;
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken stoppingToken)
+        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken stoppingToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 
-            var system = await EnsureStreamSystem();
+            var system = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
             try
             {
-                var stats = await system.StreamStats(_options.StreamName);
+                var stats = await system.StreamStats(_options.StreamName).ConfigureAwait(false);
                 var firstOffset = stats.CommittedChunkId();
             }
             catch (Exception ex)

@@ -28,13 +28,13 @@ namespace PgOutput2Json.Sqlite
 
         public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
         {
-            var connection = await EnsureConnectionInTransaction(token).ConfigureAwait(false);
+            var connection = await EnsureConnectionInTransactionAsync(token).ConfigureAwait(false);
 
             using var doc = JsonDocument.Parse(json);
 
-            await TryParseSchema(connection, tableName, walSeqNo, doc, token).ConfigureAwait(false);
+            await TryParseSchemaAsync(connection, tableName, walSeqNo, doc, token).ConfigureAwait(false);
 
-            await ParseRow(connection, tableName, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(connection, tableName, doc, token).ConfigureAwait(false);
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -47,17 +47,17 @@ namespace PgOutput2Json.Sqlite
 
             if (_options.UseWal)
             {
-                var cn = await EnsureConnection(token).ConfigureAwait(false);
+                var cn = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
-                await cn.WalCheckpoint(_options.WalCheckpointType, _options.WalCheckpointTryCount, token).ConfigureAwait(false);
+                await cn.WalCheckpointAsync(_options.WalCheckpointType, _options.WalCheckpointTryCount, token).ConfigureAwait(false);
             }
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeq(CancellationToken token)
+        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            var cn = await EnsureConnection(token).ConfigureAwait(false);
+            var cn = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
-            return await cn.GetWalEnd(token).ConfigureAwait(false);
+            return await cn.GetWalEndAsync(token).ConfigureAwait(false);
         }
 
         public override async ValueTask DisposeAsync()
@@ -75,11 +75,11 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        private async Task ParseRow(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
         {
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
-                columns = await connection.GetSchema(tableName, token).ConfigureAwait(false);
+                columns = await SqliteConnectionExtensions.GetSchemaAsync(connection, tableName, token).ConfigureAwait(false);
 
                 if (columns != null)
                 {
@@ -96,11 +96,11 @@ namespace PgOutput2Json.Sqlite
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
-            await connection.UpdateOrInsert(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
+            await connection.UpdateOrInsertAsync(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
                 .ConfigureAwait(false);
         }
 
-        private async Task TryParseSchema(SqliteConnection connection, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
+        private async Task TryParseSchemaAsync(SqliteConnection connection, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
         {
             if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
 
@@ -132,12 +132,12 @@ namespace PgOutput2Json.Sqlite
 
             _tableColumns[tableName] = columns;
 
-            await connection.CreateOrAlterTable(tableName, columns, token).ConfigureAwait(false);
+            await connection.CreateOrAlterTableAsync(tableName, columns, token).ConfigureAwait(false);
 
-            await connection.SetSchema(tableName, columns, token).ConfigureAwait(false);
+            await connection.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
         }
 
-        private async Task<SqliteConnection> EnsureConnection(CancellationToken token)
+        private async Task<SqliteConnection> EnsureConnectionAsync(CancellationToken token)
         {
             if (_connection != null) return _connection;
 
@@ -147,10 +147,10 @@ namespace PgOutput2Json.Sqlite
 
             if (_options.UseWal)
             {
-                await _connection.UseWal(token).ConfigureAwait(false);
+                await _connection.UseWalAsync(token).ConfigureAwait(false);
             }
 
-            await _connection.CreateConfigTable(token).ConfigureAwait(false);
+            await _connection.CreateConfigTableAsync(token).ConfigureAwait(false);
 
             if (_options.PostConnectionSetup != null)
             {
@@ -160,9 +160,9 @@ namespace PgOutput2Json.Sqlite
             return _connection;
         }
 
-        private async Task<SqliteConnection> EnsureConnectionInTransaction(CancellationToken token)
+        private async Task<SqliteConnection> EnsureConnectionInTransactionAsync(CancellationToken token)
         {
-            var connection = await EnsureConnection(token).ConfigureAwait(false);
+            var connection = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
             _transaction ??= await connection.BeginTransactionAsync(token).ConfigureAwait(false);
 

@@ -20,7 +20,7 @@ namespace PgOutput2Json
             _logger = loggerFactory?.CreateLogger<PgOutput2Json>();
         }
 
-        public async Task Start(CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
             lock (_lock)
             {
@@ -30,7 +30,7 @@ namespace PgOutput2Json
 
             try
             {
-                await _listener.ListenForChanges(_cancellationTokenSource.Token);
+                await _listener.ListenForChangesAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
             }
             finally
             {
@@ -38,19 +38,19 @@ namespace PgOutput2Json
             }
         }
 
-        public Task<bool> WhenReplicationStarts(TimeSpan timeout, CancellationToken cancellationToken)
+        public Task<bool> WhenReplicationStartsAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
-            return WhenLsnReaches("0/0", timeout, cancellationToken);
+            return WhenLsnReachesAsync("0/0", timeout, cancellationToken);
         }
 
-        public async Task<bool> WhenLsnReaches(string expectedLsn, TimeSpan timeout, CancellationToken cancellationToken)
+        public async Task<bool> WhenLsnReachesAsync(string expectedLsn, TimeSpan timeout, CancellationToken cancellationToken)
         {
             using var timeoutCts = new CancellationTokenSource(timeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
             try
             {
-                await _listener.WhenLsnReaches(expectedLsn, linkedCts.Token);
+                await _listener.WhenLsnReachesAsync(expectedLsn, linkedCts.Token).ConfigureAwait(false);
                 return true;
             }
             catch (OperationCanceledException)

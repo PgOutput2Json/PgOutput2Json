@@ -6,9 +6,9 @@ namespace PgOutput2Json
 {
     public interface IPgOutput2Json: IDisposable
     {
-        Task Start(CancellationToken cancellationToken);
+        Task StartAsync(CancellationToken cancellationToken);
 
-        Task<bool> WhenReplicationStarts(TimeSpan timeout, CancellationToken cancellationToken);
-        Task<bool> WhenLsnReaches(string expectedLsn, TimeSpan timeout, CancellationToken cancellationToken);
+        Task<bool> WhenReplicationStartsAsync(TimeSpan timeout, CancellationToken cancellationToken);
+        Task<bool> WhenLsnReachesAsync(string expectedLsn, TimeSpan timeout, CancellationToken cancellationToken);
     }
 }

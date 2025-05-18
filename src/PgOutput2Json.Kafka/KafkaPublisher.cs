@@ -70,7 +70,7 @@ namespace PgOutput2Json.Kafka
             return ValueTask.CompletedTask;
         }
 
-        public override Task<ulong> GetLastPublishedWalSeq(CancellationToken cancellationToken)
+        public override Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken cancellationToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for {Topic}", _options.Topic);
 

@@ -105,7 +105,7 @@ namespace PgOutput2Json.TestWorker
                 //})
                 .Build();
 
-            await pgOutput2Json.Start(stoppingToken);
+            await pgOutput2Json.StartAsync(stoppingToken);
         }
     }
 }

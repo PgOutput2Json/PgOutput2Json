@@ -12,33 +12,33 @@ namespace PgOutput2Json.MongoDb
 {
     internal static class MongoDbExtensions
     {
-        public static async Task<ulong> GetWalEnd(this IMongoDatabase db, CancellationToken token)
+        public static async Task<ulong> GetWalEndAsync(this IMongoDatabase db, CancellationToken token)
         {
-            var cfgValue = await db.GetConfig(ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var cfgValue = await db.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
 
             return cfgValue != null ? ulong.Parse(cfgValue, CultureInfo.InvariantCulture) : 0;
         }
 
-        public static async Task SetWalEnd(this IMongoDatabase db, ulong walEnd, CancellationToken token)
+        public static async Task SetWalEndAsync(this IMongoDatabase db, ulong walEnd, CancellationToken token)
         {
-            await db.SaveConfig(ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
+            await db.SaveConfigAsync(ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
         }
 
-        public static async Task SetSchema(this IMongoDatabase db, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
+        public static async Task SetSchemaAsync(this IMongoDatabase db, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            await db.SaveConfig($"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
+            await db.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
         }
 
-        public static async Task<List<ColumnInfo>?> GetSchema(this IMongoDatabase db, string tableName, CancellationToken token)
+        public static async Task<List<ColumnInfo>?> GetSchemaAsync(this IMongoDatabase db, string tableName, CancellationToken token)
         {
-            var cfgValue = await db.GetConfig($"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
+            var cfgValue = await db.GetConfigAsync($"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
 
             if (cfgValue == null) return null;
 
             return JsonSerializer.Deserialize<List<ColumnInfo>>(cfgValue);
         }
 
-        public static async Task SaveConfig(this IMongoDatabase db, string key, string value, CancellationToken token)
+        public static async Task SaveConfigAsync(this IMongoDatabase db, string key, string value, CancellationToken token)
         {
             var collection = db.GetCollection<Config>("__pg2j_config");
 
@@ -47,10 +47,10 @@ namespace PgOutput2Json.MongoDb
                 new Config { Id = key, Value = value },
                 new ReplaceOptions<Config> { IsUpsert = true },
                 token
-            );
+            ).ConfigureAwait(false);
         }
 
-        public static async Task<string?> GetConfig(this IMongoDatabase db, string key, CancellationToken token)
+        public static async Task<string?> GetConfigAsync(this IMongoDatabase db, string key, CancellationToken token)
         {
             var collection = db.GetCollection<Config>("__pg2j_config");
 
@@ -68,14 +68,14 @@ namespace PgOutput2Json.MongoDb
             return nameParts.Length > 1 ? $"{nameParts[0]}__{nameParts[1]}" : nameParts[0];
         }
 
-        public static async Task UpsertOrDelete(this IMongoDatabase db,
-                                                ulong walEnd,
-                                                string fullTableName,
-                                                IReadOnlyList<ColumnInfo> columns,
-                                                JsonElement changeTypeElement,
-                                                JsonElement keyElement,
-                                                JsonElement rowElement,
-                                                CancellationToken token)
+        public static async Task UpsertOrDeleteAsync(this IMongoDatabase db,
+                                                     ulong walEnd,
+                                                     string fullTableName,
+                                                     IReadOnlyList<ColumnInfo> columns,
+                                                     JsonElement changeTypeElement,
+                                                     JsonElement keyElement,
+                                                     JsonElement rowElement,
+                                                     CancellationToken token)
         {
             var collectionName = GetCollectionName(fullTableName);
 
@@ -85,18 +85,18 @@ namespace PgOutput2Json.MongoDb
 
             if (changeType == "D")
             {
-                await Delete(collection, columns, keyElement, token).ConfigureAwait(false);
+                await DeleteAsync(collection, columns, keyElement, token).ConfigureAwait(false);
             }
             else
             {
-                await Upsert(collection, columns, keyElement, rowElement, token).ConfigureAwait(false);
+                await UpsertAsync(collection, columns, keyElement, rowElement, token).ConfigureAwait(false);
 
             }
 
-            await db.SetWalEnd(walEnd, token).ConfigureAwait(false);
+            await db.SetWalEndAsync(walEnd, token).ConfigureAwait(false);
         }
 
-        public static async Task Upsert(IMongoCollection<BsonDocument> collection, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
+        public static async Task UpsertAsync(IMongoCollection<BsonDocument> collection, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
         {
             var filters = new List<FilterDefinition<BsonDocument>>();
             var updates = new List<UpdateDefinition<BsonDocument>>();
@@ -149,7 +149,7 @@ namespace PgOutput2Json.MongoDb
             }
         }
 
-        public static async Task Delete(this IMongoCollection<BsonDocument> collection, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
+        public static async Task DeleteAsync(this IMongoCollection<BsonDocument> collection, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
         {
             var filters = new List<FilterDefinition<BsonDocument>>();
 
