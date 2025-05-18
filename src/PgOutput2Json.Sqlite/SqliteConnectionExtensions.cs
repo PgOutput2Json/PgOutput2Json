@@ -86,7 +86,8 @@ namespace PgOutput2Json.Sqlite
         {
             using var cmd = cn.CreateCommand();
 
-            var typeStr = checkpointType == WalCheckpointType.Truncate ? "TRUNCATE"
+            var typeStr = checkpointType == WalCheckpointType.Passive ? "PASSIVE"
+                : checkpointType == WalCheckpointType.Truncate ? "TRUNCATE"
                 : checkpointType == WalCheckpointType.Restart ? "RESTART"
                 : "FULL";
 

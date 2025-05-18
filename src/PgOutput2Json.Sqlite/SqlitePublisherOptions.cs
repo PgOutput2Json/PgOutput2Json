@@ -10,6 +10,7 @@ namespace PgOutput2Json.Sqlite
         Full = 0,
         Restart = 1,
         Truncate = 2,
+        Passive = 3,
     }
 
     public class SqlitePublisherOptions
@@ -18,7 +19,7 @@ namespace PgOutput2Json.Sqlite
         public Func<SqliteConnection, Task>? PostConnectionSetup { get; set; }
 
         public bool UseWal { get; set; }
-        public WalCheckpointType WalCheckpointType { get; set; } = WalCheckpointType.Full;
+        public WalCheckpointType WalCheckpointType { get; set; } = WalCheckpointType.Passive;
         public int WalCheckpointTryCount { get; set; } = 10;
     }
 }
