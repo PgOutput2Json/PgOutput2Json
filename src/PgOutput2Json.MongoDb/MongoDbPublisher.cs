@@ -19,6 +19,9 @@ namespace PgOutput2Json.MongoDb
 
         private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = [];
 
+        private readonly List<BulkWriteModel> _batch = new(1000);
+        private ulong? _lastWal;
+
         public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger)
         {
             _options = options;
@@ -36,10 +39,13 @@ namespace PgOutput2Json.MongoDb
             await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
         }
 
-        public override Task ConfirmAsync(CancellationToken token)
+        public override async Task ConfirmAsync(CancellationToken token)
         {
-            // TODO bulk write
-            return Task.CompletedTask;
+            var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
+
+            await db.ConfirmBatchAsync(_lastWal, _batch, token).ConfigureAwait(false);
+
+            _batch.Clear();
         }
 
         public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
@@ -91,8 +97,9 @@ namespace PgOutput2Json.MongoDb
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
-            await db.UpsertOrDeleteAsync(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, token)
-                .ConfigureAwait(false);
+            db.UpsertOrDelete(_batch, tableName, columns, changeTypeElement, keyElement, rowElement);
+
+            _lastWal = walEnd;
         }
 
         private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
@@ -132,15 +139,9 @@ namespace PgOutput2Json.MongoDb
             await db.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
         }
 
-        private async Task<IMongoDatabase> EnsureDatabaseAsync(CancellationToken token)
+        private async Task<IMongoClient> EnsureClientAsync(CancellationToken token)
         {
-            if (_db != null) return _db;
-
-            if (_client != null)
-            {
-                _client.Dispose();
-                _client = null;
-            }
+            if (_client != null) return _client;
 
             _client = new MongoClient(_options.ClientSettings);
 
@@ -149,8 +150,16 @@ namespace PgOutput2Json.MongoDb
                 await _options.PostConnectionSetup(_client).ConfigureAwait(false);
             }
 
+            return _client;
+        }
 
-            _db = _client.GetDatabase(_options.DatabaseName, new MongoDatabaseSettings
+        private async Task<IMongoDatabase> EnsureDatabaseAsync(CancellationToken token)
+        {
+            if (_db != null) return _db;
+
+            var client = await EnsureClientAsync(token).ConfigureAwait(false);
+
+            _db = client.GetDatabase(_options.DatabaseName, new MongoDatabaseSettings
             {
                 WriteConcern = WriteConcern.WMajority,
                 ReadConcern = ReadConcern.Majority,

@@ -19,11 +19,6 @@ namespace PgOutput2Json.MongoDb
             return cfgValue != null ? ulong.Parse(cfgValue, CultureInfo.InvariantCulture) : 0;
         }
 
-        public static async Task SetWalEndAsync(this IMongoDatabase db, ulong walEnd, CancellationToken token)
-        {
-            await db.SaveConfigAsync(ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
-        }
-
         public static async Task SetSchemaAsync(this IMongoDatabase db, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
             await db.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
@@ -68,35 +63,55 @@ namespace PgOutput2Json.MongoDb
             return nameParts.Length > 1 ? $"{nameParts[0]}__{nameParts[1]}" : nameParts[0];
         }
 
-        public static async Task UpsertOrDeleteAsync(this IMongoDatabase db,
-                                                     ulong walEnd,
-                                                     string fullTableName,
-                                                     IReadOnlyList<ColumnInfo> columns,
-                                                     JsonElement changeTypeElement,
-                                                     JsonElement keyElement,
-                                                     JsonElement rowElement,
-                                                     CancellationToken token)
+        public static void UpsertOrDelete(this IMongoDatabase db,
+                                          List<BulkWriteModel> batch,
+                                          string fullTableName,
+                                          IReadOnlyList<ColumnInfo> columns,
+                                          JsonElement changeTypeElement,
+                                          JsonElement keyElement,
+                                          JsonElement rowElement)
         {
             var collectionName = GetCollectionName(fullTableName);
-
-            var collection = db.GetCollection<BsonDocument>(collectionName);
+            var collectionNamespace = $"{db.DatabaseNamespace.DatabaseName}.{collectionName}";
 
             var changeType = changeTypeElement.GetString();
 
+
+            BulkWriteModel? model;
+
             if (changeType == "D")
             {
-                await DeleteAsync(collection, columns, keyElement, token).ConfigureAwait(false);
+                model = Delete(collectionNamespace, columns, keyElement);
             }
             else
             {
-                await UpsertAsync(collection, columns, keyElement, rowElement, token).ConfigureAwait(false);
-
+                model = Upsert(collectionNamespace, columns, keyElement, rowElement);
             }
 
-            await db.SetWalEndAsync(walEnd, token).ConfigureAwait(false);
+            if (model != null)
+            {
+                batch.Add(model);
+            }
         }
 
-        public static async Task UpsertAsync(IMongoCollection<BsonDocument> collection, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
+        public static async Task ConfirmBatchAsync(this IMongoDatabase db, ulong? walEnd, List<BulkWriteModel> batch, CancellationToken token)
+        {
+            if (batch.Count == 0) return;
+
+            if (walEnd.HasValue)
+            {
+                batch.Add(new BulkWriteReplaceOneModel<Config>(
+                    $"{db.DatabaseNamespace.DatabaseName}.__pg2j_config",
+                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.WalEnd),
+                    new Config { Id = ConfigKey.WalEnd, Value = walEnd.Value.ToString(CultureInfo.InvariantCulture) },
+                    isUpsert: true
+                ));
+            }
+
+            await db.Client.BulkWriteAsync(batch, cancellationToken: token).ConfigureAwait(false);
+        }
+
+        public static BulkWriteUpdateOneModel<BsonDocument>? Upsert(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement)
         {
             var filters = new List<FilterDefinition<BsonDocument>>();
             var updates = new List<UpdateDefinition<BsonDocument>>();
@@ -140,16 +155,18 @@ namespace PgOutput2Json.MongoDb
 
             if (updates.Count > 0)
             {
-                await collection.UpdateOneAsync(
+                return new BulkWriteUpdateOneModel<BsonDocument>(
+                    collectionName,
                     Builders<BsonDocument>.Filter.And(filters),
                     Builders<BsonDocument>.Update.Combine(updates),
-                    new UpdateOptions { IsUpsert = true },
-                    token
-                ).ConfigureAwait(false);
+                    isUpsert: true
+                );
             }
+
+            return null;
         }
 
-        public static async Task DeleteAsync(this IMongoCollection<BsonDocument> collection, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
+        public static BulkWriteDeleteOneModel<BsonDocument> Delete(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement)
         {
             var filters = new List<FilterDefinition<BsonDocument>>();
 
@@ -163,7 +180,7 @@ namespace PgOutput2Json.MongoDb
                 i++;
             }
 
-            await collection.DeleteOneAsync(Builders<BsonDocument>.Filter.And(filters), token).ConfigureAwait(false);
+            return new BulkWriteDeleteOneModel<BsonDocument>(collectionName, Builders<BsonDocument>.Filter.And(filters));
         }
 
         private static BsonValue GetColumnValue(JsonElement valElement, ColumnInfo column)
