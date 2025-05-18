@@ -22,7 +22,7 @@
     <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.17" />
     <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.17" />
     <PackageReference Include="PgOutput2Json.Redis" Version="0.9.17" />
-    <PackageReference Include="PgOutput2Json.Sqlite" Version="0.9.18" />
+    <PackageReference Include="PgOutput2Json.Sqlite" Version="0.9.19" />
   </ItemGroup>
 
 
