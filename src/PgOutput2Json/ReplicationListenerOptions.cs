@@ -1,11 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
 
+using Npgsql;
+
 namespace PgOutput2Json
 {
-    public class ReplicationListenerOptions
+    public sealed class ReplicationListenerOptions
     {
-        public string ConnectionString { get; private set; }
+        public NpgsqlDataSourceBuilder DataSourceBuilder { get; private set; }
+
+        public string ConnectionString => DataSourceBuilder.ConnectionString;
+
         public string[] PublicationNames { get; private set; }
         public string ReplicationSlotName { get; private set; }
 
@@ -32,7 +37,7 @@ namespace PgOutput2Json
 
         public int MaxParallelCopyJobs { get; private set; }
 
-        public ReplicationListenerOptions(string connectionString,
+        public ReplicationListenerOptions(NpgsqlDataSourceBuilder dataSourceBuilder,
                                           bool useTemporarySlot,
                                           string replicationSlotName,
                                           string[] publicationNames,
@@ -46,7 +51,7 @@ namespace PgOutput2Json
                                           int copyDataBatchSize = 0,
                                           int maxParallelCopyJobs = 1)
         {
-            ConnectionString = connectionString;
+            DataSourceBuilder = dataSourceBuilder;
             UseTemporarySlot = useTemporarySlot;
             PublicationNames = publicationNames;
             IdleFlushTime = idleFlushTime;

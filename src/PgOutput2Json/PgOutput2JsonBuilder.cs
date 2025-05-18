@@ -7,7 +7,8 @@ namespace PgOutput2Json
 {
     public class PgOutput2JsonBuilder
     {
-        private string? _connectionString;
+        private NpgsqlDataSourceBuilder _dataSourceBuilder = new();
+
         private string _replicationSlotName = string.Empty;
         private string[]? _publicationNames;
         private Dictionary<string, int> _tablePartitions = new Dictionary<string, int>();
@@ -32,7 +33,13 @@ namespace PgOutput2Json
 
         public PgOutput2JsonBuilder WithPgConnectionString(string connectionString)
         {
-            _connectionString = connectionString;
+            _dataSourceBuilder.ConnectionStringBuilder.ConnectionString = connectionString;
+            return this;
+        }
+
+        public PgOutput2JsonBuilder WithPgDataSource(Action<NpgsqlDataSourceBuilder> builderAction)
+        {
+            builderAction(_dataSourceBuilder);
             return this;
         }
 
@@ -117,6 +124,7 @@ namespace PgOutput2Json
 
         public PgOutput2JsonBuilder WithLoggerFactory(ILoggerFactory loggerFactory)
         {
+            _dataSourceBuilder.UseLoggerFactory(loggerFactory);
             _loggerFactory = loggerFactory;
             return this;
         }
@@ -137,8 +145,8 @@ namespace PgOutput2Json
 
         public IPgOutput2Json Build()
         {
-            if (string.IsNullOrWhiteSpace(_connectionString)) 
-                throw new ArgumentNullException("PostgreSQL connection string must be provided");
+            if (_dataSourceBuilder.ConnectionString == string.Empty) 
+                throw new ArgumentNullException("PostgreSQL data source must be configured");
 
             if (_publicationNames == null || _publicationNames.Length == 0)
                 throw new ArgumentNullException("At least one PostgreSQL publication name must be provided");
@@ -159,13 +167,11 @@ namespace PgOutput2Json
                 throw new ArgumentOutOfRangeException("Replication slot name must be provided for permanent slots");
             }
 
-            var cnStringBuilder = new NpgsqlConnectionStringBuilder(_connectionString);
-
-            cnStringBuilder.Timezone ??= "UTC";
+            _dataSourceBuilder.ConnectionStringBuilder.Timezone ??= "UTC";
 
             if (_maxParallelCopyJobs <= 0) _maxParallelCopyJobs = 1;
 
-            var options = new ReplicationListenerOptions(cnStringBuilder.ConnectionString,
+            var options = new ReplicationListenerOptions(_dataSourceBuilder,
                                                          _useTemporarySlot,
                                                          _replicationSlotName,
                                                          _publicationNames,

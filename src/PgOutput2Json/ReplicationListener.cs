@@ -115,9 +115,6 @@ namespace PgOutput2Json
                 IMessagePublisher? messagePublisher = null; 
                 try
                 {
-
-                    if (_loggerFactory != null) Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
-                 
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);
 
                     await using (connection.ConfigureAwait(false))
