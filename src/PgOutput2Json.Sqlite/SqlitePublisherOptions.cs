@@ -7,10 +7,15 @@ namespace PgOutput2Json.Sqlite
 {
     public enum WalCheckpointType
     {
-        Full = 0,
-        Restart = 1,
-        Truncate = 2,
-        Passive = 3,
+        /// <summary>
+        /// Default. Wal chackpoint is not forced (automatic checkpoint still works)
+        /// </summary>
+        Automatic = 0,
+
+        Passive = 1,
+        Restart = 2,
+        Truncate = 3,
+        Full = 4,
     }
 
     public class SqlitePublisherOptions
@@ -19,7 +24,7 @@ namespace PgOutput2Json.Sqlite
         public Func<SqliteConnection, Task>? PostConnectionSetup { get; set; }
 
         public bool UseWal { get; set; }
-        public WalCheckpointType WalCheckpointType { get; set; } = WalCheckpointType.Passive;
+        public WalCheckpointType WalCheckpointType { get; set; } = WalCheckpointType.Automatic;
         public int WalCheckpointTryCount { get; set; } = 10;
     }
 }

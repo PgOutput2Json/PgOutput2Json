@@ -84,6 +84,8 @@ namespace PgOutput2Json.Sqlite
 
         public static async Task WalCheckpointAsync(this SqliteConnection cn, WalCheckpointType checkpointType, int tryCount, CancellationToken token)
         {
+            if (checkpointType == WalCheckpointType.Automatic) return; // nothing to do
+
             using var cmd = cn.CreateCommand();
 
             var typeStr = checkpointType == WalCheckpointType.Passive ? "PASSIVE"
