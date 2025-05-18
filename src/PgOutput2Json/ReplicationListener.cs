@@ -144,11 +144,11 @@ namespace PgOutput2Json
                             slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
                                 .ConfigureAwait(false);
                         }
-                    
+
                         // start data export after creating the temporary replication slot
                         await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
-                        messagePublisher =_messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
+                        messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
 
                         var lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
 
@@ -189,7 +189,7 @@ namespace PgOutput2Json
 
                                     await connection.SendStatusUpdate(cancellationToken)
                                         .ConfigureAwait(false);
-                                    
+
                                     _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
                                 }
                             }
@@ -204,7 +204,7 @@ namespace PgOutput2Json
 
                                 try
                                 {
-                                    using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false)) 
+                                    using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                                     {
                                         if (linkedCts != null)
                                         {
@@ -214,7 +214,7 @@ namespace PgOutput2Json
                                     }
                                 }
                                 catch (Exception exx)
-                                { 
+                                {
                                     MetricsHelper.IncrementErrorCounter();
                                     _logger.SafeLogError(exx, "Error cancelling link token source");
                                 }
@@ -235,7 +235,7 @@ namespace PgOutput2Json
                         {
                             using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                             {
-                                idleConfirmTimer.Change(_options.IdleFlushTime, Timeout.InfiniteTimeSpan);
+                                idleConfirmTimer.Change(TimeSpan.FromMilliseconds(250), Timeout.InfiniteTimeSpan);
 
                                 if (message is RelationMessage rel)
                                 {
@@ -288,7 +288,7 @@ namespace PgOutput2Json
                                 {
                                     continue;
                                 }
-                                
+
                                 await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableName, result.KeyKolValue, result.Partition, cancellationToken)
                                     .ConfigureAwait(false);
 
@@ -341,11 +341,12 @@ namespace PgOutput2Json
                     await idleConfirmTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
                     idleConfirmTimer = null;
 
-                    using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
+                    // we don't use cancellation token here, as we want to dispose always
+                    using (await _lock.LockAsync(CancellationToken.None).ConfigureAwait(false))
                     {
                         await messagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
                         messagePublisher = null;
-                        
+
                         linkedCts.TryDispose(_logger);
                         linkedCts = null;
                     }

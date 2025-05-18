@@ -15,7 +15,6 @@ namespace PgOutput2Json
         public string ReplicationSlotName { get; private set; }
 
         public bool UseTemporarySlot { get; private set; }
-        public TimeSpan IdleFlushTime { get; private set; }
         public int BatchSize { get; private set; }
 
         public Dictionary<string, int> TablePartitions { get; private set; } 
@@ -41,7 +40,6 @@ namespace PgOutput2Json
                                           bool useTemporarySlot,
                                           string replicationSlotName,
                                           string[] publicationNames,
-                                          TimeSpan idleFlushTime,
                                           int batchSize,
                                           IReadOnlyDictionary<string, int> tablePartitions,
                                           IReadOnlyDictionary<string, IReadOnlyList<string>> includedColumns, 
@@ -54,7 +52,6 @@ namespace PgOutput2Json
             DataSourceBuilder = dataSourceBuilder;
             UseTemporarySlot = useTemporarySlot;
             PublicationNames = publicationNames;
-            IdleFlushTime = idleFlushTime;
             BatchSize = batchSize;
             ReplicationSlotName = replicationSlotName;
             TablePartitions = new Dictionary<string, int>(tablePartitions);
