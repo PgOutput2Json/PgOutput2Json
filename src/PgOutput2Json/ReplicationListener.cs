@@ -112,7 +112,10 @@ namespace PgOutput2Json
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                IMessagePublisher? messagePublisher = null; 
+                IMessagePublisher? messagePublisher = null;
+                CancellationTokenSource? linkedCts = null;
+                Timer? idleConfirmTimer = null;
+
                 try
                 {
                     var connection = new LogicalReplicationConnection(_options.ConnectionString);
@@ -159,7 +162,7 @@ namespace PgOutput2Json
                         DateTime commitTimeStamp = DateTime.UtcNow;
 
                         // we will use cts to cancel the loop, if the idle confirm fails
-                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
                         var unconfirmedCount = 0;
 
@@ -199,12 +202,26 @@ namespace PgOutput2Json
                                 MetricsHelper.IncrementErrorCounter();
                                 _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
 
-                                // if force confirm fails, stop the replication loop, and dispose the publisher
-                                linkedCts.TryCancel(_logger);
+                                try
+                                {
+                                    using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false)) 
+                                    {
+                                        if (linkedCts != null)
+                                        {
+                                            // if force confirm fails, stop the replication loop, and dispose the publisher
+                                            await linkedCts.CancelAsync().ConfigureAwait(false);
+                                        }
+                                    }
+                                }
+                                catch (Exception exx)
+                                { 
+                                    MetricsHelper.IncrementErrorCounter();
+                                    _logger.SafeLogError(exx, "Error cancelling link token source");
+                                }
                             }
                         }
 
-                        using var idleConfirmTimer = new Timer(_ =>
+                        idleConfirmTimer = new Timer(_ =>
                         {
                             _ = TimerCallbackAsync(); // fire and forget
                         });
@@ -321,12 +338,16 @@ namespace PgOutput2Json
                 }
                 finally
                 {
+                    await idleConfirmTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
+                    idleConfirmTimer = null;
+
                     using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                     {
-                        await messagePublisher.TryDisposeAsync(_logger)
-                            .ConfigureAwait(false);
-
+                        await messagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
                         messagePublisher = null;
+                        
+                        linkedCts.TryDispose(_logger);
+                        linkedCts = null;
                     }
                 }
 
