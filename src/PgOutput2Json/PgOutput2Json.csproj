@@ -22,7 +22,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="C:\Users\Sinisa\Git\PgOutput2Json\src\PgOutput2Json\.editorconfig" />
     <None Include="icon.png">
       <Pack>True</Pack>
       <PackagePath></PackagePath>
@@ -36,10 +35,6 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Npgsql" Version="9.0.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EditorConfigFiles Remove="C:\Users\Sinisa\Git\PgOutput2Json\src\PgOutput2Json\.editorconfig" />
   </ItemGroup>
 
 </Project>
