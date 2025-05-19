@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.Sqlite", "PgO
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.MongoDb", "PgOutput2Json.MongoDb\PgOutput2Json.MongoDb.csproj", "{8E04E335-C77C-E850-59C1-56A58422837D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.Kinesis", "PgOutput2Json.Kinesis\PgOutput2Json.Kinesis.csproj", "{DABF97BB-4DF3-46D8-BD87-E6C639AA600D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -63,6 +65,10 @@ Global
 		{8E04E335-C77C-E850-59C1-56A58422837D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8E04E335-C77C-E850-59C1-56A58422837D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8E04E335-C77C-E850-59C1-56A58422837D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DABF97BB-4DF3-46D8-BD87-E6C639AA600D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DABF97BB-4DF3-46D8-BD87-E6C639AA600D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DABF97BB-4DF3-46D8-BD87-E6C639AA600D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DABF97BB-4DF3-46D8-BD87-E6C639AA600D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
