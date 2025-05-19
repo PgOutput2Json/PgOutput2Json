@@ -22,6 +22,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Redis** (Streams + Pub/Sub Channels)
 - ✅ **SQLite** (used by [PgFreshCache](https://github.com/PgOutput2Json/PgFreshCache))
 - ✅ **MongoDB**
+- ✅ **Amazon Kinesis**
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -130,7 +131,7 @@ public class Worker : BackgroundService
             })  
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
@@ -237,7 +238,7 @@ public class Worker : BackgroundService
             })  
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
@@ -300,7 +301,7 @@ public class Worker : BackgroundService
             })  
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
@@ -357,7 +358,7 @@ public class Worker : BackgroundService
             })  
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
@@ -413,7 +414,7 @@ public class Worker : BackgroundService
             })  
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
@@ -467,7 +468,7 @@ public class Worker : BackgroundService
             }) 
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
@@ -493,7 +494,8 @@ In your `Worker.cs`, use the following code to configure change propagation to M
 
 ```csharp
 using PgOutput2Json;
-using PgOutput2Json.MongoDb;
+using MongoDB.Driver;
+using MongoDB.Driver.Core.Configuration;
 
 public class Worker : BackgroundService  
 {  
@@ -523,7 +525,60 @@ public class Worker : BackgroundService
             })
             .Build();  
 
-        await pgOutput2Json.Start(stoppingToken);  
+        await pgOutput2Json.StartAsync(stoppingToken);  
+    }  
+}
+```
+
+## 9. Using Amazon Kinesis
+
+PgOutput2Json supports pushing row changes as JSON mesages to Amazon Kinesis.
+
+> ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
+
+### 9.1 Create a .NET Worker Service
+
+Set up a new **.NET Worker Service** and add the following package reference:
+
+```
+dotnet add package PgOutput2Json.Kinesis
+```
+
+In your `Worker.cs`, use the following code to configure change propagation to Amazon Kinesis:
+
+```csharp
+using PgOutput2Json;
+using Amazon.Runtime;
+using Amazon.Runtime.CredentialManagement;
+
+public class Worker : BackgroundService  
+{  
+    private readonly ILoggerFactory _loggerFactory;  
+
+    public Worker(ILoggerFactory loggerFactory)  
+    {  
+        _loggerFactory = loggerFactory;  
+    }  
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
+    {  
+        // This code assumes PostgreSQL is running on localhost  
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
+            .WithLoggerFactory(_loggerFactory)  
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
+            .WithPgPublications("my_publication")
+            .UseKinesis(options =>
+            {
+                // assumes LocalStack, with test_stream created in eu-central-1
+                options.StreamName = "test_stream";
+                options.KinesisConfig.ServiceURL = "http://localhost:4566";
+                options.KinesisConfig.UseHttp = true;
+                options.KinesisConfig.DefaultAWSCredentials = new BasicAWSCredentials("dummy", "dummy");
+                options.KinesisConfig.AuthenticationRegion = "eu-central-1";
+            })
+            .Build();  
+
+        await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
