@@ -1,15 +1,10 @@
-using System.Net;
-using System.Text.Json;
-
+using Amazon;
+using Amazon.Runtime;
+using Amazon.Runtime.CredentialManagement;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Configuration;
-
-using PgOutput2Json.Kafka;
-using PgOutput2Json.MongoDb;
-using PgOutput2Json.RabbitMq;
-using PgOutput2Json.RabbitMqStreams;
-using PgOutput2Json.Redis;
-using PgOutput2Json.Sqlite;
+using System.Net;
+using System.Text.Json;
 
 namespace PgOutput2Json.TestWorker
 {
@@ -43,7 +38,7 @@ namespace PgOutput2Json.TestWorker
                 .WithPgConnectionString("Host=localhost;Database=test_db;Username=postgres;Password=postgres")
                 .WithPgPublications("test_publication")
                 .WithPgReplicationSlot("test_slot")
-                //.WithBatchSize(10_000) // default is 100
+                //.WithBatchSize(500) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
                 //.WithPgOrderedKeyColumns("public.test_table", "id") // used for initial data copy, to support ordering and resuming an interrupted initial data copy process
                 .WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate schema named pgoutput2json must be created in the source db (to track the progress)
@@ -102,6 +97,15 @@ namespace PgOutput2Json.TestWorker
                 //        Scheme = ConnectionStringScheme.MongoDB,
                 //        Credential = MongoCredential.CreateCredential("admin", "admin", "secret"),
                 //    };
+                //})
+                //.UseKinesis(options =>
+                //{
+                //    // assumes LocalStack, with created test_stream in eu-central-1
+                //    options.StreamName = "test_stream";
+                //    options.KinesisConfig.ServiceURL = "http://localhost:4566";
+                //    options.KinesisConfig.UseHttp = true;
+                //    options.KinesisConfig.DefaultAWSCredentials = new BasicAWSCredentials("dummy", "dummy");
+                //    options.KinesisConfig.AuthenticationRegion = "eu-central-1";
                 //})
                 .Build();
 

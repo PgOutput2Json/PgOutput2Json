@@ -9,6 +9,7 @@
 
   <ItemGroup Condition="'$(Configuration)' != 'Release'">
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Kinesis\PgOutput2Json.Kinesis.csproj" />
     <ProjectReference Include="..\PgOutput2Json.MongoDb\PgOutput2Json.MongoDb.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMqStreams\PgOutput2Json.RabbitMqStreams.csproj" />
@@ -18,6 +19,7 @@
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
     <PackageReference Include="PgOutput2Json.Kafka" Version="0.9.17" />
+    <PackageReference Include="PgOutput2Json.Kinesis" Version="0.9.17" />
     <PackageReference Include="PgOutput2Json.MongoDb" Version="0.9.17" />
     <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.17" />
     <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.17" />
