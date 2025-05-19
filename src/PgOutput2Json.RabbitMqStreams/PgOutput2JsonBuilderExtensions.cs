@@ -1,7 +1,8 @@
-﻿using System;
+﻿using PgOutput2Json.RabbitMqStreams;
+using System;
 using System.Net;
 
-namespace PgOutput2Json.RabbitMqStreams
+namespace PgOutput2Json
 {
     public static class PgOutput2JsonBuilderExtensions
     {

@@ -1,7 +1,8 @@
 ﻿using MongoDB.Driver;
+using PgOutput2Json.MongoDb;
 using System;
 
-namespace PgOutput2Json.MongoDb
+namespace PgOutput2Json
 {
     public static class PgOutput2JsonBuilderExtensions
     {

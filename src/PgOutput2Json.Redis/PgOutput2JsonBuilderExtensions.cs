@@ -1,6 +1,7 @@
-﻿using System;
+﻿using PgOutput2Json.Redis;
+using System;
 
-namespace PgOutput2Json.Redis
+namespace PgOutput2Json
 {
     public static class PgOutput2JsonBuilderExtensions
     {

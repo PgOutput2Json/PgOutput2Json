@@ -1,7 +1,8 @@
 ﻿using Microsoft.Data.Sqlite;
+using PgOutput2Json.Sqlite;
 using System;
 
-namespace PgOutput2Json.Sqlite
+namespace PgOutput2Json
 {
     public static class PgOutput2JsonBuilderExtensions
     {

@@ -1,6 +1,7 @@
 ﻿using System;
+using PgOutput2Json.Kafka;
 
-namespace PgOutput2Json.Kafka
+namespace PgOutput2Json
 {
     public static class PgOutput2JsonBuilderExtensions
     {
