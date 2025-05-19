@@ -13,7 +13,7 @@ namespace PgOutput2Json.Kafka
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
         {
-            return new KafkaPublisher(_options, listenerOptions.BatchSize, loggerFactory?.CreateLogger<KafkaPublisher>());
+            return new KafkaPublisher(_options, loggerFactory?.CreateLogger<KafkaPublisher>());
         }
     }
 }

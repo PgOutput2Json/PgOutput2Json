@@ -12,7 +12,7 @@ namespace PgOutput2Json.Kafka
 {
     public class KafkaPublisher: MessagePublisher
     {
-        public KafkaPublisher(KafkaPublisherOptions options, int batchSize, ILogger<KafkaPublisher>? logger = null)
+        public KafkaPublisher(KafkaPublisherOptions options, ILogger<KafkaPublisher>? logger = null)
         {
             _options = options;
             _logger = logger;
