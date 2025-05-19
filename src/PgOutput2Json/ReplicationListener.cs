@@ -49,6 +49,12 @@ namespace PgOutput2Json
 
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
+
+            // TODO: see if DataSourceBuilder can be used
+            if (_loggerFactory != null)
+            {
+                Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
+            }
         }
 
         public async Task WhenLsnReachesAsync(string expectedLsn, CancellationToken cancellationToken)
