@@ -11,6 +11,8 @@ namespace PgOutput2Json
 {
     internal static class DataExporter
     {
+        private const string _finalMarker = "__FINAL__";
+
         public static async Task MaybeExportDataAsync(IMessagePublisherFactory publisherFactory,
                                                       ReplicationListenerOptions listenerOptions,
                                                       JsonOptions jsonOptions,
@@ -23,6 +25,9 @@ namespace PgOutput2Json
             }
 
             await DataCopyProgress.CreateDataCopyProgressTableAsync(listenerOptions, token).ConfigureAwait(false);
+
+            var finalCopyStatus = await DataCopyProgress.GetDataCopyStatusAsync(_finalMarker, listenerOptions, token).ConfigureAwait(false);
+            if (finalCopyStatus.IsCompleted) return;
 
             List<PublicationInfo> publications;
 
@@ -91,6 +96,8 @@ namespace PgOutput2Json
             {
                 throw new OperationCanceledException(); // cancel further processing (errors already logged)
             }
+
+            await DataCopyProgress.SetDataCopyProgressAsync(_finalMarker, listenerOptions, true, null, null, token).ConfigureAwait(false);
         }
 
         private static async Task<bool> ExportDataAsync(NpgsqlConnection connection,
@@ -102,8 +109,6 @@ namespace PgOutput2Json
                                                         ILogger? logger,
                                                         CancellationToken cancellationToken)
         {
-            string? lastJsonString = null;
-
             listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
             listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
 
@@ -154,14 +159,15 @@ namespace PgOutput2Json
                 await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            var json = new StringBuilder(256);
-            var keyValues = new StringBuilder(256);
-            var value = new StringBuilder(256);
+            var jsonMessage = new JsonMessage();
+
+            jsonMessage.TableName.Append(publication.TableName);
 
             var currentBatch = 0;
             var totalRows = 0;
             var schemaWritten = false;
 
+            var value = new StringBuilder(256);
             var values = new List<string>(100);
 
             using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
@@ -197,8 +203,8 @@ namespace PgOutput2Json
 
                 if (cancellationToken.IsCancellationRequested) break;
 
-                json.Clear();
-                keyValues.Clear();
+                jsonMessage.Json.Clear();
+                jsonMessage.KeyKolValue.Clear();
 
                 GetValues(values, value, line, logger);
 
@@ -212,41 +218,39 @@ namespace PgOutput2Json
                     currentBatch = listenerOptions.BatchSize;
                 }
 
-                json.Append("{\"c\":\"I\"");
-                json.Append(",\"w\":0");
+                jsonMessage.Json.Append("{\"c\":\"I\"");
+                jsonMessage.Json.Append(",\"w\":0");
 
                 if (jsonOptions.WriteTableNames)
                 {
-                    json.Append(",\"t\":\"");
-                    JsonUtils.EscapeText(json, publication.TableName);
-                    json.Append('"');
+                    jsonMessage.Json.Append(",\"t\":\"");
+                    JsonUtils.EscapeText(jsonMessage.Json, publication.TableName);
+                    jsonMessage.Json.Append('"');
                 }
 
                 if (!schemaWritten)
                 {
                     schemaWritten = true;
 
-                    json.Append(',');
+                    jsonMessage.Json.Append(',');
                     switch (jsonOptions.WriteMode)
                     {
                         case JsonWriteMode.Compact:
-                            WriteSchemaCompact(json, publication, includedColumns);
+                            WriteSchemaCompact(jsonMessage.Json, publication, includedColumns);
                             break;
                         default:
-                            WriteSchemaDefault(json, publication, includedColumns);
+                            WriteSchemaDefault(jsonMessage.Json, publication, includedColumns);
                             break;
                     }
                 }
 
-                var hash = WriteRow(publication.Columns, values, json, keyValues, jsonOptions, includedColumns);
+                var hash = WriteRow(publication.Columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonOptions, includedColumns);
 
-                json.Append('}');
+                jsonMessage.Json.Append('}');
 
                 var partition = partitionCount > 0 ? hash % partitionCount : 0;
 
-                lastJsonString = json.ToString();
-
-                await publisher.PublishAsync(0, lastJsonString, publication.TableName, keyValues.ToString(), partition, token).ConfigureAwait(false);
+                await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
 
                 totalRows++;
 
@@ -254,7 +258,7 @@ namespace PgOutput2Json
                 if (currentBatch <= 0)
                 {
                     await publisher.ConfirmAsync(token).ConfigureAwait(false);
-                    await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, false, lastJsonString, publication.Columns, token).ConfigureAwait(false);
+                    await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, false, jsonMessage.Json.ToString(), publication.Columns, token).ConfigureAwait(false);
                 }
             }
 
@@ -262,7 +266,7 @@ namespace PgOutput2Json
                 && (copyBatchSize == 0 || totalRows < copyBatchSize);
 
             await publisher.ConfirmAsync(token).ConfigureAwait(false);
-            await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, completed, lastJsonString, publication.Columns, token).ConfigureAwait(false);
+            await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, completed, jsonMessage.Json.ToString(), publication.Columns, token).ConfigureAwait(false);
 
             return completed;
         }

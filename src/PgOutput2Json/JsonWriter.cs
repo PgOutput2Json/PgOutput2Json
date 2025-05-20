@@ -9,42 +9,39 @@ using Npgsql.Replication.PgOutput.Messages;
 
 namespace PgOutput2Json
 {
-    interface IMessageWriter
+    public class JsonMessage
     {
-        Task<MessageWriterResult> WriteMessageAsync(PgOutputReplicationMessage message, DateTime commitTimeStamp, bool hasRelationChanged, CancellationToken cancellationToken);
+        public ulong WalSeqNo { get; internal set; }
+        public int Partition { get; internal set; }
+        public StringBuilder Json { get; internal set; } = new(256);
+        public StringBuilder TableName { get; internal set; } = new(256); 
+        public StringBuilder KeyKolValue { get; internal set; } = new(256);
     }
 
-    class MessageWriterResult
+    public class JsonWriter
     {
-        public int Partition;
-        public string Json = "";
-        public string TableName = "";
-        public string KeyKolValue = "";
-    }
-
-    class MessageWriter: IMessageWriter
-    {
-        private readonly StringBuilder _jsonBuilder = new StringBuilder(256);
-        private readonly StringBuilder _tableNameBuilder = new StringBuilder(256);
-        private readonly StringBuilder _keyColValueBuilder = new StringBuilder(256);
+        private StringBuilder JsonBuilder => _result.Json;
+        private StringBuilder TableNameBuilder => _result.TableName;
+        private StringBuilder KeyColValueBuilder => _result.KeyKolValue;
 
         private readonly JsonOptions _jsonOptions;
         private readonly ReplicationListenerOptions _listenerOptions;
 
-        private readonly MessageWriterResult _result = new MessageWriterResult();
+        private readonly JsonMessage _result = new();
 
-        public MessageWriter(JsonOptions jsonOptions, ReplicationListenerOptions listenerOptions)
+        public JsonWriter(JsonOptions jsonOptions, ReplicationListenerOptions listenerOptions)
         {
             _jsonOptions = jsonOptions;
             _listenerOptions = listenerOptions;
         }
 
-        public async Task<MessageWriterResult> WriteMessageAsync(PgOutputReplicationMessage message,
-                                                                 DateTime commitTimeStamp,
-                                                                 bool hasRelationChanged,
-                                                                 CancellationToken token)
+        public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, CancellationToken token)
         {
             var partition = -1;
+
+            var message = replMessage.Message;
+            var commitTimeStamp = replMessage.CommitTimeStamp;
+            var hasRelationChanged = replMessage.HasRelationChanged;
 
             if (message is InsertMessage insertMsg)
             {
@@ -120,9 +117,7 @@ namespace PgOutput2Json
             }
 
             _result.Partition = partition;
-            _result.Json = _jsonBuilder.ToString();
-            _result.TableName = _tableNameBuilder.ToString();
-            _result.KeyKolValue = _keyColValueBuilder.ToString();
+            _result.WalSeqNo = message != null ? (ulong)message.WalEnd : 0;
 
             return _result;
         }
@@ -136,45 +131,45 @@ namespace PgOutput2Json
                                                 bool hasRelationChanged,
                                                 CancellationToken cancellationToken)
         {
-            _tableNameBuilder.Clear();
-            _tableNameBuilder.Append(relation.Namespace);
-            _tableNameBuilder.Append('.');
-            _tableNameBuilder.Append(relation.RelationName);
+            TableNameBuilder.Clear();
+            TableNameBuilder.Append(relation.Namespace);
+            TableNameBuilder.Append('.');
+            TableNameBuilder.Append(relation.RelationName);
             
-            var tableName = _tableNameBuilder.ToString();
+            var tableName = TableNameBuilder.ToString();
 
-            _jsonBuilder.Clear();
-            _jsonBuilder.Append("{\"c\":\"");
-            _jsonBuilder.Append(changeType);
-            _jsonBuilder.Append('"');
+            JsonBuilder.Clear();
+            JsonBuilder.Append("{\"c\":\"");
+            JsonBuilder.Append(changeType);
+            JsonBuilder.Append('"');
 
             if (_jsonOptions.WriteWalStart)
             {
-                _jsonBuilder.Append(",\"ws\":");
-                _jsonBuilder.Append((ulong)msg.WalStart);
+                JsonBuilder.Append(",\"ws\":");
+                JsonBuilder.Append((ulong)msg.WalStart);
             }
 
-            _jsonBuilder.Append(",\"w\":");
-            _jsonBuilder.Append((ulong)msg.WalEnd);
+            JsonBuilder.Append(",\"w\":");
+            JsonBuilder.Append((ulong)msg.WalEnd);
 
             if (_jsonOptions.WriteTimestamps)
             {
-                _jsonBuilder.Append(",\"cts\":");
-                _jsonBuilder.Append(commitTimeStamp.Ticks);
-                _jsonBuilder.Append(",\"mts\":");
-                _jsonBuilder.Append(msg.ServerClock.Ticks);
+                JsonBuilder.Append(",\"cts\":");
+                JsonBuilder.Append(commitTimeStamp.Ticks);
+                JsonBuilder.Append(",\"mts\":");
+                JsonBuilder.Append(msg.ServerClock.Ticks);
             }
 
             if (_jsonOptions.WriteTableNames)
             {
-                _jsonBuilder.Append(",\"t\":\"");
-                JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
-                _jsonBuilder.Append('.');
-                JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
-                _jsonBuilder.Append('"');
+                JsonBuilder.Append(",\"t\":\"");
+                JsonUtils.EscapeText(JsonBuilder, relation.Namespace);
+                JsonBuilder.Append('.');
+                JsonUtils.EscapeText(JsonBuilder, relation.RelationName);
+                JsonBuilder.Append('"');
             }
 
-            _keyColValueBuilder.Clear();
+            KeyColValueBuilder.Clear();
 
             if (!_listenerOptions.TablePartitions.TryGetValue(tableName, out var partitionCount))
             {
@@ -188,7 +183,7 @@ namespace PgOutput2Json
 
             if (hasRelationChanged)
             {
-                _jsonBuilder.Append(',');
+                JsonBuilder.Append(',');
                 if (_jsonOptions.WriteMode == JsonWriteMode.Compact)
                 {
                     WriteSchemaCompact(relation, includedCols);
@@ -203,29 +198,29 @@ namespace PgOutput2Json
 
             if (keyRow != null)
             {
-                _jsonBuilder.Append(",\"k\":");
-                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
+                JsonBuilder.Append(",\"k\":");
+                JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
                 var writeToKeyBuilder = newRow == null; // only write key values if new row is not present (deletes)
                 
                 hash = await WriteValuesAsync(keyRow, relation, writeToKeyBuilder, includedCols, true, cancellationToken)
                         .ConfigureAwait(false);
 
-                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
+                JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
             }
 
             if (newRow != null)
             {
-                _jsonBuilder.Append(",\"r\":");
-                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
+                JsonBuilder.Append(",\"r\":");
+                JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
                 hash = await WriteValuesAsync(newRow, relation, true, includedCols, false, cancellationToken)
                     .ConfigureAwait(false);
 
-                _jsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
+                JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
             }
 
-            _jsonBuilder.Append('}');
+            JsonBuilder.Append('}');
 
             return hash.HasValue ? hash.Value % partitionCount : 0;
         }
@@ -273,7 +268,7 @@ namespace PgOutput2Json
 
                 if (isKeyColumn && writeToKeyValueBuilder)
                 {
-                    keyColBuilder = _keyColValueBuilder;
+                    keyColBuilder = KeyColValueBuilder;
 
                     if (keyColBuilder.Length == 0)
                     {
@@ -287,7 +282,7 @@ namespace PgOutput2Json
 
                 if (!firstValue)
                 {
-                    _jsonBuilder.Append(',');
+                    JsonBuilder.Append(',');
                 }
 
                 firstValue = false;
@@ -296,20 +291,20 @@ namespace PgOutput2Json
                 {
                     // skip property name writing if we are in compact mode
 
-                    _jsonBuilder.Append('"');
-                    JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
-                    _jsonBuilder.Append('"');
-                    _jsonBuilder.Append(':');
+                    JsonBuilder.Append('"');
+                    JsonUtils.EscapeText(JsonBuilder, col.ColumnName);
+                    JsonBuilder.Append('"');
+                    JsonBuilder.Append(':');
                 }
 
                 if (value.IsUnchangedToastedValue)
                 {
-                    _jsonBuilder.Append("\"__TOAST__\"");
+                    JsonBuilder.Append("\"__TOAST__\"");
                     keyColBuilder?.Append("\"__TOAST__\"");
                 }
                 else if (value.IsDBNull)
                 {
-                    _jsonBuilder.Append("null");
+                    JsonBuilder.Append("null");
                     keyColBuilder?.Append("null");
                 }
                 else if (value.Kind == TupleDataKind.TextValue)
@@ -323,42 +318,42 @@ namespace PgOutput2Json
 
                     if (pgOid.IsNumber())
                     {
-                        hash = JsonUtils.WriteNumber(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteNumber(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteNumber(keyColBuilder, colValue);
                     }
                     else if (pgOid.IsBoolean())
                     {
-                        hash = JsonUtils.WriteBoolean(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteBoolean(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteBoolean(keyColBuilder, colValue);
                     }
                     else if (pgOid.IsByte())
                     {
-                        hash = JsonUtils.WriteByte(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteByte(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteByte(keyColBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfNumber())
                     {
-                        hash = JsonUtils.WriteArrayOfNumber(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteArrayOfNumber(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfNumber(keyColBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfByte())
                     {
-                        hash = JsonUtils.WriteArrayOfByte(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteArrayOfByte(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfByte(keyColBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfBoolean())
                     {
-                        hash = JsonUtils.WriteArrayOfBoolean(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteArrayOfBoolean(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfBoolean(keyColBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfText())
                     {
-                        hash = JsonUtils.WriteArrayOfText(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteArrayOfText(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfText(keyColBuilder, colValue);
                     }
                     else
                     {
-                        hash = JsonUtils.WriteText(_jsonBuilder, colValue);
+                        hash = JsonUtils.WriteText(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteText(keyColBuilder, colValue);
                     }
 
@@ -366,9 +361,9 @@ namespace PgOutput2Json
                 }
             }
 
-            if (_keyColValueBuilder.Length > 0 )
+            if (KeyColValueBuilder.Length > 0 )
             {
-                _keyColValueBuilder.Append(']');
+                KeyColValueBuilder.Append(']');
             }
 
             return finalHash;
@@ -391,16 +386,16 @@ namespace PgOutput2Json
 
         private void WriteSchema(RelationMessage relation, IReadOnlyList<string>? includedCols)
         {
-            _jsonBuilder.Append("\"schema\":{");
+            JsonBuilder.Append("\"schema\":{");
 
-            _jsonBuilder.Append("\"tableName\":");
-            _jsonBuilder.Append('"');
-            JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
-            _jsonBuilder.Append('.');
-            JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
-            _jsonBuilder.Append('"');
+            JsonBuilder.Append("\"tableName\":");
+            JsonBuilder.Append('"');
+            JsonUtils.EscapeText(JsonBuilder, relation.Namespace);
+            JsonBuilder.Append('.');
+            JsonUtils.EscapeText(JsonBuilder, relation.RelationName);
+            JsonBuilder.Append('"');
 
-            _jsonBuilder.Append(",\"columns\":[");
+            JsonBuilder.Append(",\"columns\":[");
 
             var i = 0;
             foreach (var col in relation.Columns)
@@ -410,74 +405,74 @@ namespace PgOutput2Json
                 var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
                     == RelationMessage.Column.ColumnFlags.PartOfKey;
 
-                if (i > 0) _jsonBuilder.Append(',');
+                if (i > 0) JsonBuilder.Append(',');
 
-                _jsonBuilder.Append('{');
+                JsonBuilder.Append('{');
 
-                _jsonBuilder.Append("\"name\":");
-                _jsonBuilder.Append('"');
-                JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
-                _jsonBuilder.Append('"');
+                JsonBuilder.Append("\"name\":");
+                JsonBuilder.Append('"');
+                JsonUtils.EscapeText(JsonBuilder, col.ColumnName);
+                JsonBuilder.Append('"');
 
-                _jsonBuilder.Append(",\"isKey\":");
-                _jsonBuilder.Append(isKeyColumn ? "true" : "false");
+                JsonBuilder.Append(",\"isKey\":");
+                JsonBuilder.Append(isKeyColumn ? "true" : "false");
 
-                _jsonBuilder.Append(",\"dataType\":");
-                JsonUtils.EscapeText(_jsonBuilder, col.DataTypeId.ToString());
+                JsonBuilder.Append(",\"dataType\":");
+                JsonUtils.EscapeText(JsonBuilder, col.DataTypeId.ToString());
 
                 if (col.TypeModifier != -1)
                 {
-                    _jsonBuilder.Append(",\"typeModifier\":");
-                    JsonUtils.EscapeText(_jsonBuilder, col.TypeModifier.ToString());
+                    JsonBuilder.Append(",\"typeModifier\":");
+                    JsonUtils.EscapeText(JsonBuilder, col.TypeModifier.ToString());
                 }
 
-                _jsonBuilder.Append('}');
+                JsonBuilder.Append('}');
                 i++;
             }
 
-            _jsonBuilder.Append(']'); // columns
-            _jsonBuilder.Append('}'); // schema
+            JsonBuilder.Append(']'); // columns
+            JsonBuilder.Append('}'); // schema
         }
 
         private void WriteSchemaCompact(RelationMessage relation, IReadOnlyList<string>? includedCols)
         {
-            _jsonBuilder.Append("\"s\":[");
-            _jsonBuilder.Append('"');
-            JsonUtils.EscapeText(_jsonBuilder, relation.Namespace);
-            _jsonBuilder.Append('.');
-            JsonUtils.EscapeText(_jsonBuilder, relation.RelationName);
-            _jsonBuilder.Append('"');
+            JsonBuilder.Append("\"s\":[");
+            JsonBuilder.Append('"');
+            JsonUtils.EscapeText(JsonBuilder, relation.Namespace);
+            JsonBuilder.Append('.');
+            JsonUtils.EscapeText(JsonBuilder, relation.RelationName);
+            JsonBuilder.Append('"');
 
             foreach (var col in relation.Columns)
             {
                 if (!IsIncluded(includedCols, col)) continue;
 
-                _jsonBuilder.Append(',');
-                _jsonBuilder.Append('[');
+                JsonBuilder.Append(',');
+                JsonBuilder.Append('[');
 
                 var isKeyColumn = (col.Flags & RelationMessage.Column.ColumnFlags.PartOfKey)
                     == RelationMessage.Column.ColumnFlags.PartOfKey;
 
-                _jsonBuilder.Append('"');
-                JsonUtils.EscapeText(_jsonBuilder, col.ColumnName);
-                _jsonBuilder.Append('"');
-                _jsonBuilder.Append(',');
+                JsonBuilder.Append('"');
+                JsonUtils.EscapeText(JsonBuilder, col.ColumnName);
+                JsonBuilder.Append('"');
+                JsonBuilder.Append(',');
 
-                _jsonBuilder.Append(isKeyColumn ? '1' : '0');
-                _jsonBuilder.Append(',');
+                JsonBuilder.Append(isKeyColumn ? '1' : '0');
+                JsonBuilder.Append(',');
 
-                JsonUtils.EscapeText(_jsonBuilder, col.DataTypeId.ToString());
+                JsonUtils.EscapeText(JsonBuilder, col.DataTypeId.ToString());
 
                 if (col.TypeModifier != -1)
                 {
-                    _jsonBuilder.Append(',');
-                    JsonUtils.EscapeText(_jsonBuilder, col.TypeModifier.ToString());
+                    JsonBuilder.Append(',');
+                    JsonUtils.EscapeText(JsonBuilder, col.TypeModifier.ToString());
                 }
 
-                _jsonBuilder.Append(']');
+                JsonBuilder.Append(']');
             }
 
-            _jsonBuilder.Append(']');
+            JsonBuilder.Append(']');
         }
     }
 }

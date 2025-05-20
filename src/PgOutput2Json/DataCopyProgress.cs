@@ -165,7 +165,7 @@ DO UPDATE SET
             cmd.Parameters.AddWithValue("slot_name", slotName);
 
             cmd.Parameters.AddWithValue("is_completed", isCompleted);
-            cmd.Parameters.AddWithValue("last_message", lastMessage ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("last_message", string.IsNullOrEmpty(lastMessage) ? DBNull.Value : lastMessage);
             cmd.Parameters.AddWithValue("column_names", columns != null ? JsonSerializer.Serialize(columns.Select(c => c.ColumnName)) : DBNull.Value);
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
