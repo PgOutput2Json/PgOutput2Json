@@ -28,13 +28,15 @@ namespace PgOutput2Json.MongoDb
             _logger = logger;
         }
 
-        public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
             var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            using var doc = JsonDocument.Parse(json);
+            var tableName = msg.TableName.ToString();
 
-            await TryParseSchemaAsync(client, tableName, walSeqNo, doc, token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(msg.Json.ToString());
+
+            await TryParseSchemaAsync(client, tableName, msg.WalSeqNo, doc, token).ConfigureAwait(false);
 
             await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
         }

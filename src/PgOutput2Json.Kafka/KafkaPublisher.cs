@@ -18,26 +18,30 @@ namespace PgOutput2Json.Kafka
             _logger = logger;
         }
 
-        public override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override Task PublishAsync(JsonMessage message, CancellationToken token)
         {
-            var msgKey = string.IsNullOrEmpty(keyColumnValue) ? _random.Next().ToString() : keyColumnValue;
+            var msgKey = message.KeyKolValue.Length == 0 ? _random.Next().ToString() : message.KeyKolValue.ToString();
+            var tableName = message.TableName.ToString();
 
             if (_options.WriteTableNameToMessageKey) 
             {
-                msgKey = string.Join('|', tableName, msgKey);
+                msgKey = string.Join("", tableName, msgKey);
             }
 
             var producer = EnsureProducer();
 
-            _logger?.LogDebug("Publishing to Topic={Topic}, Key={Key}, Body={Body}", _options.Topic, msgKey, json);
+            if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug("Publishing to Topic={Topic}, Key={Key}, Body={Body}", _options.Topic, msgKey, message.Json.ToString());
+            }
 
             producer.Produce(_options.Topic, new Message<string, string>
             {
                 Key = msgKey,
-                Value = json,
+                Value = message.Json.ToString(),
                 Headers = _options.WriteHeaders ? new Headers
                 {
-                    { "wal_seq_no", Encoding.UTF8.GetBytes(walSeqNo.ToString()) },
+                    { "wal_seq_no", Encoding.UTF8.GetBytes(message.WalSeqNo.ToString()) },
                     { "table_name", Encoding.UTF8.GetBytes(tableName) },
                 }
                 : null,

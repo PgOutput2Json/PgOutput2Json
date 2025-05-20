@@ -6,7 +6,7 @@ namespace PgOutput2Json
 {
     public interface IMessagePublisher: IAsyncDisposable
     {
-        Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token);
+        Task PublishAsync(JsonMessage jsonMessage, CancellationToken token);
         Task ConfirmAsync(CancellationToken token);
 
         Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token);
@@ -14,7 +14,7 @@ namespace PgOutput2Json
 
     public abstract class MessagePublisher : IMessagePublisher
     {
-        public abstract Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token);
+        public abstract Task PublishAsync(JsonMessage jsonMessage, CancellationToken token);
         public abstract Task ConfirmAsync(CancellationToken token);
         public abstract ValueTask DisposeAsync();
 

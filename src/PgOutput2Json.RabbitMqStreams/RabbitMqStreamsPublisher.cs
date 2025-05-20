@@ -21,7 +21,7 @@ namespace PgOutput2Json.RabbitMqStreams
             _logger = loggerFactory?.CreateLogger<RabbitMqStreamsPublisher>();
         }
 
-        public async override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public async override Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
             var producer = await EnsureProducerAsync().ConfigureAwait(false);
 
@@ -34,6 +34,8 @@ namespace PgOutput2Json.RabbitMqStreams
                     _confirmationTaskCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 }
             }
+
+            var json = msg.Json.ToString();
 
             await producer.Send(new Message(Encoding.UTF8.GetBytes(json)))
                 .ConfigureAwait(false);

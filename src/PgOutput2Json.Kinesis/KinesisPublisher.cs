@@ -32,23 +32,13 @@ namespace PgOutput2Json.Kinesis
             return _kinesisClient ??= new AmazonKinesisClient(_options.KinesisConfig);
         }
 
-        public Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
-            var payload = new
-            {
-                WalSeqNo = walSeqNo,
-                Table = tableName,
-                Key = keyColumnValue,
-                Data = json
-            };
-
-            var jsonString = System.Text.Json.JsonSerializer.Serialize(payload);
-            var bytes = Encoding.UTF8.GetBytes(jsonString);
-            var partitionKey = string.Join("", tableName, keyColumnValue);
+            var partitionKey = string.Join("", msg.TableName.ToString(), msg.KeyKolValue.ToString());
 
             var entry = new PutRecordsRequestEntry
             {
-                Data = new MemoryStream(bytes),
+                Data = new MemoryStream(Encoding.UTF8.GetBytes(msg.Json.ToString())),
                 PartitionKey = partitionKey.Length <= 256 ? partitionKey : partitionKey[..256],
             };
 

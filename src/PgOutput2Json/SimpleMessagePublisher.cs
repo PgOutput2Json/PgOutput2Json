@@ -32,11 +32,14 @@ namespace PgOutput2Json
             _logger = logger;
         }
 
-        public override Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token) 
+        public override Task PublishAsync(JsonMessage message, CancellationToken token) 
         {
-            _logger?.LogDebug("Message for {Table}: {Json}", tableName, json);
+            if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger?.LogDebug("Message for {Table}: {Json}", message.TableName.ToString(), message.Json.ToString());
+            }
 
-            return _messageHandler.Invoke(json, tableName, keyColumnValue, partition);
+            return _messageHandler.Invoke(message.Json.ToString(), message.TableName.ToString(), message.KeyKolValue.ToString(), message.Partition);
         }
 
         public override Task ConfirmAsync(CancellationToken token)

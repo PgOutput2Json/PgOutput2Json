@@ -25,7 +25,7 @@ namespace PgOutput2Json
         private readonly ReplicationListenerOptions _options;
         private readonly JsonOptions _jsonOptions;
 
-        private readonly IMessageWriter _writer;
+        private readonly JsonWriter _writer;
 
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
@@ -43,9 +43,7 @@ namespace PgOutput2Json
             _messagePublisherFactory = messagePublisherFactory;
             _options = options;
             _jsonOptions = jsonOptions;
-            _writer = jsonOptions.UseOldFormat
-                ? new MessageWriterOld(jsonOptions, options)
-                : new MessageWriter(jsonOptions, options);
+            _writer = new JsonWriter(jsonOptions, options);
 
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
@@ -165,8 +163,6 @@ namespace PgOutput2Json
 
                         var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
 
-                        DateTime commitTimeStamp = DateTime.UtcNow;
-
                         // we will use cts to cancel the loop, if the idle confirm fails
                         linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
@@ -232,7 +228,7 @@ namespace PgOutput2Json
                             _ = TimerCallbackAsync(); // fire and forget
                         });
 
-                        var hasRelationChanged = true;
+                        var replicationMessage = new ReplicationMessage { HasRelationChanged = true, CommitTimeStamp = DateTime.UtcNow, };
 
                         // linkedCts.Token is used only in this foreach loop,
                         // since lock ensures idle confirm cannot happen at the same time
@@ -245,7 +241,7 @@ namespace PgOutput2Json
 
                                 if (message is RelationMessage rel)
                                 {
-                                    hasRelationChanged = true;
+                                    replicationMessage.HasRelationChanged = true;
 
                                     // Relation Message has WalEnd=0/0
                                     continue;
@@ -253,7 +249,7 @@ namespace PgOutput2Json
 
                                 if (message is BeginMessage beginMsg)
                                 {
-                                    commitTimeStamp = beginMsg.TransactionCommitTimestamp;
+                                    replicationMessage.CommitTimeStamp = beginMsg.TransactionCommitTimestamp;
                                     continue;
                                 }
                                 else if (message is CommitMessage commitMsg)
@@ -271,31 +267,25 @@ namespace PgOutput2Json
 
                                 lastWalEnd = message.WalEnd;
 
-                                var result = await _writer.WriteMessageAsync(message, commitTimeStamp, hasRelationChanged, cancellationToken)
+                                replicationMessage.Message = message;
+
+                                var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
                                     .ConfigureAwait(false);
 
-                                if (hasRelationChanged && _options.CopyData)
-                                {
-                                    // if data copy is on, we will mark this table as copied,
-                                    // to avoid copying tables created after the inital copy
-                                    await DataCopyProgress.SetDataCopyProgressAsync(result.TableName, _options, true, null, null, cancellationToken)
-                                        .ConfigureAwait(false);
-                                }
+                                replicationMessage.HasRelationChanged = false;
 
-                                hasRelationChanged = false;
-
-                                if (result.Partition < 0)
+                                if (jsonMessage.Partition < 0)
                                 {
                                     continue;
                                 }
 
                                 if (_options.PartitionFilter != null
-                                    && (result.Partition < _options.PartitionFilter.FromInclusive || result.Partition >= _options.PartitionFilter.ToExclusive))
+                                    && (jsonMessage.Partition < _options.PartitionFilter.FromInclusive || jsonMessage.Partition >= _options.PartitionFilter.ToExclusive))
                                 {
                                     continue;
                                 }
 
-                                await messagePublisher.PublishAsync((ulong)message.WalEnd, result.Json, result.TableName, result.KeyKolValue, result.Partition, cancellationToken)
+                                await messagePublisher.PublishAsync(jsonMessage, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 MetricsHelper.IncrementPublishCounter();

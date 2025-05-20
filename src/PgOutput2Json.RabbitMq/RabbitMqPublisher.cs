@@ -19,19 +19,21 @@ namespace PgOutput2Json.RabbitMq
             _logger = logger;
         }
 
-        public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
             var channel = await EnsureConnectionAsync(token)
                 .ConfigureAwait(false);
+
+            var tableName = msg.TableName.ToString();
+            var routingKey = tableName + "." + msg.Partition;
+            var json = msg.Json.ToString();
 
             if (_options.PersistencyConfigurationByTable.Count == 0 
                 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
             {
                 persistent = _options.UsePersistentMessagesByDefault;
             }
-
-            var routingKey = tableName + "." + partition;
-
+            
             _logger.SafeLogDebug($"Publishing to Exchange={_options.ExchangeName}, RoutingKey={routingKey}, Body={json}");
 
             var body = Encoding.UTF8.GetBytes(json);

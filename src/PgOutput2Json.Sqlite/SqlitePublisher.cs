@@ -26,13 +26,16 @@ namespace PgOutput2Json.Sqlite
             _logger = logger;
         }
 
-        public override async Task PublishAsync(ulong walSeqNo, string json, string tableName, string keyColumnValue, int partition, CancellationToken token)
+        public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
             var connection = await EnsureConnectionInTransactionAsync(token).ConfigureAwait(false);
 
+            var json = msg.Json.ToString();
+            var tableName = msg.TableName.ToString();
+
             using var doc = JsonDocument.Parse(json);
 
-            await TryParseSchemaAsync(connection, tableName, walSeqNo, doc, token).ConfigureAwait(false);
+            await TryParseSchemaAsync(connection, tableName, doc, token).ConfigureAwait(false);
 
             await ParseRowAsync(connection, tableName, doc, token).ConfigureAwait(false);
         }
@@ -100,7 +103,7 @@ namespace PgOutput2Json.Sqlite
                 .ConfigureAwait(false);
         }
 
-        private async Task TryParseSchemaAsync(SqliteConnection connection, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
+        private async Task TryParseSchemaAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
         {
             if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
 
