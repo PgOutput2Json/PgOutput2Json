@@ -1,4 +1,5 @@
 using Amazon;
+using Amazon.DynamoDBv2;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
 using MongoDB.Driver;
@@ -106,6 +107,16 @@ namespace PgOutput2Json.TestWorker
                 //    options.KinesisConfig.UseHttp = true;
                 //    options.KinesisConfig.DefaultAWSCredentials = new BasicAWSCredentials("dummy", "dummy");
                 //    options.KinesisConfig.AuthenticationRegion = "eu-central-1";
+                //})
+                //.UseDynamoDb(options =>
+                //{
+                //    options.ClientConfig = new AmazonDynamoDBConfig
+                //    {
+                //        ServiceURL = "http://localhost:8000",                              // for local DynamoDB, change/remove for AWS
+                //        UseHttp = true,                                                    // for local DynamoDb, remove for AWS
+                //        MaxErrorRetry = 3,                                                 // retry failed requests up to 3 times
+                //        DefaultAWSCredentials = new BasicAWSCredentials("dummy", "dummy"), // for local DynamoDB, remove for AWS
+                //    };
                 //})
                 .Build();
 
