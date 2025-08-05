@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - dynamodb-data:/home/dynamodblocal/data
+      - dynamodb_data:/home/dynamodblocal/data
 
   dynamodb-admin:
     image: aaronshaf/dynamodb-admin
@@ -19,4 +19,5 @@ services:
       - dynamodb
 
 volumes:
-  dynamodb-data:
+  dynamodb_data:
+    name: pg2j_dynamodb_data
