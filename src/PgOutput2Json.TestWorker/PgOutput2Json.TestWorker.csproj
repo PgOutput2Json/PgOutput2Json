@@ -18,13 +18,13 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <PackageReference Include="PgOutput2Json.Kafka" Version="0.9.20" />
-    <PackageReference Include="PgOutput2Json.Kinesis" Version="0.9.20" />
-    <PackageReference Include="PgOutput2Json.MongoDb" Version="0.9.20" />
-    <PackageReference Include="PgOutput2Json.RabbitMq" Version="0.9.20" />
-    <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="0.9.20" />
-    <PackageReference Include="PgOutput2Json.Redis" Version="0.9.20" />
-    <PackageReference Include="PgOutput2Json.Sqlite" Version="0.9.20" />
+    <PackageReference Include="PgOutput2Json.Kafka" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.Kinesis" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.MongoDb" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.RabbitMq" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.Redis" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.Sqlite" Version="1.0.0" />
   </ItemGroup>
 
 
