@@ -97,25 +97,32 @@ CREATE PUBLICATION my_publication
 
 In the example code below, we'll assume the database name is `my_database`.
 
-### Set Up Redis
+### Using Amazon DynamoDB
 
-PgOutput2Json supports publishing JSON messages to Redis streams (default) or Pub/Sub channels.
+PgOutput2Json supports copying modified PostgreSQL rows to Amazon DynamoDB tables. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
-Make sure you have a Redis instance running and accessible to your .NET application. This example assumes Redis is running locally on the default port `6379`.
+The PgOutput2Json library will create DynamoDB tables for each table included in logical replication. 
 
-### Create .NET Worker Service
+Tables are created the first time a row belonging to the respective table is changed. 
+The first PK column is used as partition key, and the rest of PK columns are joined in a string, for the sort key.
+
+### Create a .NET Worker Service
 
 Set up a new **.NET Worker Service** and add the following package reference:
 
 ```
-dotnet add package PgOutput2Json.Redis
+dotnet add package PgOutput2Json.DynamoDb
 ```
 
-In your `Worker.cs`, use the following code to publish change events to Redis:
+In your `Worker.cs`, use the following code to configure change propagation to Amazon DynamoDB:
 
 ```csharp
+using Amazon;
+using Amazon.DynamoDBv2;
+using Amazon.Runtime;
+using Amazon.Runtime.CredentialManagement;
 using PgOutput2Json;
-using PgOutput2Json.Redis;
 
 public class Worker : BackgroundService  
 {  
@@ -128,28 +135,27 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
     {  
-        // This code assumes PostgreSQL and Redis are on localhost  
+        // This code assumes PostgreSQL is running on localhost  
         using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
             .WithLoggerFactory(_loggerFactory)  
             .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
-            .WithPgPublications("my_publication")  
-            .UseRedis(options =>  
+            .WithPgPublications("my_publication")
+            .UseDynamoDb(options =>
             {
-                options.StreamName = "my_stream";
-                options.PublishMode = PublishMode.Stream;
-                options.StreamNameSuffix = StreamNameSuffix.None; // or TableName, or TableNameAndPartition
-                options.Redis.EndPoints.Add("localhost:6379");  
-            })  
+                options.ClientConfig = new AmazonDynamoDBConfig
+                {
+                    ServiceURL = "http://localhost:8000",                              // for local DynamoDB, change/remove for AWS
+                    UseHttp = true,                                                    // for local DynamoDb, remove for AWS
+                    DefaultAWSCredentials = new BasicAWSCredentials("dummy", "dummy"), // for local DynamoDB, remove for AWS
+                    MaxErrorRetry = 3,                                                 // retry failed requests up to 3 times
+                };
+            })
             .Build();  
 
         await pgOutput2Json.StartAsync(stoppingToken);  
     }  
 }
 ```
-
-JSON messages will be published to the specified Redis stream. If a stream name suffix is specified, the stream or channel name becomes dynamic, using the format: `stream_name:schema.table:partition`.
-
-The table name is always qualified with the schema using the `.` character.
 
 > **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.
 

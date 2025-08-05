@@ -23,6 +23,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **SQLite** (used by [PgFreshCache](https://github.com/PgOutput2Json/PgFreshCache))
 - ✅ **MongoDB**
 - ✅ **Amazon Kinesis**
+- ✅ **Amazon DynamoDB**
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 

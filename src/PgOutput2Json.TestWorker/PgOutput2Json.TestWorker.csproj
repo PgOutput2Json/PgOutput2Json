@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(Configuration)' != 'Release'">
+    <ProjectReference Include="..\PgOutput2Json.DynamoDb\PgOutput2Json.DynamoDb.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Kinesis\PgOutput2Json.Kinesis.csproj" />
     <ProjectReference Include="..\PgOutput2Json.MongoDb\PgOutput2Json.MongoDb.csproj" />
