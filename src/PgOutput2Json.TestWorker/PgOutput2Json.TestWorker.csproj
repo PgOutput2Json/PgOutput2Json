@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <PackageReference Include="PgOutput2Json.DynamoDb" Version="1.0.0" />
     <PackageReference Include="PgOutput2Json.Kafka" Version="1.0.0" />
     <PackageReference Include="PgOutput2Json.Kinesis" Version="1.0.0" />
     <PackageReference Include="PgOutput2Json.MongoDb" Version="1.0.0" />
