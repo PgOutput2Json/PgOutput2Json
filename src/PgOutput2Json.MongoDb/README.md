@@ -24,6 +24,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **MongoDB**
 - ✅ **Amazon Kinesis**
 - ✅ **Amazon DynamoDB**
+- ✅ **Azure Event Hubs**
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
