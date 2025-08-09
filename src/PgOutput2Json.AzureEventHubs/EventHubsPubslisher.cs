@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -9,6 +8,7 @@ using Microsoft.Extensions.Logging;
 
 using Azure.Messaging.EventHubs;
 using Azure.Messaging.EventHubs.Producer;
+using Azure.Messaging.EventHubs.Consumer;
 
 namespace PgOutput2Json.AzureEventHubs
 {
@@ -34,13 +34,16 @@ namespace PgOutput2Json.AzureEventHubs
 
         public Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
-            var partitionKey = string.Join("", msg.TableName.ToString(), msg.KeyKolValue.ToString());
+            var tableName = msg.TableName.ToString();
+            var keyColValue = msg.KeyKolValue.ToString();
 
-            var eventData = new EventData(Encoding.UTF8.GetBytes(msg.Json.ToString()));
+            var partitionKey = string.Join("", tableName, keyColValue);
 
-            // Add custom properties for better tracking
-            eventData.Properties["table"] = msg.TableName.ToString();
-            eventData.Properties["walOffset"] = msg.WalSeqNo.ToString();
+            var eventData = new EventData(msg.Json.ToString());
+
+            eventData.Properties["table"] = tableName;
+            eventData.Properties["keyValue"] = keyColValue;
+            eventData.Properties["walOffset"] = msg.WalSeqNo;
             eventData.Properties["partitionKey"] = partitionKey;
 
             _buffer.Add((eventData, partitionKey));
@@ -83,9 +86,10 @@ namespace PgOutput2Json.AzureEventHubs
             }
         }
 
-        public Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return Task.FromResult(0UL);
+            return await GetMaxWalOffsetAsync(_options.ConnectionString, _options.EventHubName, token)
+                .ConfigureAwait(false);
         }
 
         public async ValueTask DisposeAsync()
@@ -124,11 +128,11 @@ namespace PgOutput2Json.AzureEventHubs
                         {
                             throw new Exception($"Event at index {eventIndex} is too large to fit in a batch. Event size exceeds the maximum allowed size.");
                         }
-                        
+
                         // Otherwise, the batch is full, so we'll send it and create a new batch for remaining events
                         break;
                     }
-                    
+
                     eventIndex++;
                 }
 
@@ -138,6 +142,81 @@ namespace PgOutput2Json.AzureEventHubs
                     await client.SendAsync(eventBatch, token).ConfigureAwait(false);
                 }
             }
+        }
+
+        /// <summary>
+        /// Reads the last message from each partition and returns the largest WAL offset.
+        /// Optimized for single publisher scenario - only reads one message per partition.
+        /// </summary>
+        /// <param name="connectionString">Event Hubs connection string</param>
+        /// <param name="eventHubName">Event Hub name</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The largest WAL offset found, or 0 if no messages found</returns>
+        private static async Task<ulong> GetMaxWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
+        {
+            await using var consumer = new EventHubConsumerClient(EventHubConsumerClient.DefaultConsumerGroupName, connectionString, eventHubName);
+
+            var partitionIds = await consumer.GetPartitionIdsAsync(cancellationToken)
+                    .ConfigureAwait(false);
+
+            var maxWalOffset = 0UL;
+
+            foreach (var partitionId in partitionIds)
+            {
+                try
+                {
+                    // Check if partition has any messages
+                    var partitionProps = await consumer.GetPartitionPropertiesAsync(partitionId, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (partitionProps.IsEmpty)
+                    {
+                        return 0L; // No messages in this partition
+                    }
+
+                    // Read from the last sequence number (the very last message)
+                    var lastEventPosition = EventPosition.FromSequenceNumber(partitionProps.LastEnqueuedSequenceNumber);
+
+                    var readOptions = new ReadEventOptions
+                    {
+                        MaximumWaitTime = TimeSpan.FromSeconds(2) // Short timeout since we only need one message
+                    };
+
+                    await foreach (var partitionEvent in consumer.ReadEventsFromPartitionAsync(partitionId, lastEventPosition, readOptions, cancellationToken))
+                    {
+                        partitionEvent.Data.Properties.TryGetValue("walOffset", out var walOffsetProp);
+
+                        ulong walOffset;
+
+                        if (walOffsetProp == null)
+                        {
+                            walOffset = 0UL;
+                        }
+                        else if (walOffsetProp is ulong value)
+                        {
+                            walOffset = value;
+                        }
+                        else
+                        {
+                            ulong.TryParse(walOffsetProp.ToString(), out walOffset);
+                        }
+
+                        if (walOffset > maxWalOffset)
+                        {
+                            maxWalOffset = walOffset;
+                        }
+
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Warning: Could not read from partition {partitionId}: {ex.Message}");
+                    return 0UL; // Return 0 for failed partitions, don't crash the whole operation
+                }
+            };
+
+            return maxWalOffset;
         }
     }
 }
