@@ -37,16 +37,15 @@ namespace PgOutput2Json.AzureEventHubs
             var tableName = msg.TableName.ToString();
             var keyColValue = msg.KeyKolValue.ToString();
 
-            var partitionKey = string.Join("", tableName, keyColValue);
-
             var eventData = new EventData(msg.Json.ToString());
+
+            eventData.MessageId = string.Join("", tableName, keyColValue);
 
             eventData.Properties["table"] = tableName;
             eventData.Properties["keyValue"] = keyColValue;
             eventData.Properties["walOffset"] = msg.WalSeqNo;
-            eventData.Properties["partitionKey"] = partitionKey;
 
-            _buffer.Add((eventData, partitionKey));
+            _buffer.Add((eventData, tableName));
 
             return Task.CompletedTask;
         }
