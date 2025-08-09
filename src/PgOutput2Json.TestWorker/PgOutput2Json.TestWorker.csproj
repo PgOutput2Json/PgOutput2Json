@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(Configuration)' != 'Release'">
+    <ProjectReference Include="..\PgOutput2Json.AzureEventHubs\PgOutput2Json.AzureEventHubs.csproj" />
     <ProjectReference Include="..\PgOutput2Json.DynamoDb\PgOutput2Json.DynamoDb.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Kinesis\PgOutput2Json.Kinesis.csproj" />
@@ -19,14 +20,15 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <PackageReference Include="PgOutput2Json.DynamoDb" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.Kafka" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.Kinesis" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.MongoDb" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.RabbitMq" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.Redis" Version="1.0.0" />
-    <PackageReference Include="PgOutput2Json.Sqlite" Version="1.0.0" />
+    <PackageReference Include="PgOutput2Json.AzureEventHubs" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.DynamoDb" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.Kafka" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.Kinesis" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.MongoDb" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.RabbitMq" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.RabbitMqStreams" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.Redis" Version="1.0.1" />
+    <PackageReference Include="PgOutput2Json.Sqlite" Version="1.0.1" />
   </ItemGroup>
 
 

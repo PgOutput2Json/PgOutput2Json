@@ -103,7 +103,7 @@ In the example code below, we'll assume the database name is `my_database`.
 Set up a new **.NET Worker Service** and add the following package reference:
 
 ```
-dotnet add package PgOutput2Json.EventHubs
+dotnet add package PgOutput2Json.AzureEventHubs
 ```
 
 In your `Worker.cs`, use the following code to configure change propagation to Azure Event Hubs:
@@ -173,9 +173,9 @@ Make sure to create the Event Hub in your namespace before running the applicati
 
 ### Partitioning Strategy
 
-Event Hubs uses the partition key (derived from table name and key values) to distribute messages across partitions. This ensures:
+Event Hubs uses the partition key (derived from table name) to distribute messages across partitions. This ensures:
 
-- Messages from the same table/record are processed in order
+- Messages from the same table are processed in order
 - Load is distributed across multiple partitions for better throughput
 - Parallel processing capabilities for consumers
 

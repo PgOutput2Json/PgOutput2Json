@@ -118,6 +118,21 @@ namespace PgOutput2Json.TestWorker
                 //        DefaultAWSCredentials = new BasicAWSCredentials("dummy", "dummy"), // for local DynamoDB, remove for AWS
                 //    };
                 //})
+                //.UseEventHubs(options =>
+                //{
+                //    // Connection string format: Endpoint=sb://[namespace].servicebus.windows.net/;SharedAccessKeyName=[key-name];SharedAccessKey=[key-value]
+                //    options.ConnectionString = "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;";
+                //    options.EventHubName = "eh1";
+
+                //    // Optional: Configure client options
+                //    // options.ClientOptions = new EventHubProducerClientOptions
+                //    // {
+                //    //     ConnectionOptions = new EventHubConnectionOptions
+                //    //     {
+                //    //         TransportType = EventHubsTransportType.AmqpWebSockets
+                //    //     }
+                //    // };
+                //})
                 .Build();
 
             await pgOutput2Json.StartAsync(stoppingToken);
