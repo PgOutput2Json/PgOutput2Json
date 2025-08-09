@@ -237,7 +237,7 @@ namespace PgOutput2Json
                         {
                             using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                             {
-                                idleConfirmTimer.Change(TimeSpan.FromMilliseconds(250), Timeout.InfiniteTimeSpan);
+                                idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
 
                                 if (message is RelationMessage rel)
                                 {
