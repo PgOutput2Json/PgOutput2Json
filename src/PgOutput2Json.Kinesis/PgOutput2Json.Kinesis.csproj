@@ -43,7 +43,7 @@
 
 
 	<ItemGroup>
-		<PackageReference Include="AWSSDK.Kinesis" Version="4.0.2.15" />
+		<PackageReference Include="AWSSDK.Kinesis" Version="4.0.2.16" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.8" />
 		<PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15">
 			<PrivateAssets>all</PrivateAssets>
