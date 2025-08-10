@@ -33,7 +33,7 @@ namespace PgOutput2Json
 
         private readonly List<WalAwaiter> _walAwaiters = [];
 
-        private NpgsqlLogSequenceNumber? _committedWal;
+        private NpgsqlLogSequenceNumber? _confirmedWal;
 
         public ReplicationListener(IMessagePublisherFactory messagePublisherFactory,
                                    ReplicationListenerOptions options,
@@ -64,7 +64,7 @@ namespace PgOutput2Json
 
             using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (_committedWal.HasValue && _committedWal.Value >= expectedWal)
+                if (_confirmedWal.HasValue && _confirmedWal.Value >= expectedWal)
                 {
                     return;
                 }
@@ -99,13 +99,13 @@ namespace PgOutput2Json
         /// This is always called from inside async lock, so it's ok to iterate through awaiters
         /// </summary>
         /// <param name="walEnd"></param>
-        private void SetCommittedWal(NpgsqlLogSequenceNumber walEnd)
+        private void SetConfirmedWal(NpgsqlLogSequenceNumber walEnd)
         {
-            _committedWal = walEnd;
+            _confirmedWal = walEnd;
 
             foreach (var awaiter in _walAwaiters)
             {
-                if (_committedWal.Value >= awaiter.ExpectedWalEnd)
+                if (_confirmedWal.Value >= awaiter.ExpectedWalEnd)
                 {
                     awaiter.Source.TrySetResult();
                 }
@@ -170,9 +170,11 @@ namespace PgOutput2Json
 
                         var lastWalEnd = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
 
+                        var lastCommitWalEnd = new NpgsqlLogSequenceNumber(0);
+
                         using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                         {
-                            SetCommittedWal(lastWalEnd);
+                            SetConfirmedWal(lastWalEnd);
                         }
 
                         var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
@@ -198,18 +200,18 @@ namespace PgOutput2Json
                                         await messagePublisher.ConfirmAsync(cancellationToken)
                                             .ConfigureAwait(false);
 
-                                        SetCommittedWal(lastWalEnd);
+                                        SetConfirmedWal(lastWalEnd);
                                     }
 
                                     unconfirmedCount = 0;
 
-                                    await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
+                                    await SendStatusUpdateAsync(connection, lastCommitWalEnd, cancellationToken)
                                         .ConfigureAwait(false);
 
                                     _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
                                 }
                             }
-                            catch (OperationCanceledException)
+                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                             {
                                 // stopping - nothing to do
                             }
@@ -251,6 +253,8 @@ namespace PgOutput2Json
                         {
                             using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                             {
+                                //_logger?.LogWarning("{Type} Start: {WalStart} End: {WalEnd}", message.GetType().Name, message.WalStart, message.WalEnd);
+
                                 idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
 
                                 if (message is RelationMessage rel)
@@ -268,6 +272,7 @@ namespace PgOutput2Json
                                 }
                                 else if (message is CommitMessage commitMsg)
                                 {
+                                    lastCommitWalEnd = message.WalEnd;
                                     continue;
                                 }
 
@@ -312,11 +317,11 @@ namespace PgOutput2Json
                                 await messagePublisher.ConfirmAsync(cancellationToken)
                                     .ConfigureAwait(false);
 
-                                SetCommittedWal(lastWalEnd);
+                                SetConfirmedWal(lastWalEnd);
 
                                 unconfirmedCount = 0;
 
-                                await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
+                                await SendStatusUpdateAsync(connection, lastCommitWalEnd, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 _logger.SafeLogDebug("Confirmed PostgreSQL");
@@ -324,13 +329,14 @@ namespace PgOutput2Json
                         }
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        _logger.SafeLogWarn("Stopping ReplicationListener - cancellation requested");
-                        break;
-                    }
+                    _logger.SafeLogWarn("Stopping ReplicationListener - cancellation requested");
+                    break;
+                }
+                catch (OperationCanceledException) when (linkedCts != null && linkedCts.IsCancellationRequested)
+                {
+                    // cancelled because idle confirm failed, nothing to do - error has been logged already
                 }
                 catch (Exception ex)
                 {
