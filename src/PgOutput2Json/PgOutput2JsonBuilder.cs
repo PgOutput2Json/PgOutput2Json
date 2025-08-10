@@ -123,6 +123,12 @@ namespace PgOutput2Json
             return this;
         }
 
+        public PgOutput2JsonBuilder WithDeduplication(bool useDeduplication)
+        {
+            _listenerOptions.UseDeduplication = useDeduplication;
+            return this;
+        }
+
         public IPgOutput2Json Build()
         {
             if (_listenerOptions.DataSourceBuilder.ConnectionString == string.Empty)

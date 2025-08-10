@@ -276,8 +276,9 @@ namespace PgOutput2Json
                                     continue;
                                 }
 
-                                if (message.WalEnd <= lastWalEnd)
+                                if (message.WalEnd <= lastWalEnd && _options.UseDeduplication)
                                 {
+                                    _logger?.LogWarning("Skipping already published message: {WalEnd}", message.WalEnd);
                                     // already published
                                     continue;
                                 }

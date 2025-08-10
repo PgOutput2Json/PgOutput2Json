@@ -16,6 +16,8 @@ namespace PgOutput2Json
 
         public bool UseTemporarySlot { get; internal set; } = true;
 
+        public bool UseDeduplication { get; set; } = true;
+
         public int BatchSize { get; internal set; } = 100;
 
         /// <summary>
