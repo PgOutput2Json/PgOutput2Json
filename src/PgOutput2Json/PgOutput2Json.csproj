@@ -20,6 +20,7 @@
 
     <PropertyGroup>
         <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
+        <IsTrimmable>true</IsTrimmable>
     </PropertyGroup>
 
     <ItemGroup>

@@ -83,7 +83,7 @@ WHERE table_name = @table_name
                     throw new Exception($"Column names not found for table {tableName} when trying to get data copy status");
                 }
 
-                var cols = JsonSerializer.Deserialize<List<string>>(columNames) ?? throw new Exception("Could not deserialize column names");
+                var cols = JsonSerializer.Deserialize(columNames, JsonContext.Default.ListString) ?? throw new Exception("Could not deserialize column names");
 
                 for (int i = 0; i < orderByKeys.Count; i++)
                 {
@@ -166,7 +166,7 @@ DO UPDATE SET
 
             cmd.Parameters.AddWithValue("is_completed", isCompleted);
             cmd.Parameters.AddWithValue("last_message", string.IsNullOrEmpty(lastMessage) ? DBNull.Value : lastMessage);
-            cmd.Parameters.AddWithValue("column_names", columns != null ? JsonSerializer.Serialize(columns.Select(c => c.ColumnName)) : DBNull.Value);
+            cmd.Parameters.AddWithValue("column_names", columns != null ? JsonSerializer.Serialize(columns.Select(c => c.ColumnName).ToList(), JsonContext.Default.ListString) : DBNull.Value);
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
