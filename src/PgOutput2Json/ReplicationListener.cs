@@ -112,6 +112,20 @@ namespace PgOutput2Json
             }
         }
 
+        /// <summary>
+        /// This must be called from inside async lock
+        /// </summary>
+        /// <param name="walEnd"></param>
+        /// <param name="token"></param>
+        /// <returns></returns>
+        private static async Task SendStatusUpdateAsync(LogicalReplicationConnection connection, NpgsqlLogSequenceNumber walEnd, CancellationToken token)
+        {
+            connection.SetReplicationStatus(walEnd);
+
+            await connection.SendStatusUpdate(token)
+                .ConfigureAwait(false);
+        }
+
         public async Task ListenForChangesAsync(CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -189,7 +203,7 @@ namespace PgOutput2Json
 
                                     unconfirmedCount = 0;
 
-                                    await connection.SendStatusUpdate(cancellationToken)
+                                    await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
                                         .ConfigureAwait(false);
 
                                     _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
@@ -254,8 +268,6 @@ namespace PgOutput2Json
                                 }
                                 else if (message is CommitMessage commitMsg)
                                 {
-                                    // replication status only make sense on commit (it seems)
-                                    connection.SetReplicationStatus(message.WalEnd);
                                     continue;
                                 }
 
@@ -304,7 +316,7 @@ namespace PgOutput2Json
 
                                 unconfirmedCount = 0;
 
-                                await connection.SendStatusUpdate(cancellationToken)
+                                await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 _logger.SafeLogDebug("Confirmed PostgreSQL");
