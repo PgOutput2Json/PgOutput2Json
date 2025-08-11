@@ -156,6 +156,8 @@ namespace PgOutput2Json
                         var lastVirtualLsn = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
 
                         var lastWalStart = new NpgsqlLogSequenceNumber(0);
+                        
+                        var lastWalEnd = new NpgsqlLogSequenceNumber(0);
 
                         // this counts messages with the same WalStart
                         var messageNo = 0UL;
@@ -186,7 +188,7 @@ namespace PgOutput2Json
 
                                     unconfirmedCount = 0;
 
-                                    await connection.SendStatusUpdate(cancellationToken)
+                                    await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
                                         .ConfigureAwait(false);
 
                                     _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
@@ -236,8 +238,6 @@ namespace PgOutput2Json
                             {
                                  //_logger?.LogWarning("{Type} {WalStart}/{MesssageNo}", message.GetType().Name, message.WalStart, messageNo);
 
-                                connection.SetReplicationStatus(message.WalEnd);
-
                                 idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
 
                                 if (message is RelationMessage rel)
@@ -247,7 +247,7 @@ namespace PgOutput2Json
                                     // Relation Message has WalEnd=0/0
                                     continue;
                                 }
-                                
+                               
                                 if (message is BeginMessage beginMsg)
                                 {
                                     replicationMessage.CommitTimeStamp = beginMsg.TransactionCommitTimestamp;
@@ -293,17 +293,22 @@ namespace PgOutput2Json
 
                                 if (jsonMessage.Partition < 0)
                                 {
+                                    lastWalEnd = message.WalEnd; // skipped message, treat as published
                                     continue;
                                 }
 
                                 if (_options.PartitionFilter != null
                                     && (jsonMessage.Partition < _options.PartitionFilter.FromInclusive || jsonMessage.Partition >= _options.PartitionFilter.ToExclusive))
                                 {
+                                    lastWalEnd = message.WalEnd; // skipped message, treat as published
                                     continue;
                                 }
 
                                 await messagePublisher.PublishAsync(jsonMessage, cancellationToken)
                                     .ConfigureAwait(false);
+
+                                // set the lastWalEnd to be sent in status update only after the message was published
+                                lastWalEnd = message.WalEnd;
 
                                 MetricsHelper.IncrementPublishCounter();
 
@@ -319,7 +324,7 @@ namespace PgOutput2Json
 
                                 unconfirmedCount = 0;
 
-                                await connection.SendStatusUpdate(cancellationToken)
+                                await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
                                         .ConfigureAwait(false);
 
                                 _logger.SafeLogDebug("Confirmed PostgreSQL");
@@ -369,6 +374,17 @@ namespace PgOutput2Json
             }
 
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
+        }
+
+        private static async Task SendStatusUpdateAsync(LogicalReplicationConnection connection, NpgsqlLogSequenceNumber lastWalEnd, CancellationToken cancellationToken)
+        {
+            if ((ulong)lastWalEnd > 0)
+            {
+                connection.SetReplicationStatus(lastWalEnd);
+
+                await connection.SendStatusUpdate(cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         private async Task DelayAsync(int time, CancellationToken cancellationToken)
