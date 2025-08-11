@@ -256,6 +256,10 @@ namespace PgOutput2Json
 
                                 if (message is CommitMessage commitMsg)
                                 {
+                                    // DO NOT REMOVE THIS
+                                    // This is checked multiple times, we must confirm this WalEnd too,
+                                    // since the whole transaction will repeat otherwise.
+                                    lastWalEnd = message.WalEnd;
                                     continue;
                                 }
 
