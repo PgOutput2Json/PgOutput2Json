@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
+using NpgsqlTypes;
 
 namespace PgOutput2Json
 {
@@ -35,7 +36,7 @@ namespace PgOutput2Json
             _listenerOptions = listenerOptions;
         }
 
-        public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, CancellationToken token)
+        public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, NpgsqlLogSequenceNumber virtualLsn, CancellationToken token)
         {
             var partition = -1;
 
@@ -52,6 +53,7 @@ namespace PgOutput2Json
                                                   "I",
                                                   commitTimeStamp,
                                                   hasRelationChanged,
+                                                  virtualLsn,
                                                   token)
                     .ConfigureAwait(false);
             }
@@ -64,6 +66,7 @@ namespace PgOutput2Json
                                                   "U",
                                                   commitTimeStamp,
                                                   hasRelationChanged,
+                                                  virtualLsn,
                                                   token)
                     .ConfigureAwait(false);
             }
@@ -76,6 +79,7 @@ namespace PgOutput2Json
                                                   "U",
                                                   commitTimeStamp,
                                                   hasRelationChanged,
+                                                  virtualLsn,
                                                   token)
                     .ConfigureAwait(false);
             }
@@ -88,6 +92,7 @@ namespace PgOutput2Json
                                                   "U",
                                                   commitTimeStamp,
                                                   hasRelationChanged,
+                                                  virtualLsn,
                                                   token)
                     .ConfigureAwait(false);
             }
@@ -100,6 +105,7 @@ namespace PgOutput2Json
                                                   "D",
                                                   commitTimeStamp,
                                                   hasRelationChanged,
+                                                  virtualLsn,
                                                   token)
                     .ConfigureAwait(false);
             }
@@ -112,6 +118,7 @@ namespace PgOutput2Json
                                                   "D",
                                                   commitTimeStamp,
                                                   hasRelationChanged,
+                                                  virtualLsn,
                                                   token)
                     .ConfigureAwait(false);
             }
@@ -129,6 +136,7 @@ namespace PgOutput2Json
                                                 string changeType,
                                                 DateTime commitTimeStamp,
                                                 bool hasRelationChanged,
+                                                NpgsqlLogSequenceNumber virtualLsn,
                                                 CancellationToken cancellationToken)
         {
             TableNameBuilder.Clear();
@@ -143,14 +151,8 @@ namespace PgOutput2Json
             JsonBuilder.Append(changeType);
             JsonBuilder.Append('"');
 
-            if (_jsonOptions.WriteWalStart)
-            {
-                JsonBuilder.Append(",\"ws\":");
-                JsonBuilder.Append((ulong)msg.WalStart);
-            }
-
             JsonBuilder.Append(",\"w\":");
-            JsonBuilder.Append((ulong)msg.WalEnd);
+            JsonBuilder.Append((ulong)virtualLsn);
 
             if (_jsonOptions.WriteTimestamps)
             {

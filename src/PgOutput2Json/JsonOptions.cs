@@ -28,8 +28,6 @@
         /// </summary>
         public bool WriteTableNames { get; set; }
 
-        public bool WriteWalStart { get; set; }
-
         /// <summary>
         /// If set to Compact, the JSON values will be written as arrays, without column names.
         /// Column names will be sent in a separate "s" (schema) property, when a Relation message is encountered.
