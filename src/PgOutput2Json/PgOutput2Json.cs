@@ -38,6 +38,7 @@ namespace PgOutput2Json
             }
         }
 
+        /*
         public Task<bool> WhenReplicationStartsAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
             return WhenLsnReachesAsync("0/0", timeout, cancellationToken);
@@ -59,6 +60,7 @@ namespace PgOutput2Json
                 throw;
             }
         }
+        */
 
         public void Dispose()
         {
