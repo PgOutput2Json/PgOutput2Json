@@ -47,6 +47,7 @@ namespace PgOutput2Json.TestWorker
                 {
                     //options.WriteNulls = true;
                     //options.WriteTimestamps = true;
+                    //options.TimestampFormat = TimestampFormat.UnixTimeMilliseconds;
                     //options.WriteTableNames = true;
                     //options.WriteMode = JsonWriteMode.Compact;
                 })

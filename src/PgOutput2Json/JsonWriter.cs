@@ -156,10 +156,20 @@ namespace PgOutput2Json
 
             if (_jsonOptions.WriteTimestamps)
             {
-                JsonBuilder.Append(",\"cts\":");
-                JsonBuilder.Append(commitTimeStamp.Ticks);
-                JsonBuilder.Append(",\"mts\":");
-                JsonBuilder.Append(msg.ServerClock.Ticks);
+                if (_jsonOptions.TimestampFormat == TimestampFormat.UnixTimeMilliseconds)
+                {
+                    JsonBuilder.Append(",\"cts\":");
+                    JsonBuilder.Append(new DateTimeOffset(commitTimeStamp).ToUnixTimeMilliseconds());
+                    JsonBuilder.Append(",\"mts\":");
+                    JsonBuilder.Append(new DateTimeOffset(msg.ServerClock).ToUnixTimeMilliseconds());
+                }
+                else
+                {
+                    JsonBuilder.Append(",\"cts\":");
+                    JsonBuilder.Append(commitTimeStamp.Ticks);
+                    JsonBuilder.Append(",\"mts\":");
+                    JsonBuilder.Append(msg.ServerClock.Ticks);
+                }
             }
 
             if (_jsonOptions.WriteTableNames)

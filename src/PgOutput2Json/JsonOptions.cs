@@ -6,6 +6,12 @@
         Compact = 1,
     }
 
+    public enum TimestampFormat
+    {
+        DateTimeTicks = 0,
+        UnixTimeMilliseconds = 1,
+    }
+
     public class JsonOptions
     {
         /// <summary>
@@ -20,6 +26,11 @@
         /// Default is false.
         /// </summary>
         public bool WriteTimestamps { get; set; }
+
+        /// <summary>
+        /// Which format to write the timestamps in (default is DateTimeTicks)
+        /// </summary>
+        public TimestampFormat TimestampFormat { get; set; } = TimestampFormat.DateTimeTicks;
 
         /// <summary>
         /// If true, table name will be written in an additional attribute:
