@@ -23,7 +23,8 @@ PgOutput2Json.MongoDb ^
 PgOutput2Json.RabbitMq ^
 PgOutput2Json.RabbitMqStreams ^
 PgOutput2Json.Redis ^
-PgOutput2Json.Sqlite
+PgOutput2Json.Sqlite ^
+PgOutput2Json.Webhooks
 
 for %%P in (%PACKAGES%) do (
     echo Pushing %%P version %VERSION%...

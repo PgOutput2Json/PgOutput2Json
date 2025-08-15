@@ -133,6 +133,13 @@ namespace PgOutput2Json.TestWorker
                 //    //     }
                 //    // };
                 //})
+                //.UseWebhook("http://localhost:5000/webhooks", options =>
+                //{
+                //    // Optional: Configure Webhook options
+                //    // options.WebhookSecret = "test";
+                //    // options.ConnectTimeout = TimeSpan.FromSeconds(10);
+                //    // options.RequestTimeout = TimeSpan.FromSeconds(30);
+                //})
                 .Build();
 
             await pgOutput2Json.StartAsync(stoppingToken);
