@@ -25,6 +25,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Amazon Kinesis**
 - ✅ **Amazon DynamoDB**
 - ✅ **Azure Event Hubs**
+- ✅ **Webhooks** (used by [PgHook](https://github.com/PgHookCom/PgHook))
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -64,6 +65,11 @@ To enable logical replication, add the following setting in your `postgresql.con
 
 ```
 wal_level = logical
+
+# If needed increase the number of WAL senders, replication slots.
+# The default is 10 for both.
+max_wal_senders = 10
+max_replication_slots = 10
 ```
 
 Other necessary settings usually have appropriate default values for a basic setup.
@@ -427,7 +433,7 @@ JSON messages will be published to the specified Redis stream. If a stream name 
 
 ## 7. Using SQLite
 
-PgOutput2Json supports copying modified PostgreSQL rows to SQLite. My default, rows are copied only when they change, using logical replication and compact JSON messages. 
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication and compact JSON messages. 
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.
@@ -726,3 +732,70 @@ public class Worker : BackgroundService
 ```
 
 > **Note:** This example uses a **temporary replication slot**, meaning it won't capture changes made while the worker was stopped.
+
+## 12. Using Webhooks
+
+### Create a .NET Worker Service
+
+Set up a new **.NET Worker Service** and add the following package reference:
+
+```
+dotnet add package PgOutput2Json.Webhooks
+```
+
+In your `Worker.cs`, use the following code to configure change propagation to a webhook:
+
+```csharp
+using PgOutput2Json;
+
+public class Worker : BackgroundService  
+{  
+    private readonly ILoggerFactory _loggerFactory;  
+
+    public Worker(ILoggerFactory loggerFactory)  
+    {  
+        _loggerFactory = loggerFactory;  
+    }  
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
+    {  
+        // This code assumes PostgreSQL is running on localhost  
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
+            .WithLoggerFactory(_loggerFactory)  
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
+            .WithPgPublications("my_publication")
+            .UseWebhook("https://example.com/webhooks/pghook", options =>
+            {
+                // Optional: Configure Webhook options
+                // options.WebhookSecret = "test";
+                // options.ConnectTimeout = TimeSpan.FromSeconds(10);
+                // options.RequestTimeout = TimeSpan.FromSeconds(30);
+            })
+            .Build();  
+
+        await pgOutput2Json.StartAsync(stoppingToken);  
+    }  
+}
+```
+
+### Webhook payload
+
+Changes are delivered in batches to your webhook. The POST request body is an array of these elements:
+
+```jsonc
+{
+  "c": "U",             // Change type: I (insert), U (update), D (delete)
+  "w": 2485645760,      // Deduplication key (based on XLogData WAL Start)
+  "t": "schema.table",  // Table name (if enabled in JSON options)
+  "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
+                        // or old row values, if the table uses REPLICA IDENTITY FULL
+  "r": { ... }          // New row values (not present for deletes)
+}
+```
+
+### Signatures (optional)
+If you set `options.WebhookSecret`, each request includes:
+- `X-Hub-Signature-256`: HMAC-SHA256 of the request body using your secret
+- `X-Timestamp`: Unix timestamp of when the payload was signed
+
+Use these to verify authenticity and freshness on the receiver.

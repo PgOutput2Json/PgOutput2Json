@@ -25,6 +25,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Amazon Kinesis**
 - ✅ **Amazon DynamoDB**
 - ✅ **Azure Event Hubs**
+- ✅ **Webhooks** (used by [PgHook](https://github.com/PgHookCom/PgHook))
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -44,7 +45,7 @@ The change events JSON format:
 ```
 {
   "c": "U",             // Change type: I (insert), U (update), D (delete)
-  "w": 2485645760,      // WAL end offset
+  "w": 2485645760,      // Deduplication key (based on XLogData WAL Start)
   "t": "schema.table",  // Table name (if enabled in JSON options)
   "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
                         // or old row values, if the table uses REPLICA IDENTITY FULL
@@ -64,6 +65,11 @@ To enable logical replication, add the following setting in your `postgresql.con
 
 ```
 wal_level = logical
+
+# If needed increase the number of WAL senders, replication slots.
+# The default is 10 for both.
+max_wal_senders = 10
+max_replication_slots = 10
 ```
 
 Other necessary settings usually have appropriate default values for a basic setup.
