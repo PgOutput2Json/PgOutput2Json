@@ -16,6 +16,11 @@ namespace PgOutput2Json.Webhooks
         public TimeSpan PooledConnectionLifetime { get; set; } = TimeSpan.FromMinutes(10);
         public TimeSpan PooledConnectionIdleTimeout { get; set; } = TimeSpan.FromMinutes(2);
 
+        /// <summary>
+        /// Only send key values
+        /// </summary>
+        public bool UseThinPayload { get; set; }
+
         public TimeSpan[] RetryDelays { get; set; } =
         [ 
             TimeSpan.FromSeconds(2),
