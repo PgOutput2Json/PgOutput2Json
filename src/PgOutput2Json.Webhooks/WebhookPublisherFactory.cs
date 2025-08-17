@@ -15,7 +15,7 @@ namespace PgOutput2Json.Webhooks
         {
             var logger = loggerFactory?.CreateLogger<WebhookPublisher>();
 
-            return new WebhookPublisher(_options, listenerOptions.BatchSize, logger);
+            return new WebhookPublisher(_options, slotName, listenerOptions.BatchSize, logger);
         }
     }
 }
