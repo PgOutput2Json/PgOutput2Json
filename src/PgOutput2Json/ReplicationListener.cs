@@ -131,6 +131,10 @@ namespace PgOutput2Json
 
                         _logger.SafeLogInfo("Connected to PostgreSQL");
 
+                        var slotName = string.IsNullOrWhiteSpace(_options.ReplicationSlotName)
+                                ? $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}"
+                                : _options.ReplicationSlotName;
+
                         PgOutputReplicationSlot slot;
 
                         if (!_options.UseTemporarySlot)
@@ -139,18 +143,14 @@ namespace PgOutput2Json
                         }
                         else
                         {
-                            var slotName = string.IsNullOrWhiteSpace(_options.ReplicationSlotName)
-                                ? $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}"
-                                : _options.ReplicationSlotName;
-
                             slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
                                 .ConfigureAwait(false);
                         }
 
                         // start data export after creating the temporary replication slot
-                        await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, _loggerFactory, cancellationToken).ConfigureAwait(false);
+                        await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
-                        messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, _loggerFactory);
+                        messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
                         // virtual lsn is start lsn + msg number
                         var lastVirtualLsn = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));

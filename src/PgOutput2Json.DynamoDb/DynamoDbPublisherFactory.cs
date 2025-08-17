@@ -11,7 +11,7 @@ namespace PgOutput2Json.DynamoDb
             _options = options;
         }
 
-        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
             return new DynamoDbPublisher(_options, loggerFactory?.CreateLogger<DynamoDbPublisher>());
         }
