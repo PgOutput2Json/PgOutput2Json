@@ -802,11 +802,10 @@ If `options.UseStandardWebhooks` is `false`, which is the default, each request 
 
 If `options.UseStandardWebhooks` is `true` then each request includes standard headers:
 - `webhook-id`: Id of the message in format FirstDedupKey_LastDedupKey, (eg. `2485645760_2485645760`). 
-  Note that this not fully standard compliant. It can only be used for idempotency check if the `BatchSize` is 1.
+  Note that this is not fully standard compliant. It can only be used for idempotency check if the `BatchSize` is 1.
   Otherwise, deduplication keys from the individual messages should be used.
 - `webhook-timestamp`: Integer unix timestamp (seconds since epoch).
 - `webhook-signature`: The signature of the webhook. See: [Standard Webhooks](https://www.standardwebhooks.com/).
 
 In both cases, the request includes:
 - `User-Agent`: string in this format: `PgHook/ReplicationSlotName`;
-
