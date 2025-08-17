@@ -21,11 +21,17 @@ namespace PgOutput2Json.Webhooks
 
         private static readonly UTF8Encoding _safeUTF8Encoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-        private const string _standardKeyPrefix = "whsec_";
+        private const string _stdKeyPrefix = "whsec_";
 
-        private const string _headerKeyId = "webhook-id";
-        private const string _headerKeySignature = "webhook-signature";
-        private const string _headerKeyTimestamp = "webhook-timestamp";
+        private const string _stdHeaderKeyId = "webhook-id";
+        private const string _stdHeaderKeySignature = "webhook-signature";
+        private const string _stdHeaderKeyTimestamp = "webhook-timestamp";
+
+        private const string _headerKeyUserAgent = "User-Agent";
+        private const string _headerKeySignature = "X-Hub-Signature-256";
+        private const string _headerKeyTimestamp = "X-Timestamp";
+
+        private readonly string _userAgent;
 
         private readonly WebhookPublisherOptions _options;
         private readonly ILogger<WebhookPublisher>? _logger;
@@ -37,16 +43,27 @@ namespace PgOutput2Json.Webhooks
 
         private HttpClient HttpClient => EnsureHttpClient();
 
-        private readonly List<byte[]> _keys = [];
+        private readonly byte[] _key = [];
+        private readonly List<byte[]> _stdKeys = [];
 
-        public WebhookPublisher(WebhookPublisherOptions options, int batchSize, ILogger<WebhookPublisher>? logger)
+        public WebhookPublisher(WebhookPublisherOptions options, string slotName, int batchSize, ILogger<WebhookPublisher>? logger)
         {
+            _userAgent = $"PgHook/{slotName}";
             _options = options;
             _logger = logger;
 
-            foreach (var secret in options.WebhookSecret.Split(" ", StringSplitOptions.RemoveEmptyEntries))
+            if (_options.UseStandardWebhooks)
             {
-                _keys.Add(GetKeyFromSecret(secret));
+                _stdKeys.Add(GetKeyFromSecret(_options.WebhookSecret));
+
+                foreach (var secret in options.OldWebhookSecrets)
+                {
+                    _stdKeys.Add(GetKeyFromSecret(secret));
+                }
+            }
+            else
+            {
+                _key = _safeUTF8Encoding.GetBytes(_options.WebhookSecret);
             }
         }
 
@@ -76,7 +93,9 @@ namespace PgOutput2Json.Webhooks
             string? signature = null;
             if (!string.IsNullOrWhiteSpace(_options.WebhookSecret))
             {
-                signature = Sign(msgId, timestamp, body);
+                signature = _options.UseStandardWebhooks
+                    ? SignStandard(msgId, timestamp, body)
+                    : Sign(body);
             }
 
             var attempt = 0;
@@ -85,17 +104,34 @@ namespace PgOutput2Json.Webhooks
             {
                 try
                 {
-                    using var content = new StringContent(body, Encoding.UTF8, "application/json");
-
-                    content.Headers.Add(_headerKeyId, msgId);
-                    content.Headers.Add(_headerKeyTimestamp, timestamp);
-
-                    if (signature != null)
+                    using var request = new HttpRequestMessage(HttpMethod.Post, _options.WebhookUrl)
                     {
-                        content.Headers.Add(_headerKeySignature, signature);
+                        Content = new StringContent(body, Encoding.UTF8, "application/json")
+                    };
+
+                    request.Headers.Add(_headerKeyUserAgent, _userAgent);
+
+                    if (_options.UseStandardWebhooks)
+                    {
+                        request.Headers.Add(_stdHeaderKeyId, msgId);
+                        request.Headers.Add(_stdHeaderKeyTimestamp, timestamp);
+
+                        if (signature != null)
+                        {
+                            request.Headers.Add(_stdHeaderKeySignature, signature);
+                        }
+                    }
+                    else
+                    {
+                        request.Headers.Add(_headerKeyTimestamp, timestamp);
+
+                        if (signature != null)
+                        {
+                            request.Headers.Add(_headerKeySignature, signature);
+                        }
                     }
 
-                    var response = await HttpClient.PostAsync(_options.WebhookUrl, content, token)
+                    var response = await HttpClient.SendAsync(request, token)
                         .ConfigureAwait(false);
 
                     if (!response.IsSuccessStatusCode)
@@ -178,14 +214,24 @@ namespace PgOutput2Json.Webhooks
             return ValueTask.CompletedTask;
         }
 
-        public string Sign(string msgId, string timestamp, string payload)
+        public string Sign(string body)
+        {
+            using var hmac = new HMACSHA256(_key);
+
+            var hash = hmac.ComputeHash(_safeUTF8Encoding.GetBytes(body));
+            var signature = "sha256=" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+
+            return signature;
+        }
+
+        public string SignStandard(string msgId, string timestamp, string payload)
         {
             var toSign = $"{msgId}.{timestamp}.{payload}";
             var toSignBytes = _safeUTF8Encoding.GetBytes(toSign);
 
             var result = "";
 
-            foreach (var key in _keys)
+            foreach (var key in _stdKeys)
             {
                 using var hmac = new HMACSHA256(key);
 
@@ -207,9 +253,9 @@ namespace PgOutput2Json.Webhooks
 
         private static byte[] GetKeyFromSecret(string secret)
         {
-            if (secret.StartsWith(_standardKeyPrefix))
+            if (secret.StartsWith(_stdKeyPrefix))
             {
-                return Convert.FromBase64String(secret[_standardKeyPrefix.Length..]);
+                return Convert.FromBase64String(secret[_stdKeyPrefix.Length..]);
             }
             
             return _safeUTF8Encoding.GetBytes(secret);

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 
 namespace PgOutput2Json.Webhooks
 {
@@ -6,6 +7,18 @@ namespace PgOutput2Json.Webhooks
     {
         public string WebhookUrl { get; set; } = string.Empty;
         public string WebhookSecret { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Use standard webhooks. 
+        /// See: https://www.standardwebhooks.com/
+        /// </summary>
+        public bool UseStandardWebhooks { get; set; } = false;
+
+        /// <summary>
+        /// This is used only if <see cref="UseStandardWebhooks"/> is true, to support zero downtime secret rotation.
+        /// See: https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md#webhook-headers-sending-metadata-to-consumers
+        /// </summary>
+        public List<string> OldWebhookSecrets { get; set; } = [];
 
         public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(30);
         public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
