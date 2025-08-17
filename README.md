@@ -793,9 +793,20 @@ Changes are delivered in batches to your webhook. The POST request body is an ar
 }
 ```
 
-### Signatures (optional)
-If you set `options.WebhookSecret`, each request includes:
-- `X-Hub-Signature-256`: HMAC-SHA256 of the request body using your secret
-- `X-Timestamp`: Unix timestamp of when the payload was signed
+### Webhook metadata
 
-Use these to verify authenticity and freshness on the receiver.
+If `options.UseStandardWebhooks` is `false`, which is the default, each request includes:
+- `X-Timestamp`: Unix timestamp of when the payload was signed
+- `X-Hub-Signature-256`: HMAC-SHA256 of the request body using your secret (GitHub style, optional, only sent if `options.WebhookSecret` is set)
+  See: [Validating Webhook Deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)
+
+If `options.UseStandardWebhooks` is `true` then each request includes standard headers:
+- `webhook-id`: Id of the message in format FirstDedupKey_LastDedupKey, (eg. `2485645760_2485645760`). 
+  Note that this not fully standard compliant. It can only be used for idempotency check if the `BatchSize` is 1.
+  Otherwise, deduplication keys from the individual messages should be used.
+- `webhook-timestamp`: Integer unix timestamp (seconds since epoch).
+- `webhook-signature`: The signature of the webhook. See: [Standard Webhooks](https://www.standardwebhooks.com/).
+
+In both cases, the request includes:
+- `User-Agent`: string in this format: `PgHook/ReplicationSlotName`;
+
