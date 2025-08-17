@@ -11,7 +11,7 @@ namespace PgOutput2Json.Webhooks
             _options = options;
         }
 
-        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
             var logger = loggerFactory?.CreateLogger<WebhookPublisher>();
 

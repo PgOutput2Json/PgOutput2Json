@@ -16,6 +16,7 @@ namespace PgOutput2Json
         public static async Task MaybeExportDataAsync(IMessagePublisherFactory publisherFactory,
                                                       ReplicationListenerOptions listenerOptions,
                                                       JsonOptions jsonOptions,
+                                                      string slotName,
                                                       ILoggerFactory? loggerFactory,
                                                       CancellationToken token)
         {
@@ -54,7 +55,7 @@ namespace PgOutput2Json
 
                 try
                 {
-                    await using var publisher = publisherFactory.CreateMessagePublisher(listenerOptions, loggerFactory);
+                    await using var publisher = publisherFactory.CreateMessagePublisher(listenerOptions, slotName, loggerFactory);
 
                     using var connection = new NpgsqlConnection(listenerOptions.ConnectionString);
 

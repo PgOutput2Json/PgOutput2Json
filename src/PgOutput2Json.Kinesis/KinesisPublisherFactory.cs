@@ -11,7 +11,7 @@ namespace PgOutput2Json.Kinesis
             _options = options;
         }
 
-        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, ILoggerFactory? loggerFactory)
+        public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
             if (listenerOptions.BatchSize > 500) throw new System.Exception("BatchSize cannot be larger than 500 for KinesisPublisher");
 
