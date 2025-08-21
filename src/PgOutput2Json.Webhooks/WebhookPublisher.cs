@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -34,6 +35,12 @@ namespace PgOutput2Json.Webhooks
         private readonly string _userAgent;
 
         private readonly WebhookPublisherOptions _options;
+
+        private readonly string? _execFilePath;
+
+        private readonly StringBuilder _execFileStdOut = new();
+        private readonly StringBuilder _execFileStdErr = new();
+
         private readonly ILogger<WebhookPublisher>? _logger;
 
         private readonly StringBuilder _payload = new(1024);
@@ -46,10 +53,11 @@ namespace PgOutput2Json.Webhooks
         private readonly byte[] _key = [];
         private readonly List<byte[]> _stdKeys = [];
 
-        public WebhookPublisher(WebhookPublisherOptions options, string slotName, int batchSize, ILogger<WebhookPublisher>? logger)
+        public WebhookPublisher(WebhookPublisherOptions options, string? execFilePath, string slotName, int batchSize, ILogger<WebhookPublisher>? logger)
         {
             _userAgent = $"PgHook/{slotName}";
             _options = options;
+            _execFilePath = execFilePath;
             _logger = logger;
 
             if (_options.UseStandardWebhooks)
@@ -104,48 +112,16 @@ namespace PgOutput2Json.Webhooks
             {
                 try
                 {
-                    using var request = new HttpRequestMessage(HttpMethod.Post, _options.WebhookUrl)
+                    if (_execFilePath != null)
                     {
-                        Content = new StringContent(body, Encoding.UTF8, "application/json")
-                    };
-
-                    request.Headers.Add(_headerKeyUserAgent, _userAgent);
-
-                    if (_options.UseStandardWebhooks)
-                    {
-                        request.Headers.Add(_stdHeaderKeyId, msgId);
-                        request.Headers.Add(_stdHeaderKeyTimestamp, timestamp);
-
-                        if (signature != null)
-                        {
-                            request.Headers.Add(_stdHeaderKeySignature, signature);
-                        }
+                        await PostToLocalFileAsync(_execFilePath, msgId, timestamp, body, signature, token)
+                            .ConfigureAwait(false);
                     }
                     else
                     {
-                        request.Headers.Add(_headerKeyTimestamp, timestamp);
-
-                        if (signature != null)
-                        {
-                            request.Headers.Add(_headerKeySignature, signature);
-                        }
-                    }
-
-                    var response = await HttpClient.SendAsync(request, token)
-                        .ConfigureAwait(false);
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        var responseBody = await response.Content.ReadAsStringAsync(token)
+                        await PostToWebhookAsync(msgId, timestamp, body, signature, token)
                             .ConfigureAwait(false);
-
-                        _logger?.LogWarning("[PgHook] Webhook returned {StatusCode}: {Request} {Response}", 
-                            response.StatusCode, 
-                            body,
-                            responseBody);
                     }
-
-                    response.EnsureSuccessStatusCode();
 
                     // Success — clear and return
                     _payload.Clear();
@@ -166,6 +142,124 @@ namespace PgOutput2Json.Webhooks
                         .ConfigureAwait(false);
                 }
             }
+        }
+
+        private async Task PostToLocalFileAsync(string filePath, string msgId, string timestamp, string body, string? signature, CancellationToken token)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = filePath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                Arguments = _options.ExecFileArgs,
+            };
+
+            using var process = new Process { StartInfo = psi };
+
+            _execFileStdOut.Clear();
+            _execFileStdErr.Clear();
+
+            process.OutputDataReceived += (s, e) => { if (e.Data != null) _execFileStdOut.AppendLine(e.Data); };
+            process.ErrorDataReceived += (s, e) => { if (e.Data != null) _execFileStdErr.AppendLine(e.Data); };
+
+            process.Start();
+
+            // Start async reading
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            using var writer = process.StandardInput;
+
+            await writer.WriteLineAsync($"{_headerKeyUserAgent}: {_userAgent}").ConfigureAwait(false);
+
+            if (_options.UseStandardWebhooks)
+            {
+                await writer.WriteLineAsync($"{_stdHeaderKeyId}: {msgId}").ConfigureAwait(false);
+                await writer.WriteLineAsync($"{_stdHeaderKeyTimestamp}: {timestamp}").ConfigureAwait(false);
+
+                if (signature != null)
+                {
+                    await writer.WriteLineAsync($"{_stdHeaderKeySignature}: {signature}").ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await writer.WriteLineAsync($"{_headerKeyTimestamp}: {timestamp}").ConfigureAwait(false);
+
+                if (signature != null)
+                {
+                    await writer.WriteLineAsync($"{_headerKeySignature}: {signature}").ConfigureAwait(false);
+                }
+            }
+
+            await writer.WriteLineAsync(body).ConfigureAwait(false);
+
+            writer.Close();  // EOF for child
+
+            await process.WaitForExitAsync(token).ConfigureAwait(false);
+
+            if (_execFileStdOut.Length > 0)
+            {
+                _logger?.LogInformation(_execFileStdOut.ToString());
+            }
+
+            if (_execFileStdErr.Length > 0)
+            {
+                _logger?.LogError(_execFileStdErr.ToString());
+            }
+
+            if (process.ExitCode != 0)
+            {
+                throw new Exception($"ExecFile returned exit code {process.ExitCode}");
+            }
+        }
+
+        private async Task PostToWebhookAsync(string msgId, string timestamp, string body, string? signature, CancellationToken token)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, _options.WebhookUrl)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+
+            request.Headers.Add(_headerKeyUserAgent, _userAgent);
+
+            if (_options.UseStandardWebhooks)
+            {
+                request.Headers.Add(_stdHeaderKeyId, msgId);
+                request.Headers.Add(_stdHeaderKeyTimestamp, timestamp);
+
+                if (signature != null)
+                {
+                    request.Headers.Add(_stdHeaderKeySignature, signature);
+                }
+            }
+            else
+            {
+                request.Headers.Add(_headerKeyTimestamp, timestamp);
+
+                if (signature != null)
+                {
+                    request.Headers.Add(_headerKeySignature, signature);
+                }
+            }
+
+            var response = await HttpClient.SendAsync(request, token)
+                .ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync(token)
+                    .ConfigureAwait(false);
+
+                _logger?.LogWarning("[PgHook] Webhook returned {StatusCode}: {Request} {Response}",
+                    response.StatusCode,
+                    body,
+                    responseBody);
+            }
+
+            response.EnsureSuccessStatusCode();
         }
 
         public Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)

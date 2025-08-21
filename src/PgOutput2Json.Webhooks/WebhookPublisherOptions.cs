@@ -8,6 +8,8 @@ namespace PgOutput2Json.Webhooks
         public string WebhookUrl { get; set; } = string.Empty;
         public string WebhookSecret { get; set; } = string.Empty;
 
+        public string ExecFileArgs { get; set; } = string.Empty;
+
         /// <summary>
         /// Use standard webhooks. 
         /// See: https://www.standardwebhooks.com/

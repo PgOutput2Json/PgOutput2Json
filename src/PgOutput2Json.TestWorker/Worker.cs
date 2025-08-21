@@ -141,6 +141,10 @@ namespace PgOutput2Json.TestWorker
                 //    // options.UseThinPayload = false;
                 //    // options.ConnectTimeout = TimeSpan.FromSeconds(10);
                 //    // options.RequestTimeout = TimeSpan.FromSeconds(30);
+
+                //    // To test with local exec file
+                //    // options.WebhookUrl = @"file://C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe";
+                //    // options.ExecFileArgs = "-Command \"[Console]::In.ReadToEnd()\"";
                 //})
                 .Build();
 
