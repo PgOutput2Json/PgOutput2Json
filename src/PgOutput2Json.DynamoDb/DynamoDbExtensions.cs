@@ -26,7 +26,7 @@ namespace PgOutput2Json.DynamoDb
 
         public static async Task SetSchemaAsync(this AmazonDynamoDBClient client, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            var json = JsonSerializer.Serialize(cols);
+            var json = JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo);
             await client.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", json, token).ConfigureAwait(false);
         }
 
@@ -35,7 +35,7 @@ namespace PgOutput2Json.DynamoDb
             var val = await client.GetConfigAsync($"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
             if (val == null) return null;
 
-            return JsonSerializer.Deserialize<List<ColumnInfo>>(val);
+            return JsonSerializer.Deserialize(val, JsonContext.Default.ListColumnInfo);
         }
 
         public static async Task SaveConfigAsync(this AmazonDynamoDBClient client, string key, string value, CancellationToken token)
