@@ -29,7 +29,7 @@ namespace PgOutput2Json.Sqlite
 
         public static async Task SetSchemaAsync(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            await SaveConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
+            await SaveConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo), token).ConfigureAwait(false);
         }
 
         public static async Task<List<ColumnInfo>?> GetSchemaAsync(this SqliteConnection cn, string tableName, CancellationToken token)
@@ -38,7 +38,7 @@ namespace PgOutput2Json.Sqlite
 
             if (cfgValue == null) return null;
 
-            return JsonSerializer.Deserialize<List<ColumnInfo>>(cfgValue);
+            return JsonSerializer.Deserialize(cfgValue, JsonContext.Default.ListColumnInfo);
         }
 
         public static async Task SaveConfigAsync(this SqliteConnection cn, string key, string value, CancellationToken token)

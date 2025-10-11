@@ -21,7 +21,7 @@ namespace PgOutput2Json.MongoDb
 
         public static async Task SetSchemaAsync(this IMongoDatabase db, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            await db.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols), token).ConfigureAwait(false);
+            await db.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo), token).ConfigureAwait(false);
         }
 
         public static async Task<List<ColumnInfo>?> GetSchemaAsync(this IMongoDatabase db, string tableName, CancellationToken token)
@@ -30,7 +30,7 @@ namespace PgOutput2Json.MongoDb
 
             if (cfgValue == null) return null;
 
-            return JsonSerializer.Deserialize<List<ColumnInfo>>(cfgValue);
+            return JsonSerializer.Deserialize(cfgValue, JsonContext.Default.ListColumnInfo);
         }
 
         public static async Task SaveConfigAsync(this IMongoDatabase db, string key, string value, CancellationToken token)
