@@ -1,4 +1,5 @@
 ﻿using Confluent.Kafka;
+using System.Collections.Generic;
 
 namespace PgOutput2Json.Kafka
 {
@@ -33,5 +34,9 @@ namespace PgOutput2Json.Kafka
         /// </summary>
         public AdminClientConfig? AdminClientConfig { get; set; }
 
+        /// <summary>
+        /// Override the default partition key fields if needed. The default is the PK fields,
+        /// </summary>
+        public Dictionary<string, List<string>> PartitionKeyFields { get; set; } = [];
     }
 }
