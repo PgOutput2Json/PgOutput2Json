@@ -111,7 +111,7 @@ namespace PgOutput2Json
                                                         CancellationToken cancellationToken)
         {
             listenerOptions.IncludedColumns.TryGetValue(publication.TableName, out var includedColumns);
-            listenerOptions.TablePartitions.TryGetValue(publication.TableName, out var partitionCount);
+            listenerOptions.PartitionKeyColumns.TryGetValue(publication.TableName, out var partitionKeyCols);
 
             // Export two columns to table data
 
@@ -206,6 +206,7 @@ namespace PgOutput2Json
 
                 jsonMessage.Json.Clear();
                 jsonMessage.KeyKolValue.Clear();
+                jsonMessage.PartitionKolValue.Clear();
 
                 GetValues(values, value, line, logger);
 
@@ -245,11 +246,9 @@ namespace PgOutput2Json
                     }
                 }
 
-                var hash = WriteRow(publication.Columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonOptions, includedColumns);
+                var hash = WriteRow(publication.Columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonMessage.PartitionKolValue, jsonOptions, includedColumns, partitionKeyCols);
 
                 jsonMessage.Json.Append('}');
-
-                var partition = partitionCount > 0 ? hash % partitionCount : 0;
 
                 await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
 
@@ -351,8 +350,10 @@ namespace PgOutput2Json
                                     List<string> values,
                                     StringBuilder json,
                                     StringBuilder keyVal,
+                                    StringBuilder partitionKeyVal,
                                     JsonOptions jsonOptions,
-                                    IReadOnlyList<string>? includedCols)
+                                    IReadOnlyList<string>? includedCols,
+                                    IReadOnlyList<string>? partitionKeyCols)
         {
             int finalHash = 0x12345678;
 
@@ -382,14 +383,12 @@ namespace PgOutput2Json
 
                 if (col.IsKey)
                 {
-                    if (keyVal.Length == 0)
-                    {
-                        keyVal.Append('[');
-                    }
-                    else
-                    {
-                        keyVal.Append(',');
-                    }
+                    keyVal.Append(keyVal.Length == 0 ? '[' : ',');
+                }
+
+                if (col.IsPartitionKey)
+                {
+                    partitionKeyVal.Append(partitionKeyVal.Length == 0 ? '[' : ',');
                 }
 
                 if (!firstValue)
@@ -424,41 +423,49 @@ namespace PgOutput2Json
                     {
                         hash = JsonUtils.WriteNumber(json, colValue);
                         if (col.IsKey) JsonUtils.WriteNumber(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteNumber(partitionKeyVal, colValue);
                     }
                     else if (pgOid.IsBoolean())
                     {
                         hash = JsonUtils.WriteBoolean(json, colValue);
                         if (col.IsKey) JsonUtils.WriteBoolean(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteBoolean(partitionKeyVal, colValue);
                     }
                     else if (pgOid.IsByte())
                     {
                         hash = JsonUtils.WriteByte(json, colValue);
                         if (col.IsKey) JsonUtils.WriteByte(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteByte(partitionKeyVal, colValue);
                     }
                     else if (pgOid.IsArrayOfNumber())
                     {
                         hash = JsonUtils.WriteArrayOfNumber(json, colValue);
                         if (col.IsKey) JsonUtils.WriteArrayOfNumber(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteArrayOfNumber(partitionKeyVal, colValue);
                     }
                     else if (pgOid.IsArrayOfByte())
                     {
                         hash = JsonUtils.WriteArrayOfByte(json, colValue);
                         if (col.IsKey) JsonUtils.WriteArrayOfByte(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteArrayOfByte(partitionKeyVal, colValue);
                     }
                     else if (pgOid.IsArrayOfBoolean())
                     {
                         hash = JsonUtils.WriteArrayOfBoolean(json, colValue);
                         if (col.IsKey) JsonUtils.WriteArrayOfBoolean(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteArrayOfBoolean(partitionKeyVal, colValue);
                     }
                     else if (pgOid.IsArrayOfText())
                     {
                         hash = JsonUtils.WriteArrayOfText(json, colValue);
                         if (col.IsKey) JsonUtils.WriteArrayOfText(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteArrayOfText(partitionKeyVal, colValue);
                     }
                     else
                     {
                         hash = JsonUtils.WriteText(json, colValue);
                         if (col.IsKey) JsonUtils.WriteText(keyVal, colValue);
+                        if (col.IsPartitionKey) JsonUtils.WriteText(partitionKeyVal, colValue);
                     }
 
                     if (col.IsKey) finalHash ^= hash;
@@ -470,9 +477,29 @@ namespace PgOutput2Json
                 keyVal.Append(']');
             }
 
+            if (partitionKeyVal.Length > 0)
+            {
+                partitionKeyVal.Append(']');
+            }
+
             json.Append(jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
 
             return finalHash;
+        }
+
+        private static bool IsPartitionKeyCol(IReadOnlyList<string>? partitionKeyFields, string colName)
+        {
+            if (partitionKeyFields == null) return false;
+
+            foreach (var c in partitionKeyFields)
+            {
+                if (c == colName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static async Task<List<PublicationInfo>> GetPublicationInfoAsync(NpgsqlConnection connection, ReplicationListenerOptions listenerOptions, CancellationToken token)
@@ -500,13 +527,18 @@ namespace PgOutput2Json
 
             foreach (var publication in result)
             {
-                await PopulateColumnsAsync(connection, publication, token).ConfigureAwait(false);
+                if (!listenerOptions.PartitionKeyColumns.TryGetValue(publication.TableName, out var partitionKeyCols))
+                {
+                    partitionKeyCols = null;
+                }
+
+                await PopulateColumnsAsync(connection, publication, partitionKeyCols, token).ConfigureAwait(false);
             }
 
             return result;
         }
 
-        private static async Task PopulateColumnsAsync(NpgsqlConnection connection, PublicationInfo publication, CancellationToken token)
+        private static async Task PopulateColumnsAsync(NpgsqlConnection connection, PublicationInfo publication, IReadOnlyList<string>? partitionKeyCols, CancellationToken token)
         {
             using var cmd = connection.CreateCommand();
 
@@ -532,12 +564,15 @@ ORDER BY
 
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
+                var colName = reader.GetString(0);
+
                 publication.Columns.Add(new PgColumnInfo
                 {
-                    ColumnName = reader.GetString(0),
+                    ColumnName = colName,
                     DataTypeId = (uint)reader.GetValue(1),
                     TypeModifier = reader.GetInt32(2),
                     IsKey = reader.GetBoolean(3),
+                    IsPartitionKey = IsPartitionKeyCol(partitionKeyCols, colName)
                 });
             }
         }

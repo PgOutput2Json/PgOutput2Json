@@ -295,19 +295,6 @@ namespace PgOutput2Json
 
                                 replicationMessage.HasRelationChanged = false;
 
-                                if (jsonMessage.Partition < 0)
-                                {
-                                    lastWalEnd = message.WalEnd; // skipped message, treat as published
-                                    continue;
-                                }
-
-                                if (_options.PartitionFilter != null
-                                    && (jsonMessage.Partition < _options.PartitionFilter.FromInclusive || jsonMessage.Partition >= _options.PartitionFilter.ToExclusive))
-                                {
-                                    lastWalEnd = message.WalEnd; // skipped message, treat as published
-                                    continue;
-                                }
-
                                 await messagePublisher.PublishAsync(jsonMessage, cancellationToken)
                                     .ConfigureAwait(false);
 

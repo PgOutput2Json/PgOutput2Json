@@ -44,11 +44,9 @@ namespace PgOutput2Json
 
         /// <param name="columnNames"></param>
         /// <returns></returns>
-        public PgOutput2JsonBuilder WithTablePartitions(string tableName, int partitionsCount)
+        public PgOutput2JsonBuilder WithPartitionKeyFields(string tableName, string field, params string[] additionalFields)
         {
-            if (partitionsCount < 1) throw new ArgumentOutOfRangeException(nameof(partitionsCount));
-
-            _listenerOptions.TablePartitions[tableName] = partitionsCount;
+            _listenerOptions.PartitionKeyColumns[tableName] = [ field, .. additionalFields];
             return this;
         }
 
@@ -75,12 +73,6 @@ namespace PgOutput2Json
         public PgOutput2JsonBuilder WithPgOrderedKeyColumns(string tableName, params string[] orderedKeyColumns)
         {
             _listenerOptions.OrderedKeys[tableName] = orderedKeyColumns;
-            return this;
-        }
-
-        public PgOutput2JsonBuilder WithPartitionFilter(int fromInclusive, int toExclusive)
-        {
-            _listenerOptions.PartitionFilter = new PartitionFilter(fromInclusive, toExclusive);
             return this;
         }
 

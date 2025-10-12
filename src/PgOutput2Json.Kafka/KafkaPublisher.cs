@@ -26,8 +26,7 @@ namespace PgOutput2Json.Kafka
             var msgJson = message.Json.ToString();
             var msgKey = message.KeyKolValue.ToString();
 
-            var partitionKey = GetPartitionKey(msgJson, tableName);
-            var partitionId = GetPartitionId(partitionKey);
+            var partitionId = GetPartitionId(message, out var partitionKey);
 
             if (_options.WriteTableNameToMessageKey) 
             {
@@ -70,11 +69,14 @@ namespace PgOutput2Json.Kafka
             return Task.CompletedTask;
         }
 
-        private int GetPartitionId(string? partitionKey)
+        private int GetPartitionId(JsonMessage message, out string? partitionKey)
         {
-            if (partitionKey == null || _partitionMetadata.Count == 0) return Partition.Any;
+            partitionKey = null;
+            if (_partitionMetadata.Count < 2 || message.PartitionKolValue.Length == 0) return Partition.Any;
 
+            partitionKey = message.PartitionKolValue.ToString();
             var index = Math.Abs(partitionKey.GetHashCode()) % _partitionMetadata.Count;
+
             return _partitionMetadata[index].PartitionId;
         }
 
@@ -198,47 +200,6 @@ namespace PgOutput2Json.Kafka
             _logger?.LogInformation("Created Kafka producer");
 
             return _producer;
-        }
-
-        private string? GetPartitionKey(string msgJson, string tableName)
-        {
-            if (!_options.PartitionKeyFields.TryGetValue(tableName, out var fields))
-            {
-                return null;
-            }
-
-            using var doc = JsonDocument.Parse(msgJson);
-
-            // use the new values if available
-            if (!doc.RootElement.TryGetProperty("r", out var rowElement))
-            {
-                // for deletes use the key values
-                if (!doc.RootElement.TryGetProperty("k", out rowElement))
-                {
-                    // should never happen (we alwayes have either r or k or both)
-                    return null;
-                }
-            }
-
-            _partitionKeyBuilder.Clear();
-            _partitionKeyBuilder.Append('[');
-
-            foreach (var field in fields)
-            {
-                if (rowElement.TryGetProperty(field, out var fieldElement))
-                {
-                    if (_partitionKeyBuilder.Length > 1)
-                    {
-                        _partitionKeyBuilder.Append(',');
-                    }
-
-                    _partitionKeyBuilder.Append(fieldElement.GetRawText());
-                }
-            }
-
-            _partitionKeyBuilder.Append(']');
-
-            return _partitionKeyBuilder.Length > 2 ? _partitionKeyBuilder.ToString() : null;
         }
 
         private IProducer<string, string>? _producer;

@@ -13,10 +13,10 @@ namespace PgOutput2Json
     public class JsonMessage
     {
         public ulong WalSeqNo { get; internal set; }
-        public int Partition { get; internal set; }
         public StringBuilder Json { get; internal set; } = new(256);
         public StringBuilder TableName { get; internal set; } = new(256); 
         public StringBuilder KeyKolValue { get; internal set; } = new(256);
+        public StringBuilder PartitionKolValue { get; internal set; } = new(256);
     }
 
     public class JsonWriter
@@ -24,6 +24,7 @@ namespace PgOutput2Json
         private StringBuilder JsonBuilder => _result.Json;
         private StringBuilder TableNameBuilder => _result.TableName;
         private StringBuilder KeyColValueBuilder => _result.KeyKolValue;
+        private StringBuilder PartitionColValueBuilder => _result.PartitionKolValue;
 
         private readonly JsonOptions _jsonOptions;
         private readonly ReplicationListenerOptions _listenerOptions;
@@ -38,98 +39,95 @@ namespace PgOutput2Json
 
         public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, NpgsqlLogSequenceNumber virtualLsn, CancellationToken token)
         {
-            var partition = -1;
-
             var message = replMessage.Message;
             var commitTimeStamp = replMessage.CommitTimeStamp;
             var hasRelationChanged = replMessage.HasRelationChanged;
 
             if (message is InsertMessage insertMsg)
             {
-                partition = await WriteTupleAsync(insertMsg,
-                                                  insertMsg.Relation,
-                                                  insertMsg.NewRow,
-                                                  null,
-                                                  "I",
-                                                  commitTimeStamp,
-                                                  hasRelationChanged,
-                                                  virtualLsn,
-                                                  token)
+                await WriteTupleAsync(insertMsg,
+                                      insertMsg.Relation,
+                                      insertMsg.NewRow,
+                                      null,
+                                      "I",
+                                      commitTimeStamp,
+                                      hasRelationChanged,
+                                      virtualLsn,
+                                      token)
                     .ConfigureAwait(false);
             }
             else if (message is DefaultUpdateMessage updateMsg)
             {
-                partition = await WriteTupleAsync(updateMsg,
-                                                  updateMsg.Relation,
-                                                  updateMsg.NewRow,
-                                                  null,
-                                                  "U",
-                                                  commitTimeStamp,
-                                                  hasRelationChanged,
-                                                  virtualLsn,
-                                                  token)
+                await WriteTupleAsync(updateMsg,
+                                      updateMsg.Relation,
+                                      updateMsg.NewRow,
+                                      null,
+                                      "U",
+                                      commitTimeStamp,
+                                      hasRelationChanged,
+                                      virtualLsn,
+                                      token)
                     .ConfigureAwait(false);
             }
             else if (message is FullUpdateMessage fullUpdateMsg)
             {
-                partition = await WriteTupleAsync(fullUpdateMsg,
-                                                  fullUpdateMsg.Relation,
-                                                  fullUpdateMsg.NewRow,
-                                                  fullUpdateMsg.OldRow,
-                                                  "U",
-                                                  commitTimeStamp,
-                                                  hasRelationChanged,
-                                                  virtualLsn,
-                                                  token)
+                await WriteTupleAsync(fullUpdateMsg,
+                                      fullUpdateMsg.Relation,
+                                      fullUpdateMsg.NewRow,
+                                      fullUpdateMsg.OldRow,
+                                      "U",
+                                      commitTimeStamp,
+                                      hasRelationChanged,
+                                      virtualLsn,
+                                      token)
                     .ConfigureAwait(false);
             }
             else if (message is IndexUpdateMessage indexUpdateMsg)
             {
-                partition = await WriteTupleAsync(indexUpdateMsg,
-                                                  indexUpdateMsg.Relation,
-                                                  indexUpdateMsg.NewRow,
-                                                  indexUpdateMsg.Key,
-                                                  "U",
-                                                  commitTimeStamp,
-                                                  hasRelationChanged,
-                                                  virtualLsn,
-                                                  token)
+                await WriteTupleAsync(indexUpdateMsg,
+                                      indexUpdateMsg.Relation,
+                                      indexUpdateMsg.NewRow,
+                                      indexUpdateMsg.Key,
+                                      "U",
+                                      commitTimeStamp,
+                                      hasRelationChanged,
+                                      virtualLsn,
+                                      token)
                     .ConfigureAwait(false);
             }
             else if (message is KeyDeleteMessage keyDeleteMsg)
             {
-                partition = await WriteTupleAsync(keyDeleteMsg,
-                                                  keyDeleteMsg.Relation,
-                                                  null,
-                                                  keyDeleteMsg.Key,
-                                                  "D",
-                                                  commitTimeStamp,
-                                                  hasRelationChanged,
-                                                  virtualLsn,
-                                                  token)
+                await WriteTupleAsync(keyDeleteMsg,
+                                      keyDeleteMsg.Relation,
+                                      null,
+                                      keyDeleteMsg.Key,
+                                      "D",
+                                      commitTimeStamp,
+                                      hasRelationChanged,
+                                      virtualLsn,
+                                      token)
                     .ConfigureAwait(false);
             }
             else if (message is FullDeleteMessage fullDeleteMsg)
             {
-                partition = await WriteTupleAsync(fullDeleteMsg,
-                                                  fullDeleteMsg.Relation,
-                                                  null,
-                                                  fullDeleteMsg.OldRow,
-                                                  "D",
-                                                  commitTimeStamp,
-                                                  hasRelationChanged,
-                                                  virtualLsn,
-                                                  token)
+                await WriteTupleAsync(fullDeleteMsg,
+                                      fullDeleteMsg.Relation,
+                                      null,
+                                      fullDeleteMsg.OldRow,
+                                      "D",
+                                      commitTimeStamp,
+                                      hasRelationChanged,
+                                      virtualLsn,
+                                      token)
                     .ConfigureAwait(false);
             }
 
-            _result.Partition = partition;
             _result.WalSeqNo = message != null ? (ulong)message.WalEnd : 0;
 
             return _result;
         }
 
-        private async Task<int> WriteTupleAsync(TransactionalMessage msg,
+        private async Task WriteTupleAsync(TransactionalMessage msg,
                                                 RelationMessage relation,
                                                 ReplicationTuple? newRow,
                                                 ReplicationTuple? keyRow,
@@ -182,17 +180,18 @@ namespace PgOutput2Json
             }
 
             KeyColValueBuilder.Clear();
-
-            if (!_listenerOptions.TablePartitions.TryGetValue(tableName, out var partitionCount))
-            {
-                partitionCount = 1;
-            }
+            PartitionColValueBuilder.Clear();
 
             if (!_listenerOptions.IncludedColumns.TryGetValue(tableName, out var includedCols))
             {
                 includedCols = null;
             }
 
+            if (!_listenerOptions.PartitionKeyColumns.TryGetValue(tableName, out var partitionKeyFields))
+            {
+                partitionKeyFields = null;
+            }
+                
             if (hasRelationChanged)
             {
                 JsonBuilder.Append(',');
@@ -206,8 +205,6 @@ namespace PgOutput2Json
                 }
             }
 
-            int? hash = null;
-
             if (keyRow != null)
             {
                 JsonBuilder.Append(",\"k\":");
@@ -215,8 +212,8 @@ namespace PgOutput2Json
 
                 var writeToKeyBuilder = newRow == null; // only write key values if new row is not present (deletes)
                 
-                hash = await WriteValuesAsync(keyRow, relation, writeToKeyBuilder, includedCols, true, cancellationToken)
-                        .ConfigureAwait(false);
+                await WriteValuesAsync(keyRow, relation, writeToKeyBuilder, includedCols, partitionKeyFields, true, cancellationToken)
+                    .ConfigureAwait(false);
 
                 JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
             }
@@ -226,26 +223,23 @@ namespace PgOutput2Json
                 JsonBuilder.Append(",\"r\":");
                 JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? '[' : '{');
 
-                hash = await WriteValuesAsync(newRow, relation, true, includedCols, false, cancellationToken)
+                await WriteValuesAsync(newRow, relation, true, includedCols, partitionKeyFields, false, cancellationToken)
                     .ConfigureAwait(false);
 
                 JsonBuilder.Append(_jsonOptions.WriteMode == JsonWriteMode.Compact ? ']' : '}');
             }
 
             JsonBuilder.Append('}');
-
-            return hash.HasValue ? hash.Value % partitionCount : 0;
         }
 
-        private async Task<int> WriteValuesAsync(ReplicationTuple tuple,
-                                                 RelationMessage relation,
-                                                 bool writeToKeyValueBuilder,
-                                                 IReadOnlyList<string>? includedCols,
-                                                 bool isKeyRow,
-                                                 CancellationToken cancellationToken)
+        private async Task WriteValuesAsync(ReplicationTuple tuple,
+                                            RelationMessage relation,
+                                            bool writeToKeyValueBuilder,
+                                            IReadOnlyList<string>? includedCols,
+                                            IReadOnlyList<string>? partitionKeyFields,
+                                            bool isKeyRow,
+                                            CancellationToken cancellationToken)
         {
-            int finalHash = 0x12345678;
-
             var i = 0;
             var firstValue = true;
 
@@ -281,15 +275,15 @@ namespace PgOutput2Json
                 if (isKeyColumn && writeToKeyValueBuilder)
                 {
                     keyColBuilder = KeyColValueBuilder;
+                    keyColBuilder.Append(keyColBuilder.Length == 0 ? '[' : ',');
+                }
 
-                    if (keyColBuilder.Length == 0)
-                    {
-                        keyColBuilder.Append('[');
-                    }
-                    else
-                    {
-                        keyColBuilder.Append(',');
-                    }
+                StringBuilder? partitionKeyBuilder = null;
+
+                if (IsPartitionKeyCol(partitionKeyFields, col))
+                {
+                    partitionKeyBuilder = PartitionColValueBuilder;
+                    partitionKeyBuilder.Append(partitionKeyBuilder.Length == 0 ? '[' : ',');
                 }
 
                 if (!firstValue)
@@ -326,50 +320,54 @@ namespace PgOutput2Json
                     var colValue = await value.Get<string>(cancellationToken)
                         .ConfigureAwait(false);
 
-                    int hash;
-
                     if (pgOid.IsNumber())
                     {
-                        hash = JsonUtils.WriteNumber(JsonBuilder, colValue);
+                        JsonUtils.WriteNumber(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteNumber(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteNumber(partitionKeyBuilder, colValue);
                     }
                     else if (pgOid.IsBoolean())
                     {
-                        hash = JsonUtils.WriteBoolean(JsonBuilder, colValue);
+                        JsonUtils.WriteBoolean(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteBoolean(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteBoolean(partitionKeyBuilder, colValue);
                     }
                     else if (pgOid.IsByte())
                     {
-                        hash = JsonUtils.WriteByte(JsonBuilder, colValue);
+                        JsonUtils.WriteByte(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteByte(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteByte(partitionKeyBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfNumber())
                     {
-                        hash = JsonUtils.WriteArrayOfNumber(JsonBuilder, colValue);
+                        JsonUtils.WriteArrayOfNumber(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfNumber(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteArrayOfNumber(partitionKeyBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfByte())
                     {
-                        hash = JsonUtils.WriteArrayOfByte(JsonBuilder, colValue);
+                        JsonUtils.WriteArrayOfByte(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfByte(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteArrayOfByte(partitionKeyBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfBoolean())
                     {
-                        hash = JsonUtils.WriteArrayOfBoolean(JsonBuilder, colValue);
+                        JsonUtils.WriteArrayOfBoolean(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfBoolean(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteArrayOfBoolean(partitionKeyBuilder, colValue);
                     }
                     else if (pgOid.IsArrayOfText())
                     {
-                        hash = JsonUtils.WriteArrayOfText(JsonBuilder, colValue);
+                        JsonUtils.WriteArrayOfText(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteArrayOfText(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteArrayOfText(partitionKeyBuilder, colValue);
                     }
                     else
                     {
-                        hash = JsonUtils.WriteText(JsonBuilder, colValue);
+                        JsonUtils.WriteText(JsonBuilder, colValue);
                         if (keyColBuilder != null) JsonUtils.WriteText(keyColBuilder, colValue);
+                        if (partitionKeyBuilder != null) JsonUtils.WriteText(partitionKeyBuilder, colValue);
                     }
-
-                    if (isKeyColumn) finalHash ^= hash;
                 }
             }
 
@@ -378,7 +376,10 @@ namespace PgOutput2Json
                 KeyColValueBuilder.Append(']');
             }
 
-            return finalHash;
+            if (PartitionColValueBuilder.Length > 0)
+            {
+                PartitionColValueBuilder.Append("]");
+            }
         }
 
         private static bool IsIncluded(IReadOnlyList<string>? includedCols, RelationMessage.Column col)
@@ -386,6 +387,21 @@ namespace PgOutput2Json
             if (includedCols == null) return true; // if not specified, included by default
 
             foreach (var c in includedCols)
+            {
+                if (c == col.ColumnName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsPartitionKeyCol(IReadOnlyList<string>? partitionKeyFields, RelationMessage.Column col)
+        {
+            if (partitionKeyFields == null) return false;
+
+            foreach (var c in partitionKeyFields)
             {
                 if (c == col.ColumnName)
                 {
