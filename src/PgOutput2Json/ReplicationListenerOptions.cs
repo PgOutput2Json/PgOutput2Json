@@ -29,10 +29,14 @@ namespace PgOutput2Json
         /// </summary>
         public TimeSpan BatchWaitTime { get; internal set; } = TimeSpan.FromMilliseconds(100);
 
-        public Dictionary<string, int> TablePartitions { get; internal set; } = [];
+        /// <summary>
+        /// This is used to extract partition key values needed for some publishers (Kafka, RabbitMq).
+        /// It is an optimization feature - to avoid parsing json during publishing.
+        /// </summary>
+        public Dictionary<string, IReadOnlyList<string>> PartitionKeyColumns { get; internal set; } = [];
+
         public Dictionary<string, IReadOnlyList<string>> IncludedColumns { get; internal set; } = [];
         public Dictionary<string, IReadOnlyList<string>> OrderedKeys { get; internal set; } = [];
-        public PartitionFilter? PartitionFilter { get; internal set; }
 
         /// <summary>
         /// Push the existing data to the publisher. Default is false.

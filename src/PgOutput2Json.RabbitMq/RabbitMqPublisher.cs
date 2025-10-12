@@ -25,8 +25,10 @@ namespace PgOutput2Json.RabbitMq
                 .ConfigureAwait(false);
 
             var tableName = msg.TableName.ToString();
-            var routingKey = tableName + "." + msg.Partition;
             var json = msg.Json.ToString();
+            var partition = GetPartitionId(msg, tableName);
+
+            var routingKey = string.Join('.', tableName, partition);
 
             if (_options.PersistencyConfigurationByTable.Count == 0 
                 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
@@ -43,6 +45,22 @@ namespace PgOutput2Json.RabbitMq
             var task = channel.BasicPublishAsync(_options.ExchangeName, routingKey, false, basicProperties, body, token);
 
             _pendingTasks.Add(task);
+        }
+
+        private int GetPartitionId(JsonMessage msg, string tableName)
+        {
+            if (!_options.TablePartitionCounts.TryGetValue(tableName, out var partitionCount) || partitionCount <= 0)
+            {
+                return 0;
+            }
+
+            var partitionKey = msg.PartitionKolValue.ToString();
+            if (partitionKey == string.Empty)
+            {
+                partitionKey = msg.KeyKolValue.ToString();
+            }
+
+            return partitionKey != string.Empty ? Math.Abs(partitionKey.GetHashCode()) % partitionCount : 0;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)

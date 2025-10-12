@@ -33,5 +33,10 @@ namespace PgOutput2Json.RabbitMq
         /// </summary>
         public Dictionary<string, bool> PersistencyConfigurationByTable { get; set; }
             = new Dictionary<string, bool>();
+
+        /// <summary>
+        /// Partitions count per table, optional
+        /// </summary>
+        public Dictionary<string, int> TablePartitionCounts { get; set; } = [];
     }
 }

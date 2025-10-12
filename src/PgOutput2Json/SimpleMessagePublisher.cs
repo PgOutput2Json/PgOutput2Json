@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 
 namespace PgOutput2Json
 {
-    public delegate Task<bool> SimpleMessageHandler(string json, string tableName, string keyColumnValue, int partition);
+    public delegate Task<bool> SimpleMessageHandler(string json, string tableName, string keyColumnValue, string partitionKey);
 
     internal class SimpleMessagePublisherFactory : IMessagePublisherFactory
     {
@@ -39,7 +39,7 @@ namespace PgOutput2Json
                 _logger?.LogDebug("Message for {Table}: {Json}", message.TableName.ToString(), message.Json.ToString());
             }
 
-            return _messageHandler.Invoke(message.Json.ToString(), message.TableName.ToString(), message.KeyKolValue.ToString(), message.Partition);
+            return _messageHandler.Invoke(message.Json.ToString(), message.TableName.ToString(), message.KeyKolValue.ToString(), message.PartitionKolValue.ToString());
         }
 
         public override Task ConfirmAsync(CancellationToken token)

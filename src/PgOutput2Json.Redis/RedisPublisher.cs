@@ -23,7 +23,7 @@ namespace PgOutput2Json.Redis
 
             var json = msg.Json.ToString();
             var tableName = msg.TableName.ToString();
-            var partition = msg.Partition;
+            var partition = GetPartitionId(msg, tableName);
 
             string name;
 
@@ -62,6 +62,22 @@ namespace PgOutput2Json.Redis
                     _logger.LogDebug("Published to Stream={StreamName}, Body={Body}", name, json);
                 }
             }
+        }
+
+        private int GetPartitionId(JsonMessage msg, string tableName)
+        {
+            if (!_options.TablePartitionCounts.TryGetValue(tableName, out var partitionCount) || partitionCount <= 0)
+            {
+                return 0;
+            }
+
+            var partitionKey = msg.PartitionKolValue.ToString();
+            if (partitionKey == string.Empty)
+            {
+                partitionKey = msg.KeyKolValue.ToString();
+            }
+
+            return partitionKey != string.Empty ? Math.Abs(partitionKey.GetHashCode()) % partitionCount : 0;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)

@@ -1,4 +1,5 @@
 ﻿using StackExchange.Redis;
+using System.Collections.Generic;
 
 namespace PgOutput2Json.Redis
 {
@@ -36,5 +37,10 @@ namespace PgOutput2Json.Redis
         public StreamNameSuffix StreamNameSuffix { get; set; } = StreamNameSuffix.None;
 
         public ConfigurationOptions Redis { get; set; } = new ConfigurationOptions();
+
+        /// <summary>
+        /// Partitions count per table, optional
+        /// </summary>
+        public Dictionary<string, int> TablePartitionCounts { get; set; } = [];
     }
 }
