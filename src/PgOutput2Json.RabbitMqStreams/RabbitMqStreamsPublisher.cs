@@ -21,7 +21,7 @@ namespace PgOutput2Json.RabbitMqStreams
             _logger = loggerFactory?.CreateLogger<RabbitMqStreamsPublisher>();
         }
 
-        public async override Task PublishAsync(JsonMessage msg, CancellationToken token)
+        public async override Task PublishAsync(JsonMessage jsonMsg, CancellationToken token)
         {
             var producer = await EnsureProducerAsync().ConfigureAwait(false);
 
@@ -35,14 +35,31 @@ namespace PgOutput2Json.RabbitMqStreams
                 }
             }
 
-            var json = msg.Json.ToString();
+            var json = jsonMsg.Json.ToString();
 
-            await producer.Send(new Message(Encoding.UTF8.GetBytes(json)))
-                .ConfigureAwait(false);
+            var msg = new Message(Encoding.UTF8.GetBytes(json))
+            {
+                Properties = new RabbitMQ.Stream.Client.AMQP.Properties
+                {
+                    MessageId = _options.WriteTableNameToMessageKey
+                        ? string.Join("", jsonMsg.TableName.ToString(), jsonMsg.KeyKolValue.ToString())
+                        : jsonMsg.KeyKolValue.ToString(),
+                },
+            };
+
+            if (jsonMsg.PartitionKolValue.Length > 0)
+            {
+                msg.ApplicationProperties = new RabbitMQ.Stream.Client.AMQP.ApplicationProperties
+                {
+                    { ApplicationProperties.PartitionKey, jsonMsg.PartitionKolValue.ToString() }
+                };
+            }
+
+            await producer.Send(msg).ConfigureAwait(false);
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug("Published to Stream={0}, Body={1}", _options.StreamName, json);
+                _logger.LogDebug("Published to {StreamName}: {Body}", _options.StreamName, json);
             }
         }
 
@@ -119,6 +136,7 @@ namespace PgOutput2Json.RabbitMqStreams
             _producer = await Producer.Create(
                 new ProducerConfig(streamSystem, _options.StreamName)
                 {
+                    SuperStreamConfig = _options.IsSuperStream ? _options.SuperStreamConfig : null,
                     MaxInFlight = _batchSize,
                     MessagesBufferSize = _options.MessageBufferSize,
                     ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-producer",
@@ -173,64 +191,80 @@ namespace PgOutput2Json.RabbitMqStreams
 
             var system = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
-            try
-            {
-                var stats = await system.StreamStats(_options.StreamName).ConfigureAwait(false);
-                var firstOffset = stats.CommittedChunkId();
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogInformation("Empty stream detected: {StreamName} ({ErrorMessage}).", _options.StreamName, ex.Message);
-                return 0;
-            }
+            var partitions = _options.IsSuperStream
+                    ? await system.QueryPartition(_options.StreamName).ConfigureAwait(false)
+                    : [_options.StreamName];
 
-            string? json = null;
+            var maxWalEnd = 0UL;
 
-            var receivedCount = 0;
-
-            var consumer = await Consumer.Create(new ConsumerConfig(system, _options.StreamName)
+            foreach (var partition in partitions)
             {
-                OffsetSpec = new OffsetTypeLast(),
-                ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-consumer",
-                MessageHandler = (stream, consumer, context, message) =>
+                try
                 {
-                    Interlocked.Increment(ref receivedCount);
-
-                    json = Encoding.UTF8.GetString(message.Data.Contents);
-
-                    return Task.CompletedTask;
+                    var stats = await system.StreamStats(partition).ConfigureAwait(false);
+                    var firstOffset = stats.CommittedChunkId();
                 }
-            }).ConfigureAwait(false);
+                catch (Exception ex)
+                {
+                    _logger?.LogInformation("Empty stream detected: {StreamName} ({ErrorMessage}).", partition, ex.Message);
+                    continue;
+                }
 
-            // wait until no more messsage are received in the last two seconds
-            var lastCount = 0;
-            do
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken)
-                    .ConfigureAwait(false);
+                string? json = null;
 
-                if (lastCount == receivedCount) break;
+                var firstMessageReceived = new TaskCompletionSource<bool>();
 
-                lastCount = receivedCount;
+                // make sure we cancel the wait, if we're stopping
+                var registration = stoppingToken.Register(() => firstMessageReceived.TrySetCanceled());
+
+                var consumer = await Consumer.Create(new ConsumerConfig(system, partition)
+                {
+                    OffsetSpec = new OffsetTypeLast(),
+                    ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-consumer",
+                    MessageHandler = (stream, consumer, context, message) =>
+                    {
+                        // Keep overwriting so we end up with the last message
+                        json = Encoding.UTF8.GetString(message.Data.Contents);
+                        firstMessageReceived.TrySetResult(true);
+                        return Task.CompletedTask;
+                    }
+                }).ConfigureAwait(false);
+
+                try
+                {
+                    // Wait for the first message (guaranteed to exist)
+                    await firstMessageReceived.Task.ConfigureAwait(false);
+
+                    // Wait 200ms for any remaining messages in the chunk
+                    await Task.Delay(200, stoppingToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await consumer.Close().ConfigureAwait(false);
+                    await registration.DisposeAsync().ConfigureAwait(false);
+                }
+
+                if (json == null)
+                {
+                    throw new Exception($"Cannot read last WAL end LSN. No messages read from an non-empty stream.");
+                }
+
+                if (!json.TryGetWalEnd(out var walEnd))
+                {
+                    throw new Exception($"Missing WAL end LSN in the message: '{json}'");
+                }
+
+                _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", partition, walEnd);
+
+                if (walEnd > maxWalEnd)
+                {
+                    maxWalEnd = walEnd;
+                }
             }
-            while (true);
 
-            await consumer.Close()
-                .ConfigureAwait(false);
-
-            if (json == null)
-            {
-                throw new Exception($"Cannot read last WAL end LSN. No messages read from an non-empty stream.");
-            }
-
-            if (!json.TryGetWalEnd(out var walEnd))
-            {
-                throw new Exception($"Missing WAL end LSN in the message: '{json}'");
-            }
-
-            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", _options.StreamName, walEnd);
-
-            return walEnd;
+            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", _options.StreamName, maxWalEnd);
+            
+            return maxWalEnd;
         }
 
         private StreamSystem? _streamSystem;

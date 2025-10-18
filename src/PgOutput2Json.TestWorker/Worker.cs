@@ -74,6 +74,7 @@ namespace PgOutput2Json.TestWorker
                 //.UseRabbitMqStreams(options =>
                 //{
                 //    options.StreamName = "test_stream";
+                //    options.IsSuperStream = false;
                 //    options.StreamSystemConfig.UserName = "guest";
                 //    options.StreamSystemConfig.Password = "guest";
                 //    options.StreamSystemConfig.VirtualHost = "/";
