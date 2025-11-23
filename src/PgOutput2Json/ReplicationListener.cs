@@ -281,8 +281,7 @@ namespace PgOutput2Json
                                     _logger?.LogWarning("Skipping already published message: " +
                                         "WalStart = {WalStart}, " +
                                         "MessageNo = {MesageNo}, " +
-                                        "LastVirtualLsn = {LastVirtualLsn}" +
-                                        lastWalStart, messageNo, lastVirtualLsn);
+                                        "LastVirtualLsn = {LastVirtualLsn}", lastWalStart, messageNo, lastVirtualLsn);
                                     continue;
                                 }
 
