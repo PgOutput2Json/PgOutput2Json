@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -50,65 +49,6 @@ namespace PgOutput2Json
                 Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
             }
         }
-
-        /*
-        public async Task WhenLsnReachesAsync(string expectedLsn, CancellationToken cancellationToken)
-        {
-            WalAwaiter awaiter;
-            CancellationTokenRegistration registration;
-
-            var expectedWal = NpgsqlLogSequenceNumber.Parse(expectedLsn);
-
-            using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
-            {
-                if (_confirmedWal.HasValue && _confirmedWal.Value >= expectedWal)
-                {
-                    return;
-                }
-
-                awaiter = new WalAwaiter {  ExpectedWalEnd = expectedWal };
-
-                registration = cancellationToken.Register(() => awaiter.Source.TrySetCanceled(cancellationToken));
-
-                _walAwaiters.Add(awaiter);
-            }
-
-            try
-            {
-#pragma warning disable VSTHRD003 // Avoid awaiting foreign Tasks
-
-                await awaiter.Source.Task.ConfigureAwait(false);
-
-#pragma warning restore VSTHRD003 // Avoid awaiting foreign Tasks
-            }
-            finally
-            {
-                await registration.DisposeAsync().ConfigureAwait(false);
-
-                using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    _walAwaiters.Remove(awaiter);
-                }
-            }
-        }
-
-        /// <summary>
-        /// This is always called from inside async lock, so it's ok to iterate through awaiters
-        /// </summary>
-        /// <param name="walEnd"></param>
-        private void SetConfirmedWal(NpgsqlLogSequenceNumber walEnd)
-        {
-            _confirmedWal = walEnd;
-
-            foreach (var awaiter in _walAwaiters)
-            {
-                if (_confirmedWal.Value >= awaiter.ExpectedWalEnd)
-                {
-                    awaiter.Source.TrySetResult();
-                }
-            }
-        }
-        */
 
         public async Task ListenForChangesAsync(CancellationToken cancellationToken)
         {
