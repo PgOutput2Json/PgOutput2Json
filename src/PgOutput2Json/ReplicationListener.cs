@@ -12,12 +12,6 @@ namespace PgOutput2Json
 {
     internal sealed class ReplicationListener
     {
-        private class WalAwaiter
-        {
-            public TaskCompletionSource Source { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            public NpgsqlLogSequenceNumber ExpectedWalEnd { get; set; }
-        }
-
         private readonly ILoggerFactory? _loggerFactory;
         private readonly ILogger<ReplicationListener>? _logger;
 
@@ -28,7 +22,18 @@ namespace PgOutput2Json
 
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
-        private readonly AsyncLock _lock = new AsyncLock();
+        private readonly AsyncLock _lock = new();
+
+        private Timer? _idleConfirmTimer;
+
+        private LogicalReplicationConnection? _connection;
+        private IMessagePublisher? _messagePublisher;
+
+        private CancellationToken _cancellationToken = CancellationToken.None;
+        private CancellationTokenSource? _linkedCts;
+
+        private int _unconfirmedCount;
+        private NpgsqlLogSequenceNumber _lastWalEnd;
 
         public ReplicationListener(IMessagePublisherFactory messagePublisherFactory,
                                    ReplicationListenerOptions options,
@@ -52,213 +57,154 @@ namespace PgOutput2Json
 
         public async Task ListenForChangesAsync(CancellationToken cancellationToken)
         {
+            if (_connection != null) throw new Exception("Already listening");
+
+            _cancellationToken = cancellationToken;
+
             while (!cancellationToken.IsCancellationRequested)
             {
-                IMessagePublisher? messagePublisher = null;
-                CancellationTokenSource? linkedCts = null;
-                Timer? idleConfirmTimer = null;
-
                 try
                 {
-                    var connection = new LogicalReplicationConnection(_options.ConnectionString);
-
-                    await using (connection.ConfigureAwait(false))
+                    _connection = new LogicalReplicationConnection(_options.ConnectionString)
                     {
-                        connection.WalReceiverStatusInterval = Timeout.InfiniteTimeSpan; // we are sending status manually
+                        WalReceiverStatusInterval = Timeout.InfiniteTimeSpan // we are sending status manually
+                    };
 
-                        await connection.Open(cancellationToken)
+                    await _connection.Open(cancellationToken)
+                        .ConfigureAwait(false);
+
+                    _logger.SafeLogInfo("Connected to PostgreSQL");
+
+                    var slotName = string.IsNullOrWhiteSpace(_options.ReplicationSlotName)
+                            ? $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}"
+                            : _options.ReplicationSlotName;
+
+                    PgOutputReplicationSlot slot;
+
+                    if (!_options.UseTemporarySlot)
+                    {
+                        slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
+                    }
+                    else
+                    {
+                        slot = await _connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
+                    }
 
-                        _logger.SafeLogInfo("Connected to PostgreSQL");
+                    // start data export after creating the temporary replication slot
+                    await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
-                        var slotName = string.IsNullOrWhiteSpace(_options.ReplicationSlotName)
-                                ? $"pg2j_{Guid.NewGuid().ToString().Replace("-", "")}"
-                                : _options.ReplicationSlotName;
+                    _messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
-                        PgOutputReplicationSlot slot;
+                    // virtual lsn is start lsn + msg number
+                    var lastVirtualLsn = new NpgsqlLogSequenceNumber(await _messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
 
-                        if (!_options.UseTemporarySlot)
+                    var lastWalStart = new NpgsqlLogSequenceNumber(0);
+
+                    _lastWalEnd = new NpgsqlLogSequenceNumber(0);
+
+                    // this counts messages with the same WalStart
+                    var messageNo = 0UL;
+
+                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
+
+                    // we will use cts to cancel the loop, if the idle confirm fails
+                    _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                    _unconfirmedCount = 0;
+
+                    using (ExecutionContext.SuppressFlow())
+                    {
+                        _idleConfirmTimer = new Timer(IdleTimerCallback);
+                    }
+
+                    var replicationMessage = new ReplicationMessage { HasRelationChanged = true, CommitTimeStamp = DateTime.UtcNow, };
+
+                    // linkedCts.Token is used only in this foreach loop,
+                    // since lock ensures idle confirm cannot happen at the same time
+                    await foreach (var message in _connection.StartReplication(slot, replicationOptions, _linkedCts.Token)
+                        .ConfigureAwait(false))
+                    {
+                        using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                         {
-                            slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
-                        }
-                        else
-                        {
-                            slot = await connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
+                            //_logger?.LogWarning("{Type} {WalStart}/{MesssageNo}", message.GetType().Name, message.WalStart, messageNo);
+
+                            _idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
+
+                            if (message is RelationMessage rel)
+                            {
+                                replicationMessage.HasRelationChanged = true;
+
+                                // Relation Message has WalEnd=0/0
+                                continue;
+                            }
+
+                            if (message is BeginMessage beginMsg)
+                            {
+                                replicationMessage.CommitTimeStamp = beginMsg.TransactionCommitTimestamp;
+                                continue;
+                            }
+
+                            if (message is CommitMessage commitMsg)
+                            {
+                                // DO NOT REMOVE THIS
+                                // This is checked multiple times, we must confirm this WalEnd too,
+                                // since the whole transaction will repeat otherwise.
+                                _lastWalEnd = message.WalEnd;
+                                continue;
+                            }
+
+                            if (lastWalStart != message.WalStart)
+                            {
+                                lastWalStart = message.WalStart;
+                                messageNo = 0UL;
+                            }
+                            else
+                            {
+                                messageNo++;
+                            }
+
+                            var virtualLsn = lastWalStart + messageNo;
+
+                            if (virtualLsn <= lastVirtualLsn && _options.UseDeduplication)
+                            {
+                                // already processed
+                                _logger?.LogWarning("Skipping already published message: " +
+                                    "WalStart = {WalStart}, " +
+                                    "MessageNo = {MesageNo}, " +
+                                    "LastVirtualLsn = {LastVirtualLsn}", lastWalStart, messageNo, lastVirtualLsn);
+                                continue;
+                            }
+
+                            lastVirtualLsn = virtualLsn;
+
+                            replicationMessage.Message = message;
+
+                            var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, lastVirtualLsn, cancellationToken)
                                 .ConfigureAwait(false);
-                        }
 
-                        // start data export after creating the temporary replication slot
-                        await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken).ConfigureAwait(false);
+                            replicationMessage.HasRelationChanged = false;
 
-                        messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
+                            await _messagePublisher.PublishAsync(jsonMessage, cancellationToken)
+                                .ConfigureAwait(false);
 
-                        // virtual lsn is start lsn + msg number
-                        var lastVirtualLsn = new NpgsqlLogSequenceNumber(await messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
+                            // set the lastWalEnd to be sent in status update only after the message was published
+                            _lastWalEnd = message.WalEnd;
 
-                        var lastWalStart = new NpgsqlLogSequenceNumber(0);
-                        
-                        var lastWalEnd = new NpgsqlLogSequenceNumber(0);
+                            MetricsHelper.IncrementPublishCounter();
 
-                        // this counts messages with the same WalStart
-                        var messageNo = 0UL;
-
-                        var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
-
-                        // we will use cts to cancel the loop, if the idle confirm fails
-                        linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-                        var unconfirmedCount = 0;
-
-                        async Task TimerCallbackAsync()
-                        {
-                            try
+                            if (++_unconfirmedCount < _options.BatchSize)
                             {
-                                if (cancellationToken.IsCancellationRequested)
-                                {
-                                    return;
-                                }
-
-                                using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
-                                {
-                                    if (unconfirmedCount > 0 && messagePublisher != null)
-                                    {
-                                        await messagePublisher.ConfirmAsync(cancellationToken)
-                                            .ConfigureAwait(false);
-                                    }
-
-                                    unconfirmedCount = 0;
-
-                                    await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
-                                        .ConfigureAwait(false);
-
-                                    _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
-                                }
+                                continue;
                             }
-                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                            {
-                                // stopping - nothing to do
-                            }
-                            catch (Exception ex)
-                            {
-                                MetricsHelper.IncrementErrorCounter();
-                                _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
 
-                                try
-                                {
-                                    using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
-                                    {
-                                        if (linkedCts != null)
-                                        {
-                                            // if force confirm fails, stop the replication loop, and dispose the publisher
-                                            await linkedCts.CancelAsync().ConfigureAwait(false);
-                                        }
-                                    }
-                                }
-                                catch (Exception exx)
-                                {
-                                    MetricsHelper.IncrementErrorCounter();
-                                    _logger.SafeLogError(exx, "Error cancelling link token source");
-                                }
-                            }
-                        }
+                            _idleConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
-                        idleConfirmTimer = new Timer(_ =>
-                        {
-                            _ = TimerCallbackAsync(); // fire and forget
-                        });
+                            await ConfirmAsync(_connection, _messagePublisher, _unconfirmedCount, _lastWalEnd, cancellationToken).ConfigureAwait(false);
 
-                        var replicationMessage = new ReplicationMessage { HasRelationChanged = true, CommitTimeStamp = DateTime.UtcNow, };
+                            _unconfirmedCount = 0;
 
-                        // linkedCts.Token is used only in this foreach loop,
-                        // since lock ensures idle confirm cannot happen at the same time
-                        await foreach (var message in connection.StartReplication(slot, replicationOptions, linkedCts.Token)
-                            .ConfigureAwait(false))
-                        {
-                            using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
-                            {
-                                 //_logger?.LogWarning("{Type} {WalStart}/{MesssageNo}", message.GetType().Name, message.WalStart, messageNo);
-
-                                idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
-
-                                if (message is RelationMessage rel)
-                                {
-                                    replicationMessage.HasRelationChanged = true;
-
-                                    // Relation Message has WalEnd=0/0
-                                    continue;
-                                }
-                               
-                                if (message is BeginMessage beginMsg)
-                                {
-                                    replicationMessage.CommitTimeStamp = beginMsg.TransactionCommitTimestamp;
-                                    continue;
-                                }
-
-                                if (message is CommitMessage commitMsg)
-                                {
-                                    // DO NOT REMOVE THIS
-                                    // This is checked multiple times, we must confirm this WalEnd too,
-                                    // since the whole transaction will repeat otherwise.
-                                    lastWalEnd = message.WalEnd;
-                                    continue;
-                                }
-
-                                if (lastWalStart != message.WalStart)
-                                {
-                                    lastWalStart = message.WalStart;
-                                    messageNo = 0UL;
-                                }
-                                else
-                                {
-                                    messageNo++;
-                                }
-
-                                var virtualLsn = lastWalStart + messageNo;
-
-                                if (virtualLsn <= lastVirtualLsn && _options.UseDeduplication)
-                                {
-                                    // already processed
-                                    _logger?.LogWarning("Skipping already published message: " +
-                                        "WalStart = {WalStart}, " +
-                                        "MessageNo = {MesageNo}, " +
-                                        "LastVirtualLsn = {LastVirtualLsn}", lastWalStart, messageNo, lastVirtualLsn);
-                                    continue;
-                                }
-
-                                lastVirtualLsn = virtualLsn;
-
-                                replicationMessage.Message = message;
-
-                                var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, lastVirtualLsn, cancellationToken)
-                                    .ConfigureAwait(false);
-
-                                replicationMessage.HasRelationChanged = false;
-
-                                await messagePublisher.PublishAsync(jsonMessage, cancellationToken)
-                                    .ConfigureAwait(false);
-
-                                // set the lastWalEnd to be sent in status update only after the message was published
-                                lastWalEnd = message.WalEnd;
-
-                                MetricsHelper.IncrementPublishCounter();
-
-                                if (++unconfirmedCount < _options.BatchSize)
-                                {
-                                    continue;
-                                }
-
-                                idleConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-
-                                await messagePublisher.ConfirmAsync(cancellationToken)
-                                    .ConfigureAwait(false);
-
-                                unconfirmedCount = 0;
-
-                                await SendStatusUpdateAsync(connection, lastWalEnd, cancellationToken)
-                                        .ConfigureAwait(false);
-
-                                _logger.SafeLogDebug("Confirmed PostgreSQL");
-                            }
+                            _logger.SafeLogDebug("Confirmed PostgreSQL");
                         }
                     }
                 }
@@ -267,7 +213,7 @@ namespace PgOutput2Json
                     _logger.SafeLogWarn("Stopping ReplicationListener - cancellation requested");
                     break;
                 }
-                catch (OperationCanceledException) when (linkedCts != null && linkedCts.IsCancellationRequested)
+                catch (OperationCanceledException) when (_linkedCts != null && _linkedCts.IsCancellationRequested)
                 {
                     // cancelled because idle confirm failed, nothing to do - error has been logged already
                 }
@@ -285,17 +231,20 @@ namespace PgOutput2Json
                 }
                 finally
                 {
-                    await idleConfirmTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
-                    idleConfirmTimer = null;
-
                     // we don't use cancellation token here, as we want to dispose always
                     using (await _lock.LockAsync(CancellationToken.None).ConfigureAwait(false))
                     {
-                        await messagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
-                        messagePublisher = null;
+                        _idleConfirmTimer.TryDispose(_logger);
+                        _idleConfirmTimer = null;
 
-                        linkedCts.TryDispose(_logger);
-                        linkedCts = null;
+                        _linkedCts.TryDispose(_logger);
+                        _linkedCts = null;
+
+                        await _messagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
+                        _messagePublisher = null;
+
+                        await _connection.TryDisposeAsync(_logger).ConfigureAwait(false);
+                        _connection = null;
                     }
                 }
 
@@ -306,8 +255,17 @@ namespace PgOutput2Json
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
         }
 
-        private static async Task SendStatusUpdateAsync(LogicalReplicationConnection connection, NpgsqlLogSequenceNumber lastWalEnd, CancellationToken cancellationToken)
+        private static async Task ConfirmAsync(LogicalReplicationConnection connection,
+                                               IMessagePublisher messagePublisher,
+                                               int unconfirmedCount,
+                                               NpgsqlLogSequenceNumber lastWalEnd,
+                                               CancellationToken cancellationToken)
         {
+            if (unconfirmedCount > 0)
+            {
+                await messagePublisher.ConfirmAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             if ((ulong)lastWalEnd > 0)
             {
                 connection.SetReplicationStatus(lastWalEnd);
@@ -316,6 +274,56 @@ namespace PgOutput2Json
                     .ConfigureAwait(false);
             }
         }
+
+#pragma warning disable VSTHRD100 // Avoid async void methods
+        private async void IdleTimerCallback(object? state)
+        {
+            try
+            {
+                if (_cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                using (await _lock.LockAsync(_cancellationToken).ConfigureAwait(false))
+                {
+                    if (_connection != null && _messagePublisher != null)
+                    {
+                        await ConfirmAsync(_connection, _messagePublisher, _unconfirmedCount, _lastWalEnd, _cancellationToken).ConfigureAwait(false);
+
+                        _unconfirmedCount = 0;
+                    }
+
+                    _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
+                }
+            }
+            catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+            {
+                // stopping - nothing to do
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    MetricsHelper.IncrementErrorCounter();
+                    _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
+
+                    using (await _lock.LockAsync(_cancellationToken).ConfigureAwait(false))
+                    {
+                        if (_linkedCts != null)
+                        {
+                            // if force confirm fails, stop the replication loop, and dispose the publisher
+                            await _linkedCts.CancelAsync().ConfigureAwait(false);
+                        }
+                    }
+                }
+                catch (Exception exx)
+                {
+                    _logger.SafeLogError(exx, "Error cancelling link token source");
+                }
+            }
+        }
+#pragma warning restore VSTHRD100 // Avoid async void methods
 
         private async Task DelayAsync(int time, CancellationToken cancellationToken)
         {
