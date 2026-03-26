@@ -12,6 +12,29 @@ namespace PgOutput2Json
 {
     internal sealed class ReplicationListener
     {
+        private class ConnectionState(CancellationToken cancellationToken, ILogger? logger) : IAsyncDisposable
+        {
+            private readonly ILogger? _logger = logger;
+
+            public LogicalReplicationConnection? Connection { get; set; }
+            public IMessagePublisher? MessagePublisher { get; set; }
+            public CancellationTokenSource LinkedCts { get; } = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            public CancellationToken CancellationToken { get; } = cancellationToken;
+            public int UnconfirmedCount { get; set; }
+            public NpgsqlLogSequenceNumber LastWalEnd { get; set; }
+
+            public async ValueTask DisposeAsync()
+            {
+                LinkedCts.TryDispose(_logger);
+
+                await MessagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
+                MessagePublisher = null;
+
+                await Connection.TryDisposeAsync(_logger).ConfigureAwait(false);
+                Connection = null;
+            }
+        }
+
         private readonly ILoggerFactory? _loggerFactory;
         private readonly ILogger<ReplicationListener>? _logger;
 
@@ -23,17 +46,6 @@ namespace PgOutput2Json
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
         private readonly AsyncLock _lock = new();
-
-        private Timer? _idleConfirmTimer;
-
-        private LogicalReplicationConnection? _connection;
-        private IMessagePublisher? _messagePublisher;
-
-        private CancellationToken _cancellationToken = CancellationToken.None;
-        private CancellationTokenSource? _linkedCts;
-
-        private int _unconfirmedCount;
-        private NpgsqlLogSequenceNumber _lastWalEnd;
 
         public ReplicationListener(IMessagePublisherFactory messagePublisherFactory,
                                    ReplicationListenerOptions options,
@@ -57,20 +69,24 @@ namespace PgOutput2Json
 
         public async Task ListenForChangesAsync(CancellationToken cancellationToken)
         {
-            if (_connection != null) throw new Exception("Already listening");
-
-            _cancellationToken = cancellationToken;
-
             while (!cancellationToken.IsCancellationRequested)
             {
+                var state = new ConnectionState(cancellationToken, _logger);
+
+                Timer idleConfirmTimer;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    idleConfirmTimer = new Timer(IdleTimerCallback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                }
+
                 try
                 {
-                    _connection = new LogicalReplicationConnection(_options.ConnectionString)
+                    state.Connection = new LogicalReplicationConnection(_options.ConnectionString)
                     {
                         WalReceiverStatusInterval = Timeout.InfiniteTimeSpan // we are sending status manually
                     };
 
-                    await _connection.Open(cancellationToken)
+                    await state.Connection.Open(cancellationToken)
                         .ConfigureAwait(false);
 
                     _logger.SafeLogInfo("Connected to PostgreSQL");
@@ -87,49 +103,37 @@ namespace PgOutput2Json
                     }
                     else
                     {
-                        slot = await _connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
+                        slot = await state.Connection.CreatePgOutputReplicationSlot(slotName, true, cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
                     }
 
                     // start data export after creating the temporary replication slot
                     await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
-                    _messagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
+                    state.MessagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
                     // virtual lsn is start lsn + msg number
-                    var lastVirtualLsn = new NpgsqlLogSequenceNumber(await _messagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
+                    var lastVirtualLsn = new NpgsqlLogSequenceNumber(await state.MessagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
 
                     var lastWalStart = new NpgsqlLogSequenceNumber(0);
-
-                    _lastWalEnd = new NpgsqlLogSequenceNumber(0);
 
                     // this counts messages with the same WalStart
                     var messageNo = 0UL;
 
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
 
-                    // we will use cts to cancel the loop, if the idle confirm fails
-                    _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-                    _unconfirmedCount = 0;
-
-                    using (ExecutionContext.SuppressFlow())
-                    {
-                        _idleConfirmTimer = new Timer(IdleTimerCallback);
-                    }
-
                     var replicationMessage = new ReplicationMessage { HasRelationChanged = true, CommitTimeStamp = DateTime.UtcNow, };
 
                     // linkedCts.Token is used only in this foreach loop,
                     // since lock ensures idle confirm cannot happen at the same time
-                    await foreach (var message in _connection.StartReplication(slot, replicationOptions, _linkedCts.Token)
+                    await foreach (var message in state.Connection.StartReplication(slot, replicationOptions, state.LinkedCts.Token)
                         .ConfigureAwait(false))
                     {
                         using (await _lock.LockAsync(cancellationToken).ConfigureAwait(false))
                         {
                             //_logger?.LogWarning("{Type} {WalStart}/{MesssageNo}", message.GetType().Name, message.WalStart, messageNo);
 
-                            _idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
+                            idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
 
                             if (message is RelationMessage rel)
                             {
@@ -150,7 +154,7 @@ namespace PgOutput2Json
                                 // DO NOT REMOVE THIS
                                 // This is checked multiple times, we must confirm this WalEnd too,
                                 // since the whole transaction will repeat otherwise.
-                                _lastWalEnd = message.WalEnd;
+                                state.LastWalEnd = message.WalEnd;
                                 continue;
                             }
 
@@ -185,24 +189,22 @@ namespace PgOutput2Json
 
                             replicationMessage.HasRelationChanged = false;
 
-                            await _messagePublisher.PublishAsync(jsonMessage, cancellationToken)
+                            await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
                                 .ConfigureAwait(false);
 
                             // set the lastWalEnd to be sent in status update only after the message was published
-                            _lastWalEnd = message.WalEnd;
+                            state.LastWalEnd = message.WalEnd;
 
                             MetricsHelper.IncrementPublishCounter();
 
-                            if (++_unconfirmedCount < _options.BatchSize)
+                            if (++state.UnconfirmedCount < _options.BatchSize)
                             {
                                 continue;
                             }
 
-                            _idleConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                            idleConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
-                            await ConfirmAsync(_connection, _messagePublisher, _unconfirmedCount, _lastWalEnd, cancellationToken).ConfigureAwait(false);
-
-                            _unconfirmedCount = 0;
+                            await ConfirmAsync(state).ConfigureAwait(false);
 
                             _logger.SafeLogDebug("Confirmed PostgreSQL");
                         }
@@ -213,7 +215,7 @@ namespace PgOutput2Json
                     _logger.SafeLogWarn("Stopping ReplicationListener - cancellation requested");
                     break;
                 }
-                catch (OperationCanceledException) when (_linkedCts != null && _linkedCts.IsCancellationRequested)
+                catch (OperationCanceledException) when (state.LinkedCts.IsCancellationRequested)
                 {
                     // cancelled because idle confirm failed, nothing to do - error has been logged already
                 }
@@ -234,17 +236,9 @@ namespace PgOutput2Json
                     // we don't use cancellation token here, as we want to dispose always
                     using (await _lock.LockAsync(CancellationToken.None).ConfigureAwait(false))
                     {
-                        _idleConfirmTimer.TryDispose(_logger);
-                        _idleConfirmTimer = null;
+                        idleConfirmTimer.TryDispose(_logger);
 
-                        _linkedCts.TryDispose(_logger);
-                        _linkedCts = null;
-
-                        await _messagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
-                        _messagePublisher = null;
-
-                        await _connection.TryDisposeAsync(_logger).ConfigureAwait(false);
-                        _connection = null;
+                        await state.TryDisposeAsync(_logger).ConfigureAwait(false);
                     }
                 }
 
@@ -255,22 +249,20 @@ namespace PgOutput2Json
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
         }
 
-        private static async Task ConfirmAsync(LogicalReplicationConnection connection,
-                                               IMessagePublisher messagePublisher,
-                                               int unconfirmedCount,
-                                               NpgsqlLogSequenceNumber lastWalEnd,
-                                               CancellationToken cancellationToken)
+        private static async Task ConfirmAsync(ConnectionState cs)
         {
-            if (unconfirmedCount > 0)
+            if (cs.UnconfirmedCount > 0 && cs.MessagePublisher != null)
             {
-                await messagePublisher.ConfirmAsync(cancellationToken).ConfigureAwait(false);
+                await cs.MessagePublisher.ConfirmAsync(cs.CancellationToken).ConfigureAwait(false);
             }
 
-            if ((ulong)lastWalEnd > 0)
-            {
-                connection.SetReplicationStatus(lastWalEnd);
+            cs.UnconfirmedCount = 0;
 
-                await connection.SendStatusUpdate(cancellationToken)
+            if ((ulong)cs.LastWalEnd > 0 && cs.Connection != null)
+            {
+                cs.Connection.SetReplicationStatus(cs.LastWalEnd);
+
+                await cs.Connection.SendStatusUpdate(cs.CancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -278,26 +270,26 @@ namespace PgOutput2Json
 #pragma warning disable VSTHRD100 // Avoid async void methods
         private async void IdleTimerCallback(object? state)
         {
+            var cs = (ConnectionState)state!;
+
             try
             {
-                if (_cancellationToken.IsCancellationRequested)
+                if (cs.CancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
 
-                using (await _lock.LockAsync(_cancellationToken).ConfigureAwait(false))
+                using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                 {
-                    if (_connection != null && _messagePublisher != null)
+                    if (cs.Connection != null && cs.MessagePublisher != null)
                     {
-                        await ConfirmAsync(_connection, _messagePublisher, _unconfirmedCount, _lastWalEnd, _cancellationToken).ConfigureAwait(false);
-
-                        _unconfirmedCount = 0;
+                        await ConfirmAsync(cs).ConfigureAwait(false);
                     }
 
                     _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
                 }
             }
-            catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cs.CancellationToken.IsCancellationRequested)
             {
                 // stopping - nothing to do
             }
@@ -308,13 +300,10 @@ namespace PgOutput2Json
                     MetricsHelper.IncrementErrorCounter();
                     _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
 
-                    using (await _lock.LockAsync(_cancellationToken).ConfigureAwait(false))
+                    using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                     {
-                        if (_linkedCts != null)
-                        {
-                            // if force confirm fails, stop the replication loop, and dispose the publisher
-                            await _linkedCts.CancelAsync().ConfigureAwait(false);
-                        }
+                        // if force confirm fails, stop the replication loop, and dispose the publisher
+                        await cs.LinkedCts.CancelAsync().ConfigureAwait(false);
                     }
                 }
                 catch (Exception exx)
