@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
+using Npgsql;
 using Npgsql.Replication;
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
@@ -23,9 +24,18 @@ namespace PgOutput2Json
             public int UnconfirmedCount { get; set; }
             public NpgsqlLogSequenceNumber LastWalEnd { get; set; }
 
+            public Timer? IdleConfirmTimer { get; set; }
+            public Timer? IdleWalMessageTimer { get; set; }
+
             public async ValueTask DisposeAsync()
             {
                 LinkedCts.TryDispose(_logger);
+
+                await IdleConfirmTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
+                IdleConfirmTimer = null;
+
+                await IdleWalMessageTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
+                IdleWalMessageTimer = null;
 
                 await MessagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
                 MessagePublisher = null;
@@ -63,7 +73,7 @@ namespace PgOutput2Json
             // TODO: see if DataSourceBuilder can be used
             if (_loggerFactory != null)
             {
-                Npgsql.NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
+                NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
             }
         }
 
@@ -73,10 +83,15 @@ namespace PgOutput2Json
             {
                 var state = new ConnectionState(cancellationToken, _logger);
 
-                Timer idleConfirmTimer;
                 using (ExecutionContext.SuppressFlow())
                 {
-                    idleConfirmTimer = new Timer(IdleTimerCallback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    state.IdleConfirmTimer = new Timer(IdleTimerCallback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+                    if (_options.IdleWalMessageInterval > TimeSpan.Zero
+                        && _options.IdleWalMessageInterval != Timeout.InfiniteTimeSpan)
+                    {
+                        state.IdleWalMessageTimer = new Timer(IdleWalMessageTimerCallback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    }
                 }
 
                 try
@@ -120,9 +135,12 @@ namespace PgOutput2Json
                     // this counts messages with the same WalStart
                     var messageNo = 0UL;
 
-                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1);
+                    var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1, messages: true);
 
                     var replicationMessage = new ReplicationMessage { HasRelationChanged = true, CommitTimeStamp = DateTime.UtcNow, };
+
+                    // start the keeplive timer just before starting the replication
+                    state.IdleWalMessageTimer?.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
 
                     // linkedCts.Token is used only in this foreach loop,
                     // since lock ensures idle confirm cannot happen at the same time
@@ -133,7 +151,8 @@ namespace PgOutput2Json
                         {
                             //_logger?.LogWarning("{Type} {WalStart}/{MesssageNo}", message.GetType().Name, message.WalStart, messageNo);
 
-                            idleConfirmTimer.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
+                            state.IdleConfirmTimer?.Change(_options.BatchWaitTime, Timeout.InfiniteTimeSpan);
+                            state.IdleWalMessageTimer?.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
 
                             if (message is RelationMessage rel)
                             {
@@ -202,7 +221,7 @@ namespace PgOutput2Json
                                 continue;
                             }
 
-                            idleConfirmTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                            state.IdleConfirmTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
                             await ConfirmAsync(state).ConfigureAwait(false);
 
@@ -236,8 +255,6 @@ namespace PgOutput2Json
                     // we don't use cancellation token here, as we want to dispose always
                     using (await _lock.LockAsync(CancellationToken.None).ConfigureAwait(false))
                     {
-                        idleConfirmTimer.TryDispose(_logger);
-
                         await state.TryDisposeAsync(_logger).ConfigureAwait(false);
                     }
                 }
@@ -310,6 +327,41 @@ namespace PgOutput2Json
                 {
                     _logger.SafeLogError(exx, "Error cancelling link token source");
                 }
+            }
+        }
+#pragma warning restore VSTHRD100 // Avoid async void methods
+
+#pragma warning disable VSTHRD100 // Avoid async void methods
+        private async void IdleWalMessageTimerCallback(object? state)
+        {
+            var cs = (ConnectionState)state!;
+
+            try
+            {
+                if (cs.CancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                await using var conn = new NpgsqlConnection(_options.ConnectionString);
+                await conn.OpenAsync(cs.CancellationToken).ConfigureAwait(false);
+
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT pg_logical_emit_message(false, 'keepalive', '')", conn);
+
+                await cmd.ExecuteNonQueryAsync(cs.CancellationToken).ConfigureAwait(false);
+
+                _logger.SafeLogDebug("Emitted idle WAL keepalive message");
+
+                cs.IdleWalMessageTimer?.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
+            }
+            catch (OperationCanceledException) when (cs.CancellationToken.IsCancellationRequested)
+            {
+                // stopping - nothing to do
+            }
+            catch (Exception ex)
+            {
+                _logger.SafeLogError(ex, "Error emitting idle WAL message");
             }
         }
 #pragma warning restore VSTHRD100 // Avoid async void methods
