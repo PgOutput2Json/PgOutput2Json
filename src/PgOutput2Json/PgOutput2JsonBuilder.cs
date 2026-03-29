@@ -121,6 +121,12 @@ namespace PgOutput2Json
             return this;
         }
 
+        public PgOutput2JsonBuilder WithIdleWalMessageInterval(TimeSpan interval)
+        {
+            _listenerOptions.IdleWalMessageInterval = interval;
+            return this;
+        }
+
         public IPgOutput2Json Build()
         {
             if (_listenerOptions.DataSourceBuilder.ConnectionString == string.Empty)

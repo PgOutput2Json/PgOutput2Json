@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,6 +18,14 @@ namespace PgOutput2Json
         public StringBuilder TableName { get; internal set; } = new(256); 
         public StringBuilder KeyKolValue { get; internal set; } = new(256);
         public StringBuilder PartitionKolValue { get; internal set; } = new(256);
+
+        public void Clear()
+        {
+            Json.Clear(); 
+            TableName.Clear(); 
+            KeyKolValue.Clear(); 
+            PartitionKolValue.Clear();
+        }
     }
 
     public class JsonWriter
@@ -121,10 +130,51 @@ namespace PgOutput2Json
                                       token)
                     .ConfigureAwait(false);
             }
+            else if (message is LogicalDecodingMessage logicalDecodingMsg)
+            {
+                await WriteLogicalDecodingMessageAsync(logicalDecodingMsg, commitTimeStamp, virtualLsn, token)
+                    .ConfigureAwait(false);
+            }
 
             _result.WalSeqNo = message != null ? (ulong)message.WalEnd : 0;
 
             return _result;
+        }
+
+        private async Task WriteLogicalDecodingMessageAsync(LogicalDecodingMessage logicalDecodingMsg, DateTime commitTimeStamp, NpgsqlLogSequenceNumber virtualLsn, CancellationToken token)
+        {
+            _result.Clear();
+            JsonBuilder.Append("{\"c\":\"M\""); // change type: message
+            JsonBuilder.Append(",\"w\":");
+            JsonBuilder.Append((ulong)virtualLsn);
+
+            if (_jsonOptions.WriteTimestamps)
+            {
+                if (_jsonOptions.TimestampFormat == TimestampFormat.UnixTimeMilliseconds)
+                {
+                    JsonBuilder.Append(",\"cts\":");
+                    JsonBuilder.Append(new DateTimeOffset(commitTimeStamp).ToUnixTimeMilliseconds());
+                    JsonBuilder.Append(",\"mts\":");
+                    JsonBuilder.Append(new DateTimeOffset(logicalDecodingMsg.ServerClock).ToUnixTimeMilliseconds());
+                }
+                else
+                {
+                    JsonBuilder.Append(",\"cts\":");
+                    JsonBuilder.Append(commitTimeStamp.Ticks);
+                    JsonBuilder.Append(",\"mts\":");
+                    JsonBuilder.Append(logicalDecodingMsg.ServerClock.Ticks);
+                }
+            }
+
+            JsonBuilder.Append(",\"p\":");
+            JsonUtils.WriteText(JsonBuilder, logicalDecodingMsg.Prefix);
+
+            using var reader = new StreamReader(logicalDecodingMsg.Data);
+            string data = await reader.ReadToEndAsync(token).ConfigureAwait(false);
+
+            JsonBuilder.Append(",\"d\":");
+            JsonUtils.WriteText(JsonBuilder, data);
+            JsonBuilder.Append('}');
         }
 
         private async Task WriteTupleAsync(TransactionalMessage msg,

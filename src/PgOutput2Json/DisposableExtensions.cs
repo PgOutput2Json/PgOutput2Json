@@ -76,7 +76,31 @@ namespace PgOutput2Json
         {
             try
             {
-                tokenSource?.Cancel();
+                if (tokenSource != null && !tokenSource.IsCancellationRequested)
+                {
+                    tokenSource.Cancel();
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    logger?.LogError(ex, "Error cancelling a token source");
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        public static async Task TryCancelAsync(this CancellationTokenSource? tokenSource, ILogger? logger)
+        {
+            try
+            {
+                if (tokenSource != null && !tokenSource.IsCancellationRequested)
+                {
+                    await tokenSource.CancelAsync().ConfigureAwait(false);
+                }
             }
             catch (Exception ex)
             {

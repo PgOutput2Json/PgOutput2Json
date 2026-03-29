@@ -51,5 +51,13 @@ namespace PgOutput2Json
         public int CopyDataBatchSize { get; internal set; }
 
         public int MaxParallelCopyJobs { get; internal set; } = 1;
+
+        /// <summary>
+        /// Interval at which pg_logical_emit_message is called to prevent restart_lsn from lagging
+        /// when replicated tables are idle but other tables generate WAL.
+        /// Set to <see cref="TimeSpan.Zero"/> or <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> to disable.
+        /// Default is 10 seconds.
+        /// </summary>
+        public TimeSpan IdleWalMessageInterval { get; internal set; } = TimeSpan.FromSeconds(10);
     }
 }
