@@ -208,13 +208,16 @@ namespace PgOutput2Json
 
                             replicationMessage.Message = message;
 
-                            var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, lastVirtualLsn, cancellationToken)
-                                .ConfigureAwait(false);
+                            if (message is not LogicalDecodingMessage logicalDecodingMsg || logicalDecodingMsg.Prefix != "pg2j_keepalive")
+                            {
+                                var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, lastVirtualLsn, cancellationToken)
+                                    .ConfigureAwait(false);
 
-                            replicationMessage.HasRelationChanged = false;
+                                replicationMessage.HasRelationChanged = false;
 
-                            await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
-                                .ConfigureAwait(false);
+                                await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
+                                    .ConfigureAwait(false);
+                            }
 
                             // set the lastWalEnd to be sent in status update only after the message was published
                             state.LastWalEnd = message.WalEnd;
@@ -355,11 +358,11 @@ namespace PgOutput2Json
                 await conn.OpenAsync(cs.CancellationToken).ConfigureAwait(false);
 
                 await using var cmd = new NpgsqlCommand(
-                    "SELECT pg_logical_emit_message(false, 'keepalive', '')", conn);
+                    "SELECT pg_logical_emit_message(false, 'pg2j_keepalive', '')", conn);
 
                 await cmd.ExecuteNonQueryAsync(cs.CancellationToken).ConfigureAwait(false);
 
-                _logger.SafeLogDebug("Emitted idle WAL keepalive message");
+                _logger.SafeLogDebug("Emitted idle WAL pg2j_keepalive message");
 
                 using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                 {
