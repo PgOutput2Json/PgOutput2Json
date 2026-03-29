@@ -27,8 +27,13 @@ namespace PgOutput2Json
             public Timer? IdleConfirmTimer { get; set; }
             public Timer? IdleWalMessageTimer { get; set; }
 
+            public bool IsDisposed { get; private set; }
+
             public async ValueTask DisposeAsync()
             {
+                IsDisposed = true;
+
+                await LinkedCts.TryCancelAsync(_logger).ConfigureAwait(false);
                 LinkedCts.TryDispose(_logger);
 
                 await IdleConfirmTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
@@ -240,7 +245,7 @@ namespace PgOutput2Json
                 }
                 catch (Exception ex)
                 {
-                    if (ex.Message.StartsWith("55006:"))
+                    if (ex is PostgresException pgEx && pgEx.SqlState == "55006")
                     {
                         _logger.SafeLogWarn("Slot taken - waiting for 10 seconds...");
                     }
@@ -298,12 +303,12 @@ namespace PgOutput2Json
 
                 using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                 {
-                    if (cs.Connection != null && cs.MessagePublisher != null)
+                    // check for disposal inside the lock
+                    if (!cs.IsDisposed && cs.Connection != null && cs.MessagePublisher != null)
                     {
                         await ConfirmAsync(cs).ConfigureAwait(false);
+                        _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
                     }
-
-                    _logger.SafeLogDebug("Idle Confirmed PostgreSQL");
                 }
             }
             catch (OperationCanceledException) when (cs.CancellationToken.IsCancellationRequested)
@@ -319,8 +324,11 @@ namespace PgOutput2Json
 
                     using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                     {
-                        // if force confirm fails, stop the replication loop, and dispose the publisher
-                        await cs.LinkedCts.CancelAsync().ConfigureAwait(false);
+                        if (!cs.IsDisposed)
+                        {
+                            // if force confirm fails, stop the replication loop, and dispose the publisher
+                            await cs.LinkedCts.TryCancelAsync(_logger).ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (Exception exx)
@@ -353,7 +361,14 @@ namespace PgOutput2Json
 
                 _logger.SafeLogDebug("Emitted idle WAL keepalive message");
 
-                cs.IdleWalMessageTimer?.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
+                using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
+                {
+                    // checking for disposal inside the lock
+                    if (!cs.IsDisposed && cs.IdleWalMessageTimer != null)
+                    {
+                        cs.IdleWalMessageTimer.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
+                    }
+                }
             }
             catch (OperationCanceledException) when (cs.CancellationToken.IsCancellationRequested)
             {
