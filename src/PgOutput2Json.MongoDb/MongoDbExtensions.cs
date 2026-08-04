@@ -12,16 +12,21 @@ namespace PgOutput2Json.MongoDb
 {
     internal static class MongoDbExtensions
     {
-        public static async Task<ulong> GetWalEndAsync(this IMongoDatabase db, CancellationToken token)
+        public static async Task<(ulong, ulong)> GetWalEndAsync(this IMongoDatabase db, CancellationToken token)
         {
-            var cfgValue = await db.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var walEndValue = await db.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var messageNoValue = await db.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
 
-            return cfgValue != null ? ulong.Parse(cfgValue, CultureInfo.InvariantCulture) : 0;
+            return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
+                    messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
         }
 
         public static async Task SetSchemaAsync(this IMongoDatabase db, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            await db.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo), token).ConfigureAwait(false);
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
+            var json = JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo);
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
+            await db.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", json, token).ConfigureAwait(false);
         }
 
         public static async Task<List<ColumnInfo>?> GetSchemaAsync(this IMongoDatabase db, string tableName, CancellationToken token)
@@ -94,16 +99,25 @@ namespace PgOutput2Json.MongoDb
             }
         }
 
-        public static async Task ConfirmBatchAsync(this IMongoDatabase db, ulong? walEnd, List<BulkWriteModel> batch, CancellationToken token)
+        public static async Task ConfirmBatchAsync(this IMongoDatabase db, ulong? walEnd, ulong messageNo, List<BulkWriteModel> batch, CancellationToken token)
         {
             if (batch.Count == 0) return;
 
             if (walEnd.HasValue)
             {
+                var configNamespace = $"{db.DatabaseNamespace.DatabaseName}.__pg2j_config";
+
                 batch.Add(new BulkWriteReplaceOneModel<Config>(
-                    $"{db.DatabaseNamespace.DatabaseName}.__pg2j_config",
+                    configNamespace,
                     Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.WalEnd),
                     new Config { Id = ConfigKey.WalEnd, Value = walEnd.Value.ToString(CultureInfo.InvariantCulture) },
+                    isUpsert: true
+                ));
+
+                batch.Add(new BulkWriteReplaceOneModel<Config>(
+                    configNamespace,
+                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.MessageNo),
+                    new Config { Id = ConfigKey.MessageNo, Value = messageNo.ToString(CultureInfo.InvariantCulture) },
                     isUpsert: true
                 ));
             }

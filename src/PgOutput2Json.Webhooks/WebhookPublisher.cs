@@ -262,9 +262,9 @@ namespace PgOutput2Json.Webhooks
             response.EnsureSuccessStatusCode();
         }
 
-        public Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return Task.FromResult(0UL); // no de-duplication
+            return Task.FromResult((0UL, 0UL)); // no de-duplication
         }
 
         public Task PublishAsync(JsonMessage jsonMessage, CancellationToken token)
@@ -275,17 +275,20 @@ namespace PgOutput2Json.Webhooks
             }
             else
             {
-                _walSeqFirst = jsonMessage.WalSeqNo;
+                _walSeqFirst = jsonMessage.TxFinalLsn;
             }
 
-            _walSeqLast = jsonMessage.WalSeqNo;
+            _walSeqLast = jsonMessage.TxFinalLsn;
 
             if (_options.UseThinPayload)
             {
                 _payload.Append('{');
 
                 _payload.Append("\"w\":");
-                _payload.Append(jsonMessage.WalSeqNo);
+                _payload.Append(jsonMessage.TxFinalLsn);
+
+                _payload.Append(",\"n\":");
+                _payload.Append(jsonMessage.MessageNo);
 
                 _payload.Append(',');
 

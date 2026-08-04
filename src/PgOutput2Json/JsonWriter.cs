@@ -7,13 +7,14 @@ using System.Threading.Tasks;
 
 using Npgsql.Replication.PgOutput;
 using Npgsql.Replication.PgOutput.Messages;
-using NpgsqlTypes;
 
 namespace PgOutput2Json
 {
     public class JsonMessage
     {
-        public ulong WalSeqNo { get; internal set; }
+        public ulong TxFinalLsn { get; internal set; }
+        public ulong MessageNo { get; internal set; }
+
         public StringBuilder Json { get; internal set; } = new(256);
         public StringBuilder TableName { get; internal set; } = new(256); 
         public StringBuilder KeyKolValue { get; internal set; } = new(256);
@@ -21,6 +22,9 @@ namespace PgOutput2Json
 
         public void Clear()
         {
+            TxFinalLsn = 0;
+            MessageNo = 0;
+
             Json.Clear(); 
             TableName.Clear(); 
             KeyKolValue.Clear(); 
@@ -46,121 +50,114 @@ namespace PgOutput2Json
             _listenerOptions = listenerOptions;
         }
 
-        public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, NpgsqlLogSequenceNumber virtualLsn, CancellationToken token)
+        public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, CancellationToken token)
         {
-            var message = replMessage.Message;
-            var commitTimeStamp = replMessage.CommitTimeStamp;
-            var hasRelationChanged = replMessage.HasRelationChanged;
+            if (replMessage.Message == null) throw new ArgumentNullException($"{nameof(replMessage)}.{nameof(replMessage.Message)}");
 
-            if (message is InsertMessage insertMsg)
+            _result.Clear();
+
+            if (replMessage.Message is InsertMessage insertMsg)
             {
                 await WriteTupleAsync(insertMsg,
                                       insertMsg.Relation,
                                       insertMsg.NewRow,
                                       null,
                                       "I",
-                                      commitTimeStamp,
-                                      hasRelationChanged,
-                                      virtualLsn,
+                                      replMessage,
                                       token)
                     .ConfigureAwait(false);
             }
-            else if (message is DefaultUpdateMessage updateMsg)
+            else if (replMessage.Message is DefaultUpdateMessage updateMsg)
             {
                 await WriteTupleAsync(updateMsg,
                                       updateMsg.Relation,
                                       updateMsg.NewRow,
                                       null,
                                       "U",
-                                      commitTimeStamp,
-                                      hasRelationChanged,
-                                      virtualLsn,
+                                      replMessage,
                                       token)
                     .ConfigureAwait(false);
             }
-            else if (message is FullUpdateMessage fullUpdateMsg)
+            else if (replMessage.Message is FullUpdateMessage fullUpdateMsg)
             {
                 await WriteTupleAsync(fullUpdateMsg,
                                       fullUpdateMsg.Relation,
                                       fullUpdateMsg.NewRow,
                                       fullUpdateMsg.OldRow,
                                       "U",
-                                      commitTimeStamp,
-                                      hasRelationChanged,
-                                      virtualLsn,
+                                      replMessage,
                                       token)
                     .ConfigureAwait(false);
             }
-            else if (message is IndexUpdateMessage indexUpdateMsg)
+            else if (replMessage.Message is IndexUpdateMessage indexUpdateMsg)
             {
                 await WriteTupleAsync(indexUpdateMsg,
                                       indexUpdateMsg.Relation,
                                       indexUpdateMsg.NewRow,
                                       indexUpdateMsg.Key,
                                       "U",
-                                      commitTimeStamp,
-                                      hasRelationChanged,
-                                      virtualLsn,
+                                      replMessage,
                                       token)
                     .ConfigureAwait(false);
             }
-            else if (message is KeyDeleteMessage keyDeleteMsg)
+            else if (replMessage.Message is KeyDeleteMessage keyDeleteMsg)
             {
                 await WriteTupleAsync(keyDeleteMsg,
                                       keyDeleteMsg.Relation,
                                       null,
                                       keyDeleteMsg.Key,
                                       "D",
-                                      commitTimeStamp,
-                                      hasRelationChanged,
-                                      virtualLsn,
+                                      replMessage,
                                       token)
                     .ConfigureAwait(false);
             }
-            else if (message is FullDeleteMessage fullDeleteMsg)
+            else if (replMessage.Message is FullDeleteMessage fullDeleteMsg)
             {
                 await WriteTupleAsync(fullDeleteMsg,
                                       fullDeleteMsg.Relation,
                                       null,
                                       fullDeleteMsg.OldRow,
                                       "D",
-                                      commitTimeStamp,
-                                      hasRelationChanged,
-                                      virtualLsn,
+                                      replMessage,
                                       token)
                     .ConfigureAwait(false);
             }
-            else if (message is LogicalDecodingMessage logicalDecodingMsg)
+            else if (replMessage.Message is LogicalDecodingMessage logicalDecodingMsg)
             {
-                await WriteLogicalDecodingMessageAsync(logicalDecodingMsg, commitTimeStamp, virtualLsn, token)
-                    .ConfigureAwait(false);
+                await WriteLogicalDecodingMessageAsync(logicalDecodingMsg, replMessage, token).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new InvalidOperationException($"Unsupported message: {nameof(replMessage.Message)}");
             }
 
-            _result.WalSeqNo = message != null ? (ulong)message.WalEnd : 0;
+            _result.TxFinalLsn = replMessage.TransactionFinalLsn;
+            _result.MessageNo = replMessage.MessageNo;
 
             return _result;
         }
 
-        private async Task WriteLogicalDecodingMessageAsync(LogicalDecodingMessage logicalDecodingMsg, DateTime commitTimeStamp, NpgsqlLogSequenceNumber virtualLsn, CancellationToken token)
+        private async Task WriteLogicalDecodingMessageAsync(LogicalDecodingMessage logicalDecodingMsg, ReplicationMessage replMessage, CancellationToken token)
         {
-            _result.Clear();
             JsonBuilder.Append("{\"c\":\"M\""); // change type: message
             JsonBuilder.Append(",\"w\":");
-            JsonBuilder.Append((ulong)virtualLsn);
+            JsonBuilder.Append(replMessage.TransactionFinalLsn);
+            JsonBuilder.Append(",\"n\":");
+            JsonBuilder.Append(replMessage.MessageNo);
 
             if (_jsonOptions.WriteTimestamps)
             {
                 if (_jsonOptions.TimestampFormat == TimestampFormat.UnixTimeMilliseconds)
                 {
                     JsonBuilder.Append(",\"cts\":");
-                    JsonBuilder.Append(new DateTimeOffset(commitTimeStamp).ToUnixTimeMilliseconds());
+                    JsonBuilder.Append(new DateTimeOffset(replMessage.CommitTimeStamp).ToUnixTimeMilliseconds());
                     JsonBuilder.Append(",\"mts\":");
                     JsonBuilder.Append(new DateTimeOffset(logicalDecodingMsg.ServerClock).ToUnixTimeMilliseconds());
                 }
                 else
                 {
                     JsonBuilder.Append(",\"cts\":");
-                    JsonBuilder.Append(commitTimeStamp.Ticks);
+                    JsonBuilder.Append(replMessage.CommitTimeStamp.Ticks);
                     JsonBuilder.Append(",\"mts\":");
                     JsonBuilder.Append(logicalDecodingMsg.ServerClock.Ticks);
                 }
@@ -182,9 +179,7 @@ namespace PgOutput2Json
                                                 ReplicationTuple? newRow,
                                                 ReplicationTuple? keyRow,
                                                 string changeType,
-                                                DateTime commitTimeStamp,
-                                                bool hasRelationChanged,
-                                                NpgsqlLogSequenceNumber virtualLsn,
+                                                ReplicationMessage replMessage,
                                                 CancellationToken cancellationToken)
         {
             TableNameBuilder.Clear();
@@ -200,21 +195,23 @@ namespace PgOutput2Json
             JsonBuilder.Append('"');
 
             JsonBuilder.Append(",\"w\":");
-            JsonBuilder.Append((ulong)virtualLsn);
+            JsonBuilder.Append(replMessage.TransactionFinalLsn);
+            JsonBuilder.Append(",\"n\":");
+            JsonBuilder.Append(replMessage.MessageNo);
 
             if (_jsonOptions.WriteTimestamps)
             {
                 if (_jsonOptions.TimestampFormat == TimestampFormat.UnixTimeMilliseconds)
                 {
                     JsonBuilder.Append(",\"cts\":");
-                    JsonBuilder.Append(new DateTimeOffset(commitTimeStamp).ToUnixTimeMilliseconds());
+                    JsonBuilder.Append(new DateTimeOffset(replMessage.CommitTimeStamp).ToUnixTimeMilliseconds());
                     JsonBuilder.Append(",\"mts\":");
                     JsonBuilder.Append(new DateTimeOffset(msg.ServerClock).ToUnixTimeMilliseconds());
                 }
                 else
                 {
                     JsonBuilder.Append(",\"cts\":");
-                    JsonBuilder.Append(commitTimeStamp.Ticks);
+                    JsonBuilder.Append(replMessage.CommitTimeStamp.Ticks);
                     JsonBuilder.Append(",\"mts\":");
                     JsonBuilder.Append(msg.ServerClock.Ticks);
                 }
@@ -242,7 +239,7 @@ namespace PgOutput2Json
                 partitionKeyFields = null;
             }
                 
-            if (hasRelationChanged)
+            if (replMessage.HasRelationChanged)
             {
                 JsonBuilder.Append(',');
                 if (_jsonOptions.WriteMode == JsonWriteMode.Compact)

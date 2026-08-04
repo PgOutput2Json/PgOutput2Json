@@ -21,6 +21,7 @@ namespace PgOutput2Json.MongoDb
 
         private readonly List<BulkWriteModel> _batch = new(1000);
         private ulong? _lastWal;
+        private ulong _lastMessageNo;
 
         public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger)
         {
@@ -36,7 +37,7 @@ namespace PgOutput2Json.MongoDb
 
             using var doc = JsonDocument.Parse(msg.Json.ToString());
 
-            await TryParseSchemaAsync(client, tableName, msg.WalSeqNo, doc, token).ConfigureAwait(false);
+            await TryParseSchemaAsync(client, tableName, msg.TxFinalLsn, doc, token).ConfigureAwait(false);
 
             await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
         }
@@ -45,12 +46,12 @@ namespace PgOutput2Json.MongoDb
         {
             var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            await db.ConfirmBatchAsync(_lastWal, _batch, token).ConfigureAwait(false);
+            await db.ConfirmBatchAsync(_lastWal, _lastMessageNo, _batch, token).ConfigureAwait(false);
 
             _batch.Clear();
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
@@ -95,6 +96,12 @@ namespace PgOutput2Json.MongoDb
             if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
             if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
 
+            var messageNo = 0UL;
+            if (doc.RootElement.TryGetProperty("n", out var messageNoElement))
+            {
+                messageNoElement.TryGetUInt64(out messageNo);
+            }
+
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
@@ -102,6 +109,7 @@ namespace PgOutput2Json.MongoDb
             db.UpsertOrDelete(_batch, tableName, columns, changeTypeElement, keyElement, rowElement);
 
             _lastWal = walEnd;
+            _lastMessageNo = messageNo;
         }
 
         private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)

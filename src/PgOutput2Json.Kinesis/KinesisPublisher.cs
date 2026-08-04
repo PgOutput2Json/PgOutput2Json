@@ -70,9 +70,9 @@ namespace PgOutput2Json.Kinesis
             _buffer.Clear();
         }
 
-        public Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return Task.FromResult(0UL);
+            return Task.FromResult((0UL, 0UL));
         }
 
         public ValueTask DisposeAsync()

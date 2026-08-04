@@ -56,7 +56,7 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             var cn = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
@@ -95,11 +95,17 @@ namespace PgOutput2Json.Sqlite
             if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
             if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
 
+            var messageNo = 0UL;
+            if (doc.RootElement.TryGetProperty("n", out var messageNoElement))
+            {
+                messageNoElement.TryGetUInt64(out messageNo);
+            }
+
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
-            await connection.UpdateOrInsertAsync(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
+            await connection.UpdateOrInsertAsync(walEnd, messageNo, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
                 .ConfigureAwait(false);
         }
 

@@ -185,7 +185,7 @@ namespace PgOutput2Json.RabbitMqStreams
             return _producer;
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken stoppingToken)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken stoppingToken)
         {
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 
@@ -196,6 +196,7 @@ namespace PgOutput2Json.RabbitMqStreams
                     : [_options.StreamName];
 
             var maxWalEnd = 0UL;
+            var maxMessageNo = 0UL;
 
             foreach (var partition in partitions)
             {
@@ -249,22 +250,27 @@ namespace PgOutput2Json.RabbitMqStreams
                     throw new Exception($"Cannot read last WAL end LSN. No messages read from an non-empty stream.");
                 }
 
-                if (!json.TryGetWalEnd(out var walEnd))
+                if (!json.TryGetWalSeq(out var walEnd, out var messageNo))
                 {
                     throw new Exception($"Missing WAL end LSN in the message: '{json}'");
                 }
 
-                _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", partition, walEnd);
+                _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", partition, walEnd, messageNo);
 
                 if (walEnd > maxWalEnd)
                 {
                     maxWalEnd = walEnd;
+                    maxMessageNo = messageNo;
+                }
+                else if (walEnd == maxWalEnd && messageNo > maxMessageNo)
+                {
+                    maxMessageNo = messageNo;
                 }
             }
 
-            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", _options.StreamName, maxWalEnd);
-            
-            return maxWalEnd;
+            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, maxWalEnd, maxMessageNo);
+
+            return (maxWalEnd, maxMessageNo);
         }
 
         private StreamSystem? _streamSystem;

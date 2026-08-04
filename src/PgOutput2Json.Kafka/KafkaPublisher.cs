@@ -39,7 +39,8 @@ namespace PgOutput2Json.Kafka
             {
                 headers = new Headers
                 {
-                    { "wal_seq_no", Encoding.UTF8.GetBytes(message.WalSeqNo.ToString()) },
+                    { "wal_seq_no", Encoding.UTF8.GetBytes(message.TxFinalLsn.ToString()) },
+                    { "message_no", Encoding.UTF8.GetBytes(message.MessageNo.ToString()) },
                     { "table_name", Encoding.UTF8.GetBytes(tableName) },
                     { "partition_key", Encoding.UTF8.GetBytes(partitionKey ?? msgKey) }
                 };
@@ -104,7 +105,7 @@ namespace PgOutput2Json.Kafka
             return ValueTask.CompletedTask;
         }
 
-        public override Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken cancellationToken)
+        public override Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken cancellationToken)
         {
             if (_logger != null && _logger.IsEnabled(LogLevel.Information))
             {
@@ -139,6 +140,7 @@ namespace PgOutput2Json.Kafka
             consumer.Assign(partitions);
 
             var lastWalSeq = 0ul;
+            var lastMessageNo = 0ul;
 
             // Step 3: Poll once per partition
             foreach (var tpo in partitions)
@@ -153,7 +155,7 @@ namespace PgOutput2Json.Kafka
                     continue; 
                 }
               
-                if (!record.Message.Value.TryGetWalEnd(out var walSeq))
+                if (!record.Message.Value.TryGetWalSeq(out var walSeq, out var messageNo))
                 {
                     throw new Exception($"Missing WAL end LSN in the message: '{record.Message.Value}'");
                 }
@@ -161,6 +163,11 @@ namespace PgOutput2Json.Kafka
                 if (walSeq > lastWalSeq)
                 {
                     lastWalSeq = walSeq;
+                    lastMessageNo = messageNo;
+                }
+                else if (walSeq == lastWalSeq && messageNo > lastMessageNo)
+                {
+                    lastMessageNo = messageNo;
                 }
             }
 
@@ -168,10 +175,10 @@ namespace PgOutput2Json.Kafka
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}", _options.Topic, lastWalSeq);
+                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, lastWalSeq, lastMessageNo);
             }
 
-            return Task.FromResult(lastWalSeq);
+            return Task.FromResult((lastWalSeq, lastMessageNo));
         }
 
         private static List<PartitionMetadata> GetPartitionMetadata(KafkaPublisherOptions options)

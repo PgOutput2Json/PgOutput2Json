@@ -15,21 +15,27 @@ namespace PgOutput2Json.Sqlite
 {
     internal static class SqliteConnectionExtensions
     {
-        public static async Task<ulong> GetWalEndAsync(this SqliteConnection cn, CancellationToken token)
+        public static async Task<(ulong, ulong)> GetWalEndAsync(this SqliteConnection cn, CancellationToken token)
         {
-            var cfgValue = await GetConfigAsync(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
-            
-            return cfgValue != null ? ulong.Parse(cfgValue, CultureInfo.InvariantCulture) : 0;
+            var walEndValue = await GetConfigAsync(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var messageNoValue = await GetConfigAsync(cn, ConfigKey.MessageNo, token).ConfigureAwait(false);
+
+            return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
+                    messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
         }
 
-        public static async Task SetWalEndAsync(this SqliteConnection cn, ulong walEnd, CancellationToken token)
+        public static async Task SetWalEndAsync(this SqliteConnection cn, ulong walEnd, ulong messageNo, CancellationToken token)
         {
             await SaveConfigAsync(cn, ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
+            await SaveConfigAsync(cn, ConfigKey.MessageNo, messageNo.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
         }
 
         public static async Task SetSchemaAsync(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
-            await SaveConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo), token).ConfigureAwait(false);
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
+            var json = JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo);
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
+            await SaveConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", json, token).ConfigureAwait(false);
         }
 
         public static async Task<List<ColumnInfo>?> GetSchemaAsync(this SqliteConnection cn, string tableName, CancellationToken token)
@@ -217,6 +223,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
         public static async Task UpdateOrInsertAsync(this SqliteConnection cn,
                                                      ulong walEnd,
+                                                     ulong messageNo,
                                                      string fullTableName,
                                                      IReadOnlyList<ColumnInfo> columns,
                                                      JsonElement changeTypeElement,
@@ -244,7 +251,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 await cn.DeleteAsync(fullTableName, columns, keyElement, token).ConfigureAwait(false);
             }
 
-            await cn.SetWalEndAsync(walEnd, token).ConfigureAwait(false);
+            await cn.SetWalEndAsync(walEnd, messageNo, token).ConfigureAwait(false);
         }
 
         public static async Task InsertAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)

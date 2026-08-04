@@ -37,13 +37,15 @@ namespace PgOutput2Json.AzureEventHubs
             var tableName = msg.TableName.ToString();
             var keyColValue = msg.KeyKolValue.ToString();
 
-            var eventData = new EventData(msg.Json.ToString());
-
-            eventData.MessageId = string.Join("", tableName, keyColValue);
+            var eventData = new EventData(msg.Json.ToString())
+            {
+                MessageId = string.Join("", tableName, keyColValue)
+            };
 
             eventData.Properties["table"] = tableName;
             eventData.Properties["keyValue"] = keyColValue;
-            eventData.Properties["walOffset"] = msg.WalSeqNo;
+            eventData.Properties["txFinalLsn"] = msg.TxFinalLsn;
+            eventData.Properties["messageNo"] = msg.MessageNo;
 
             _buffer.Add((eventData, tableName));
 
@@ -85,7 +87,7 @@ namespace PgOutput2Json.AzureEventHubs
             }
         }
 
-        public async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             return await GetMaxWalOffsetAsync(_options.ConnectionString, _options.EventHubName, token)
                 .ConfigureAwait(false);
@@ -151,7 +153,7 @@ namespace PgOutput2Json.AzureEventHubs
         /// <param name="eventHubName">Event Hub name</param>
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>The largest WAL offset found, or 0 if no messages found</returns>
-        private static async Task<ulong> GetMaxWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
+        private static async Task<(ulong, ulong)> GetMaxWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
         {
             await using var consumer = new EventHubConsumerClient(EventHubConsumerClient.DefaultConsumerGroupName, connectionString, eventHubName);
 
@@ -159,6 +161,7 @@ namespace PgOutput2Json.AzureEventHubs
                     .ConfigureAwait(false);
 
             var maxWalOffset = 0UL;
+            var maxMessageNo = 0UL;
 
             foreach (var partitionId in partitionIds)
             {
@@ -170,7 +173,7 @@ namespace PgOutput2Json.AzureEventHubs
 
                     if (partitionProps.IsEmpty)
                     {
-                        return 0L; // No messages in this partition
+                        return (0L, 0L); // No messages in this partition
                     }
 
                     // Read from the last sequence number (the very last message)
@@ -183,26 +186,17 @@ namespace PgOutput2Json.AzureEventHubs
 
                     await foreach (var partitionEvent in consumer.ReadEventsFromPartitionAsync(partitionId, lastEventPosition, readOptions, cancellationToken))
                     {
-                        partitionEvent.Data.Properties.TryGetValue("walOffset", out var walOffsetProp);
-
-                        ulong walOffset;
-
-                        if (walOffsetProp == null)
-                        {
-                            walOffset = 0UL;
-                        }
-                        else if (walOffsetProp is ulong value)
-                        {
-                            walOffset = value;
-                        }
-                        else
-                        {
-                            ulong.TryParse(walOffsetProp.ToString(), out walOffset);
-                        }
+                        ulong walOffset = GetULongPropValue(partitionEvent, "txFinalLsn");
+                        ulong messageNo = GetULongPropValue(partitionEvent, "messageNo");
 
                         if (walOffset > maxWalOffset)
                         {
                             maxWalOffset = walOffset;
+                            maxMessageNo = messageNo;
+                        }
+                        else if (walOffset == maxWalOffset && messageNo > maxMessageNo)
+                        {
+                            maxMessageNo = messageNo;
                         }
 
                         break;
@@ -211,11 +205,33 @@ namespace PgOutput2Json.AzureEventHubs
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Warning: Could not read from partition {partitionId}: {ex.Message}");
-                    return 0UL; // Return 0 for failed partitions, don't crash the whole operation
+                    return (0UL, 0L); // Return 0 for failed partitions, don't crash the whole operation
                 }
             };
 
-            return maxWalOffset;
+            return (maxWalOffset, maxMessageNo);
+        }
+
+        private static ulong GetULongPropValue(PartitionEvent partitionEvent, string propName)
+        {
+            partitionEvent.Data.Properties.TryGetValue(propName, out var walOffsetProp);
+
+            ulong propValue;
+
+            if (walOffsetProp == null)
+            {
+                propValue = 0UL;
+            }
+            else if (walOffsetProp is ulong value)
+            {
+                propValue = value;
+            }
+            else
+            {
+                ulong.TryParse(walOffsetProp.ToString(), out propValue);
+            }
+
+            return propValue;
         }
     }
 }

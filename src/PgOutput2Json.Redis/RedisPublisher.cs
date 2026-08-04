@@ -90,9 +90,9 @@ namespace PgOutput2Json.Redis
             DisposeTasks();
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            if (_options.PublishMode == PublishMode.Channel) return 0; // cannot do de-duplication with channels
+            if (_options.PublishMode == PublishMode.Channel) return (0, 0); // cannot do de-duplication with channels
 
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
@@ -103,7 +103,7 @@ namespace PgOutput2Json.Redis
 
             if (entries.Length == 0)
             {
-                return 0;
+                return (0, 0);
             }
 
             var lastEntry = entries[^1];
@@ -120,12 +120,12 @@ namespace PgOutput2Json.Redis
                 throw new Exception($"Could not rad WAL end LSN - entry value is null or empty");
             }
 
-            if (!json.TryGetWalEnd(out var walEnd))
+            if (!json.TryGetWalSeq(out var walEnd, out var messageNo))
             {
                 throw new Exception($"Missing WAL end LSN in the message: '{json}'");
             }
 
-            return walEnd;
+            return (walEnd, messageNo);
         }
 
         private void DisposeTasks()

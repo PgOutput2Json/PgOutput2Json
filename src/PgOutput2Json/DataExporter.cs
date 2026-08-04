@@ -171,7 +171,8 @@ namespace PgOutput2Json
             var value = new StringBuilder(256);
             var values = new List<string>(100);
 
-            using var reader = connection.BeginTextExport($"COPY {source} TO STDOUT HEADER");
+            using var reader = await connection.BeginTextExportAsync($"COPY {source} TO STDOUT HEADER", cancellationToken)
+                .ConfigureAwait(false);
 
             var isHeader = true;
 
@@ -222,6 +223,7 @@ namespace PgOutput2Json
 
                 jsonMessage.Json.Append("{\"c\":\"I\"");
                 jsonMessage.Json.Append(",\"w\":0");
+                jsonMessage.Json.Append(",\"n\":0");
 
                 if (jsonOptions.WriteTableNames)
                 {

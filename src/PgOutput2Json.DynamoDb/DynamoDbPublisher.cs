@@ -25,6 +25,7 @@ namespace PgOutput2Json.DynamoDb
         private readonly List<(string TableName, WriteRequest WriteRequest)> _batch = new(25); // DynamoDB batch write limit
 
         private ulong? _lastWal;
+        private ulong _lastMessageNo;
 
         public DynamoDbPublisher(DynamoDbPublisherOptions options, ILogger<DynamoDbPublisher>? logger)
         {
@@ -78,10 +79,13 @@ namespace PgOutput2Json.DynamoDb
             {
                 await client.SaveConfigAsync(ConfigKey.WalEnd, _lastWal.Value.ToString(CultureInfo.InvariantCulture), token)
                     .ConfigureAwait(false);
+
+                await client.SaveConfigAsync(ConfigKey.MessageNo, _lastMessageNo.ToString(CultureInfo.InvariantCulture), token)
+                    .ConfigureAwait(false);
             }
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
@@ -118,6 +122,12 @@ namespace PgOutput2Json.DynamoDb
 
             if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Missing WAL end LSN");
             if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid WAL end LSN {walEndElement.GetRawText()}");
+
+            var messageNo = 0UL;
+            if (doc.RootElement.TryGetProperty("n", out var messageNoElement))
+            {
+                messageNoElement.TryGetUInt64(out messageNo);
+            }
 
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
@@ -173,6 +183,7 @@ namespace PgOutput2Json.DynamoDb
             }
 
             _lastWal = walEnd;
+            _lastMessageNo = messageNo;
         }
 
         private async Task AddToBatchAsync(string tableName, WriteRequest request, CancellationToken token)
