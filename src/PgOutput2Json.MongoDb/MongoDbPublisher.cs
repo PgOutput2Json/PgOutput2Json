@@ -37,9 +37,9 @@ namespace PgOutput2Json.MongoDb
 
             using var doc = JsonDocument.Parse(msg.Json.ToString());
 
-            await TryParseSchemaAsync(client, tableName, msg.TxFinalLsn, doc, token).ConfigureAwait(false);
+            await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
-            await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(client, tableName, msg, doc, token).ConfigureAwait(false);
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -79,7 +79,7 @@ namespace PgOutput2Json.MongoDb
             return ValueTask.CompletedTask;
         }
 
-        private async Task ParseRowAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(IMongoDatabase db, string tableName, JsonMessage msg, JsonDocument doc, CancellationToken token)
         {
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
@@ -93,26 +93,17 @@ namespace PgOutput2Json.MongoDb
 
             if (columns == null) throw new Exception("Missing table schema: " + tableName);
 
-            if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
-            if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
-
-            var messageNo = 0UL;
-            if (doc.RootElement.TryGetProperty("n", out var messageNoElement))
-            {
-                messageNoElement.TryGetUInt64(out messageNo);
-            }
-
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
             db.UpsertOrDelete(_batch, tableName, columns, changeTypeElement, keyElement, rowElement);
 
-            _lastWal = walEnd;
-            _lastMessageNo = messageNo;
+            _lastWal = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
         }
 
-        private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
+        private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
         {
             if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
 

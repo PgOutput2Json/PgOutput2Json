@@ -37,7 +37,7 @@ namespace PgOutput2Json.Sqlite
 
             await TryParseSchemaAsync(connection, tableName, doc, token).ConfigureAwait(false);
 
-            await ParseRowAsync(connection, tableName, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(connection, tableName, msg, doc, token).ConfigureAwait(false);
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -78,7 +78,7 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        private async Task ParseRowAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(SqliteConnection connection, string tableName, JsonMessage msg, JsonDocument doc, CancellationToken token)
         {
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
@@ -92,20 +92,11 @@ namespace PgOutput2Json.Sqlite
 
             if (columns == null) throw new Exception("Missing table schema: " + tableName);
 
-            if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
-            if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
-
-            var messageNo = 0UL;
-            if (doc.RootElement.TryGetProperty("n", out var messageNoElement))
-            {
-                messageNoElement.TryGetUInt64(out messageNo);
-            }
-
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
-            await connection.UpdateOrInsertAsync(walEnd, messageNo, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
+            await connection.UpdateOrInsertAsync(msg.TxFinalLsn, msg.MessageNo, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
                 .ConfigureAwait(false);
         }
 

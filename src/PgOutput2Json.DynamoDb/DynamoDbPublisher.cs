@@ -43,7 +43,7 @@ namespace PgOutput2Json.DynamoDb
 
             await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
-            await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(client, tableName, msg, doc, token).ConfigureAwait(false);
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -108,7 +108,7 @@ namespace PgOutput2Json.DynamoDb
             return ValueTask.CompletedTask;
         }
 
-        private async Task ParseRowAsync(AmazonDynamoDBClient client, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(AmazonDynamoDBClient client, string tableName, JsonMessage msg, JsonDocument doc, CancellationToken token)
         {
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
@@ -118,15 +118,6 @@ namespace PgOutput2Json.DynamoDb
                 if (columns == null) throw new Exception($"Missing table schema: {tableName}");
 
                 _tableColumns[tableName] = columns;
-            }
-
-            if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Missing WAL end LSN");
-            if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid WAL end LSN {walEndElement.GetRawText()}");
-
-            var messageNo = 0UL;
-            if (doc.RootElement.TryGetProperty("n", out var messageNoElement))
-            {
-                messageNoElement.TryGetUInt64(out messageNo);
             }
 
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
@@ -182,8 +173,8 @@ namespace PgOutput2Json.DynamoDb
                 }
             }
 
-            _lastWal = walEnd;
-            _lastMessageNo = messageNo;
+            _lastWal = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
         }
 
         private async Task AddToBatchAsync(string tableName, WriteRequest request, CancellationToken token)
