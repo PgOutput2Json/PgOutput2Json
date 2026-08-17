@@ -43,38 +43,45 @@ namespace PgOutput2Json.DynamoDb
 
             await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
-            await ParseRowAsync(client, tableName, msg, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
+
+            _lastWal = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
         {
-            if (_batch.Count == 0) return;
-
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
-            var batchRequest = new BatchWriteItemRequest { RequestItems = [] };
-
-            // convert batch list to dictionary per table name
-            foreach (var (tableName, req) in _batch)
+            if (_batch.Count > 0)
             {
-                if (!batchRequest.RequestItems.TryGetValue(tableName, out var list))
+                var batchRequest = new BatchWriteItemRequest { RequestItems = [] };
+
+                // convert batch list to dictionary per table name
+                foreach (var (tableName, req) in _batch)
                 {
-                    list = batchRequest.RequestItems[tableName] = [];
+                    if (!batchRequest.RequestItems.TryGetValue(tableName, out var list))
+                    {
+                        list = batchRequest.RequestItems[tableName] = [];
+                    }
+
+                    list.Add(req);
                 }
 
-                list.Add(req);
+                var response = await client.BatchWriteItemAsync(batchRequest, token)
+                    .ConfigureAwait(false);
+
+                if (response.UnprocessedItems?.Count > 0)
+                {
+                    throw new Exception($"Some items {response.UnprocessedItems.Count} were unprocessed in batch write.");
+                }
+
+                _batch.Clear();
             }
 
-            var response = await client.BatchWriteItemAsync(batchRequest, token)
-                .ConfigureAwait(false);
-
-            if (response.UnprocessedItems?.Count > 0)
-            {
-                throw new Exception($"Some items {response.UnprocessedItems.Count} were unprocessed in batch write.");
-            }
-
-            _batch.Clear();
-
+            // _lastWal has no value only if nothing has been published since the last confirm (or ever);
+            // it may still need persisting here even with an empty _batch, e.g. a transaction with only
+            // logical decoding messages
             if (_lastWal.HasValue)
             {
                 await client.SaveConfigAsync(ConfigKey.WalEnd, _lastWal.Value.ToString(CultureInfo.InvariantCulture), token)
@@ -108,8 +115,16 @@ namespace PgOutput2Json.DynamoDb
             return ValueTask.CompletedTask;
         }
 
-        private async Task ParseRowAsync(AmazonDynamoDBClient client, string tableName, JsonMessage msg, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(AmazonDynamoDBClient client, string tableName, JsonDocument doc, CancellationToken token)
         {
+            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
+
+            var changeType = changeTypeElement.GetString();
+
+            if (changeType == "M") return; // logical decoding message - carries no table and no row
+
+            if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
+
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
                 columns = await client.GetSchemaAsync(tableName, token)
@@ -120,7 +135,6 @@ namespace PgOutput2Json.DynamoDb
                 _tableColumns[tableName] = columns;
             }
 
-            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
@@ -139,8 +153,6 @@ namespace PgOutput2Json.DynamoDb
                 await AddToBatchAsync(tableName, request, token)
                     .ConfigureAwait(false);
             }
-
-            var changeType = changeTypeElement.GetString();
 
             if (changeType != "d") // delete is andled above with keyElement handling
             {
@@ -172,9 +184,6 @@ namespace PgOutput2Json.DynamoDb
                         .ConfigureAwait(false);
                 }
             }
-
-            _lastWal = msg.TxFinalLsn;
-            _lastMessageNo = msg.MessageNo;
         }
 
         private async Task AddToBatchAsync(string tableName, WriteRequest request, CancellationToken token)

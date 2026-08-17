@@ -101,8 +101,6 @@ namespace PgOutput2Json.MongoDb
 
         public static async Task ConfirmBatchAsync(this IMongoDatabase db, ulong? walEnd, ulong messageNo, List<BulkWriteModel> batch, CancellationToken token)
         {
-            if (batch.Count == 0) return;
-
             if (walEnd.HasValue)
             {
                 var configNamespace = $"{db.DatabaseNamespace.DatabaseName}.__pg2j_config";
@@ -121,6 +119,9 @@ namespace PgOutput2Json.MongoDb
                     isUpsert: true
                 ));
             }
+
+            // batch may only contain the config upserts above (e.g. a transaction with only logical decoding messages)
+            if (batch.Count == 0) return;
 
             await db.Client.BulkWriteAsync(batch, cancellationToken: token).ConfigureAwait(false);
         }

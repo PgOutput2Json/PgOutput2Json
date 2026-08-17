@@ -39,7 +39,10 @@ namespace PgOutput2Json.MongoDb
 
             await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
-            await ParseRowAsync(client, tableName, msg, doc, token).ConfigureAwait(false);
+            await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
+
+            _lastWal = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -79,8 +82,16 @@ namespace PgOutput2Json.MongoDb
             return ValueTask.CompletedTask;
         }
 
-        private async Task ParseRowAsync(IMongoDatabase db, string tableName, JsonMessage msg, JsonDocument doc, CancellationToken token)
+        private async Task ParseRowAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
         {
+            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
+
+            var changeType = changeTypeElement.GetString();
+
+            if (changeType == "M") return; // logical decoding message - carries no table and no row
+
+            if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
+
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
                 columns = await db.GetSchemaAsync(tableName, token).ConfigureAwait(false);
@@ -93,14 +104,10 @@ namespace PgOutput2Json.MongoDb
 
             if (columns == null) throw new Exception("Missing table schema: " + tableName);
 
-            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
             db.UpsertOrDelete(_batch, tableName, columns, changeTypeElement, keyElement, rowElement);
-
-            _lastWal = msg.TxFinalLsn;
-            _lastMessageNo = msg.MessageNo;
         }
 
         private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)

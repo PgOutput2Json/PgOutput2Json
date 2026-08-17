@@ -33,21 +33,28 @@ namespace PgOutput2Json.Sqlite
         {
             var connection = await EnsureConnectionInTransactionAsync(token).ConfigureAwait(false);
 
-            var tableName = msg.TableName.ToString();
+            using var doc = JsonDocument.Parse(msg.Json.ToString());
 
-            if (tableName.Length == 0) return; // logical decoding message (no table)
+            await ApplyChangeAsync(connection, msg.TableName.ToString(), doc, token).ConfigureAwait(false);
 
-            var json = msg.Json.ToString();
+            _lastWalEnd = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
+        }
 
-            using var doc = JsonDocument.Parse(json);
+        private async Task ApplyChangeAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        {
+            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
+
+            var changeType = changeTypeElement.GetString();
+
+            if (changeType == "M") return; // logical decoding message - carries no table and no row
+
+            if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
 
             var table = await EnsureTableAsync(connection, tableName, doc, token).ConfigureAwait(false);
 
-            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
-
-            var changeType = changeTypeElement.GetString();
 
             if (changeType == "I")
             {
@@ -61,9 +68,6 @@ namespace PgOutput2Json.Sqlite
             {
                 await connection.DeleteAsync(table.Commands, keyElement, token).ConfigureAwait(false);
             }
-
-            _lastWalEnd = msg.TxFinalLsn;
-            _lastMessageNo = msg.MessageNo;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
