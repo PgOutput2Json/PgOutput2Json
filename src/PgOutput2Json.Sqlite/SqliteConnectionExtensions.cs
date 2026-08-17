@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -9,12 +8,13 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Logging;
 
 namespace PgOutput2Json.Sqlite
 {
     internal static class SqliteConnectionExtensions
     {
+        private const string ToastValue = "__TOAST__";
+
         public static async Task<(ulong, ulong)> GetWalEndAsync(this SqliteConnection cn, CancellationToken token)
         {
             var walEndValue = await GetConfigAsync(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
@@ -34,17 +34,20 @@ namespace PgOutput2Json.Sqlite
         {
 #pragma warning disable VSTHRD103 // Call async methods when in an async method
             var json = JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo);
-#pragma warning disable VSTHRD103 // Call async methods when in an async method
+#pragma warning restore VSTHRD103 // Call async methods when in an async method
+
             await SaveConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", json, token).ConfigureAwait(false);
         }
 
-        public static async Task<List<ColumnInfo>?> GetSchemaAsync(this SqliteConnection cn, string tableName, CancellationToken token)
+        public static async Task<List<ColumnInfo>?> GetTableSchemaAsync(this SqliteConnection cn, string tableName, CancellationToken token)
         {
             var cfgValue = await GetConfigAsync(cn, $"{ConfigKey.Schema}_{tableName}", token).ConfigureAwait(false);
 
             if (cfgValue == null) return null;
 
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
             return JsonSerializer.Deserialize(cfgValue, JsonContext.Default.ListColumnInfo);
+#pragma warning restore VSTHRD103 // Call async methods when in an async method
         }
 
         public static async Task SaveConfigAsync(this SqliteConnection cn, string key, string value, CancellationToken token)
@@ -137,13 +140,18 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
         public static async Task CreateOrAlterTableAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
-            string tableName = GetTableName(fullTableName);
+            var tableName = GetTableName(fullTableName);
 
-            using var cmd = cn.CreateCommand();
+            var exists = false;
 
-            cmd.CommandText = $"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{tableName}'";
+            using (var cmd = cn.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{tableName}'";
 
-            if (await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) != null)
+                exists = await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) != null;
+            }
+
+            if (exists)
             {
                 await AlterTableAsync(cn, tableName, columns, token).ConfigureAwait(false);
             }
@@ -155,26 +163,28 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
         private static async Task AlterTableAsync(SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
-            var cmd = cn.CreateCommand();
-
-            cmd.CommandText = $"PRAGMA table_info(\"{tableName}\")";
-
             var existingCols = new List<string>();
 
-            using (var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false))
+            using (var cmd = cn.CreateCommand())
             {
+                cmd.CommandText = $"PRAGMA table_info(\"{tableName}\")";
+
+                using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+
                 while (await reader.ReadAsync(token).ConfigureAwait(false))
                 {
                     // The column name is in the second column (index 1)
-                    existingCols.Add(reader.GetString(1)); 
+                    existingCols.Add(reader.GetString(1));
                 }
             }
 
+            using var alterCmd = cn.CreateCommand();
+
             foreach (var col in columns.Where(c => !existingCols.Contains(c.Name)))
             {
-                cmd.CommandText = $"ALTER TABLE \"{tableName}\" ADD \"{col.Name}\" {col.GetSqliteType()}";
+                alterCmd.CommandText = $"ALTER TABLE \"{tableName}\" ADD \"{col.Name}\" {col.GetSqliteType()}";
 
-                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                await alterCmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }
         }
 
@@ -221,288 +231,357 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return nameParts.Length > 1 ? nameParts[1] : nameParts[0];
         }
 
-        public static async Task UpdateOrInsertAsync(this SqliteConnection cn,
-                                                     ulong walEnd,
-                                                     ulong messageNo,
-                                                     string fullTableName,
-                                                     IReadOnlyList<ColumnInfo> columns,
-                                                     JsonElement changeTypeElement,
-                                                     JsonElement keyElement,
-                                                     JsonElement rowElement,
-                                                     ILogger? logger,
-                                                     CancellationToken token)
-        {
-            var changeType = changeTypeElement.GetString();
-
-            if (changeType == "I")
-            {
-                await cn.InsertAsync(fullTableName, columns, rowElement, true, token).ConfigureAwait(false);
-            }
-            else if (changeType == "U")
-            {
-                var count = await cn.UpdateAsync(fullTableName, columns, keyElement, rowElement, token).ConfigureAwait(false);
-                if (count == 0)
-                {
-                    await cn.InsertAsync(fullTableName, columns, rowElement, false, token).ConfigureAwait(false);
-                }
-            }
-            else if (changeType == "D")
-            {
-                await cn.DeleteAsync(fullTableName, columns, keyElement, token).ConfigureAwait(false);
-            }
-
-            await cn.SetWalEndAsync(walEnd, messageNo, token).ConfigureAwait(false);
-        }
-
-        public static async Task InsertAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
+        /// <summary>
+        /// Creates prepared parameterized commands for inserting/updating/deleting rows of the table.
+        /// The commands are cached and reused until a relation message (schema change) is received.
+        /// They are created without a transaction - SQLite applies the connection's active transaction at execution time.
+        /// </summary>
+        public static PreparedCommands CreatePreparedCommands(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns)
         {
             var tableName = GetTableName(fullTableName);
 
-            var blobs = new List<(ColumnInfo Col, string Val)>();
+            var keyCount = 0;
+            var nonKeyCount = 0;
 
-            var sqlBuilder = new StringBuilder($"INSERT INTO \"{tableName}\" (");
-
-            int i;
-
-            i = 0;
-            foreach (var column in columns)
+            foreach (var col in columns)
             {
-                if (i > 0) sqlBuilder.Append(", ");
-                sqlBuilder.Append($"\"{column.Name}\"");
-
-                i++;
+                if (col.IsKey) keyCount++;
+                else nonKeyCount++;
             }
 
-            sqlBuilder.Append(") VALUES (");
+            var insertBuilder = new StringBuilder(256);
 
-            i = 0;
-            foreach (var valElement in rowElement.EnumerateArray())
-            {
-                if (i > 0) sqlBuilder.Append(", ");
-
-                WriteColumnValue(sqlBuilder, valElement, columns[i], blobs);
-
-                i++;
-            }
-
-            sqlBuilder.Append(')');
-
-            if (ignoreConflicts)
-            {
-                sqlBuilder.Append(" ON CONFLICT DO NOTHING");
-            }
-
-            using var cmd = cn.CreateCommand();
-
-            cmd.CommandText = sqlBuilder.ToString();
-
-            var affectedCount = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-
-            if (affectedCount > 0 && blobs.Count > 0)
-            {
-                cmd.CommandText = "SELECT last_insert_rowid()";
-
-                var rowId = Convert.ToInt64(await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) ?? 0L);
-
-                // store blobs;
-                StoreBlobs(cn, tableName, rowId, blobs);
-            }
-        }
-
-        public static async Task<int> UpdateAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
-        {
-            var tableName = GetTableName(fullTableName);
-
-            var blobs = new List<(ColumnInfo Col, string Val)>();
-
-            var setFieldsBuilder = new StringBuilder();
-            var whereBuilder = new StringBuilder();
-
-            int i;
-
-            if (keyElement.ValueKind != JsonValueKind.Undefined)
-            {
-                i = 0;
-                foreach (var column in columns)
-                {
-                    if (!column.IsKey) continue;
-
-                    if (whereBuilder.Length > 0) whereBuilder.Append(" AND ");
-
-                    WriteColumnValueAssignment(whereBuilder, keyElement[i], column, null, true);
-
-                    i++;
-                }
-            }
-
-            var hasWhere = whereBuilder.Length > 0; 
-
-            i = 0;
-            foreach (var column in columns)
-            {
-                if (column.IsKey && !hasWhere)
-                {
-                    if (whereBuilder.Length > 0) whereBuilder.Append(" AND ");
-
-                    WriteColumnValueAssignment(whereBuilder, rowElement[i], column, null);
-
-                    i++;
-                    continue;
-                }
-
-                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == "__TOAST__")
-                {
-                    i++;
-                    continue; // skip unchanged toasted columns
-                }
-
-                if (setFieldsBuilder.Length > 0) setFieldsBuilder.Append(", ");
-
-                WriteColumnValueAssignment(setFieldsBuilder, rowElement[i], column, blobs);
-
-                i++;
-            }
-
-            var sqlBuilder = new StringBuilder($"UPDATE \"{tableName}\" SET ");
-            sqlBuilder.Append(setFieldsBuilder);
-            sqlBuilder.Append(" WHERE ");
-            sqlBuilder.Append(whereBuilder);
-
-            using var cmd = cn.CreateCommand();
-
-            cmd.CommandText = sqlBuilder.ToString();
-
-            var affectedCount = await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-
-            if (affectedCount > 0 && blobs.Count > 0)
-            {
-                sqlBuilder.Clear();
-                sqlBuilder.Append($"SELECT ROWID FROM \"{tableName}\" WHERE ");
-                sqlBuilder.Append(whereBuilder);
-
-                cmd.CommandText = sqlBuilder.ToString();
-
-                var rowId = Convert.ToInt64(await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) ?? 0);
-
-                StoreBlobs(cn, tableName, rowId, blobs);
-            }
-
-            return affectedCount;
-        }
-
-        public static async Task DeleteAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, CancellationToken token)
-        {
-            var tableName = GetTableName(fullTableName);
-
-            var sqlBuilder = new StringBuilder($"DELETE FROM \"{tableName}\" WHERE ");
+            insertBuilder.Append($"INSERT INTO \"{tableName}\" (");
 
             var i = 0;
-
-            foreach (var column in columns)
+            foreach (var col in columns)
             {
-                if (!column.IsKey) continue;
-
-                if (i > 0) sqlBuilder.Append(" AND ");
-
-                WriteColumnValueAssignment(sqlBuilder, keyElement[i], column, null, true);
-
+                if (i > 0) insertBuilder.Append(", ");
+                insertBuilder.Append($"\"{col.Name}\"");
                 i++;
             }
 
-            using var cmd = cn.CreateCommand();
+            insertBuilder.Append(") VALUES (");
 
-            cmd.CommandText = sqlBuilder.ToString();
+            for (i = 0; i < columns.Count; i++)
+            {
+                if (i > 0) insertBuilder.Append(", ");
+                insertBuilder.Append($"@p{i}");
+            }
+
+            insertBuilder.Append(')');
+
+            var insertSql = insertBuilder.ToString();
+
+            SqliteCommand? updateCommand = null;
+
+            if (keyCount > 0 && nonKeyCount > 0)
+            {
+                // SET parameters come first (@p0..@p{nonKeyCount-1}), then WHERE parameters
+
+                var updateBuilder = new StringBuilder($"UPDATE \"{tableName}\" SET ");
+
+                var j = 0;
+                foreach (var col in columns)
+                {
+                    if (col.IsKey) continue;
+
+                    if (j > 0) updateBuilder.Append(", ");
+                    updateBuilder.Append($"\"{col.Name}\" = @p{j}");
+                    j++;
+                }
+
+                updateBuilder.Append(" WHERE ");
+                updateBuilder.Append(BuildKeyWhereClause(columns, nonKeyCount));
+
+                updateCommand = CreateCommand(cn, updateBuilder.ToString(), columns.Count);
+            }
+
+            var deleteCommand = keyCount > 0
+                ? CreateCommand(cn, $"DELETE FROM \"{tableName}\" WHERE {BuildKeyWhereClause(columns, 0)}", keyCount)
+                : null;
+
+            return new PreparedCommands(
+                CreateCommand(cn, insertSql, columns.Count),
+                CreateCommand(cn, insertSql + " ON CONFLICT DO NOTHING", columns.Count),
+                updateCommand,
+                deleteCommand,
+                columns);
+        }
+
+        private static SqliteCommand CreateCommand(SqliteConnection cn, string sql, int paramCount)
+        {
+            var cmd = cn.CreateCommand();
+
+            cmd.CommandText = sql;
+
+            for (var i = 0; i < paramCount; i++)
+            {
+                cmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
+            }
+
+            return cmd;
+        }
+
+        /// <summary>
+        /// Builds a NULL-safe equality clause over the key columns ("col" = @pX OR (@pX IS NULL AND "col" IS NULL)).
+        /// </summary>
+        private static string BuildKeyWhereClause(IReadOnlyList<ColumnInfo> columns, int paramOffset)
+        {
+            var whereBuilder = new StringBuilder();
+
+            var keyIndex = 0;
+            foreach (var col in columns)
+            {
+                if (!col.IsKey) continue;
+
+                if (keyIndex > 0) whereBuilder.Append(" AND ");
+
+                var paramName = $"@p{paramOffset + keyIndex}";
+
+                whereBuilder.Append($"(\"{col.Name}\" = {paramName} OR ({paramName} IS NULL AND \"{col.Name}\" IS NULL))");
+
+                keyIndex++;
+            }
+
+            return whereBuilder.ToString();
+        }
+
+        public static async Task InsertAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
+        {
+            var cmd = ignoreConflicts ? commands.InsertIgnoreCommand : commands.InsertCommand;
+
+            for (var i = 0; i < commands.Columns.Count; i++)
+            {
+                BindValue(cmd.Parameters[i], rowElement[i], commands.Columns[i]);
+            }
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        private static void WriteColumnValueAssignment(StringBuilder keysBuilder, JsonElement rowElement, ColumnInfo column, List<(ColumnInfo, string)>? blobs, bool isWhereStatement = false)
+        /// <summary>
+        /// Updates the row using the prepared update command.
+        /// Returns the number of updated rows.
+        /// </summary>
+        public static async Task<int> UpdateAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement rowElement, CancellationToken token)
         {
-            if (isWhereStatement && rowElement.ValueKind == JsonValueKind.Null)
+            var updateCommand = commands.UpdateCommand;
+            if (updateCommand == null) return 0;
+
+            var columns = commands.Columns;
+
+            // SET parameters come first (non-key columns), then WHERE parameters (key columns)
+
+            var paramIndex = 0;
+
+            for (var i = 0; i < columns.Count; i++)
             {
-                keysBuilder.Append($"\"{column.Name}\" IS NULL");
+                if (columns[i].IsKey) continue;
+
+                BindValue(updateCommand.Parameters[paramIndex], rowElement[i], columns[i]);
+                paramIndex++;
             }
-            else
+
+            for (var i = 0; i < columns.Count; i++)
             {
-                keysBuilder.Append($"\"{column.Name}\"=");
-                WriteColumnValue(keysBuilder, rowElement, column, blobs);
+                if (!columns[i].IsKey) continue;
+
+                BindValue(updateCommand.Parameters[paramIndex], rowElement[i], columns[i]);
+                paramIndex++;
             }
+
+            return await updateCommand.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        private static void WriteColumnValue(StringBuilder sqlBuilder, JsonElement valElement, ColumnInfo column, List<(ColumnInfo, string)>? blobs)
+        /// <summary>
+        /// Updates the row, skipping "__TOAST__" values (unchanged toasted columns).
+        /// Used when some row values are toasted (unchanged and not sent by PostgreSQL).
+        /// Returns the number of updated rows.
+        /// </summary>
+        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement rowElement, CancellationToken token)
+        {
+            var tableName = GetTableName(fullTableName);
+            var columns = commands.Columns;
+
+            var setCols = new List<int>();
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (columns[i].IsKey) continue;
+
+                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == ToastValue)
+                {
+                    continue; // skip unchanged toasted columns
+                }
+
+                setCols.Add(i);
+            }
+
+            if (setCols.Count == 0) return 1; // nothing to update
+
+            var sqlBuilder = new StringBuilder($"UPDATE \"{tableName}\" SET ");
+
+            var j = 0;
+            foreach (var colIndex in setCols)
+            {
+                if (j > 0) sqlBuilder.Append(", ");
+                sqlBuilder.Append($"\"{columns[colIndex].Name}\" = @p{j}");
+                j++;
+            }
+
+            sqlBuilder.Append(" WHERE ");
+            sqlBuilder.Append(BuildKeyWhereClause(columns, setCols.Count));
+
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = sqlBuilder.ToString();
+
+            var paramIndex = 0;
+
+            foreach (var colIndex in setCols)
+            {
+                cmd.Parameters.AddWithValue($"@p{paramIndex}", DBNull.Value);
+                BindValue(cmd.Parameters[paramIndex], rowElement[colIndex], columns[colIndex]);
+                paramIndex++;
+            }
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (!columns[i].IsKey) continue;
+
+                cmd.Parameters.AddWithValue($"@p{paramIndex}", DBNull.Value);
+                BindValue(cmd.Parameters[paramIndex], rowElement[i], columns[i]);
+                paramIndex++;
+            }
+
+            return await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        public static async Task DeleteAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement keyElement, CancellationToken token)
+        {
+            var deleteCommand = commands.DeleteCommand;
+            if (deleteCommand == null || keyElement.ValueKind != JsonValueKind.Array) return;
+
+            var columns = commands.Columns;
+
+            var keyIndex = 0;
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (!columns[i].IsKey) continue;
+
+                BindValue(deleteCommand.Parameters[keyIndex], keyElement[keyIndex], columns[i]);
+
+                keyIndex++;
+            }
+
+            await deleteCommand.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        private static void BindValue(SqliteParameter param, JsonElement valElement, ColumnInfo column)
         {
             switch (valElement.ValueKind)
             {
                 case JsonValueKind.Undefined:
                 case JsonValueKind.Null:
-                    sqlBuilder.Append("NULL");
+                    param.Value = DBNull.Value;
                     break;
                 case JsonValueKind.Number:
                     if (valElement.TryGetInt64(out var intValue))
                     {
-                        sqlBuilder.Append(intValue.ToString(CultureInfo.InvariantCulture));
+                        param.Value = intValue;
+                    }
+                    else if (valElement.TryGetDecimal(out var decimalValue))
+                    {
+                        param.Value = decimalValue;
                     }
                     else
                     {
-                        valElement.TryGetDecimal(out var decimalValue);
-                        sqlBuilder.Append(decimalValue.ToString(CultureInfo.InvariantCulture));
+                        param.Value = valElement.GetRawText();
                     }
                     break;
                 case JsonValueKind.True:
-                    sqlBuilder.Append('1');
+                    param.Value = 1L;
                     break;
                 case JsonValueKind.False:
-                    sqlBuilder.Append('0');
+                    param.Value = 0L;
                     break;
                 case JsonValueKind.String:
                     if (column.IsDateTime())
                     {
                         var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
-                        AppendEscapedSqlString(sqlBuilder, dateTime.ToString("O"));
+                        param.Value = dateTime.ToString("O");
                     }
                     else if (column.IsBlob())
                     {
-                        var blobValue = valElement.GetString()!;
-                        sqlBuilder.Append($"zeroblob({blobValue.Length / 2})");
-                        blobs?.Add((column, blobValue));
+                        param.Value = ParseHexBlob(valElement.GetString());
                     }
                     else
                     {
-                        AppendEscapedSqlString(sqlBuilder, valElement.GetString() ?? "");
+                        param.Value = valElement.GetString() ?? "";
                     }
                     break;
                 default:
-                    sqlBuilder.Append($"'{valElement.GetRawText()}'");
+                    param.Value = valElement.GetRawText();
                     break;
             }
         }
 
-        private static void AppendEscapedSqlString(StringBuilder sql, string text)
+        private static byte[] ParseHexBlob(string? hexValue)
         {
-            sql.Append('\'');
-            foreach (var c in text)
+            if (hexValue == null) return [];
+
+            var bytes = new byte[hexValue.Length / 2];
+
+            for (var i = 0; i < bytes.Length; i++)
             {
-                if (c == '\'') sql.Append(c); // append two '' to escape it in SQL strings
-                sql.Append(c);
+                bytes[i] = Convert.ToByte(hexValue.Substring(i * 2, 2), 16);
             }
-            sql.Append('\'');
+
+            return bytes;
+        }
+    }
+
+    /// <summary>
+    /// Prepared commands for a table, created from its schema.
+    /// Invalidated and rebuilt when a relation message (schema change) is received.
+    /// </summary>
+    internal sealed class PreparedCommands : IAsyncDisposable
+    {
+        public IReadOnlyList<ColumnInfo> Columns { get; }
+
+        public SqliteCommand InsertCommand { get; }
+
+        public SqliteCommand InsertIgnoreCommand { get; }
+
+        /// <summary>Null when the table has no key columns or no non-key columns.</summary>
+        public SqliteCommand? UpdateCommand { get; }
+
+        /// <summary>Null when the table has no key columns.</summary>
+        public SqliteCommand? DeleteCommand { get; }
+
+        public PreparedCommands(SqliteCommand insertCommand, SqliteCommand insertIgnoreCommand, SqliteCommand? updateCommand, SqliteCommand? deleteCommand, IReadOnlyList<ColumnInfo> columns)
+        {
+            InsertCommand = insertCommand;
+            InsertIgnoreCommand = insertIgnoreCommand;
+            UpdateCommand = updateCommand;
+            DeleteCommand = deleteCommand;
+            Columns = columns;
         }
 
-        private static void StoreBlobs(SqliteConnection cn, string tableName, long rowId, List<(ColumnInfo Col, string Val)> blobs)
+        public async ValueTask DisposeAsync()
         {
-            if (rowId <= 0) return;
+            await InsertCommand.DisposeAsync().ConfigureAwait(false);
+            await InsertIgnoreCommand.DisposeAsync().ConfigureAwait(false);
 
-            foreach (var (Col, Val) in blobs)
+            if (UpdateCommand != null)
             {
-                using var writeStream = new SqliteBlob(cn, $"{tableName}", $"{Col.Name}", rowId);
+                await UpdateCommand.DisposeAsync().ConfigureAwait(false);
+            }
 
-                for (int i = 0; i < Val.Length; i += 2)
-                {
-                    byte b = Convert.ToByte(Val.Substring(i, 2), 16);
-                    writeStream.WriteByte(b);
-                }
-
-                writeStream.Flush();
+            if (DeleteCommand != null)
+            {
+                await DeleteCommand.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
