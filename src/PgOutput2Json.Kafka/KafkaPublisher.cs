@@ -175,6 +175,8 @@ namespace PgOutput2Json.Kafka
 
             using var consumer = new ConsumerBuilder<string, string>(config).Build();
 
+            _lastPublished.Clear();
+
             var partitions = new List<TopicPartitionOffset>();
 
             // Step 1, get partitions offsets
@@ -184,16 +186,24 @@ namespace PgOutput2Json.Kafka
 
                 var endOffsets = consumer.QueryWatermarkOffsets(tpp, TimeSpan.FromSeconds(5));
 
-                if (endOffsets.High > 0)
+                // Low == High means there are no readable records - the partition is empty,
+                // or its whole history was deleted by retention or compaction
+                if (endOffsets.High == 0 || endOffsets.Low >= endOffsets.High)
                 {
-                    // seek to the last message
-                    partitions.Add(new TopicPartitionOffset(tpp, new Offset(endOffsets.High - 1)));
-                }
-                else
-                {
-                    // empty partition - no message was routed to it, contributes (0,0) to the minimum
+                    // the partition contributes (0,0) to the minimum, which forces a full
+                    // replay - receiving duplicates is safe, a wrong watermark is data loss
                     _lastPublished[metadata.PartitionId] = WalPosition.Zero;
+
+                    if (_logger != null && _logger.IsEnabled(LogLevel.Information))
+                    {
+                        _logger.LogInformation("No readable messages in topic {Topic}, partition {Partition}", _options.Topic, metadata.PartitionId);
+                    }
+
+                    continue;
                 }
+
+                // seek to the last message
+                partitions.Add(new TopicPartitionOffset(tpp, new Offset(endOffsets.High - 1)));
             }
 
             // Step 2: Assign manually to specific offsets
@@ -201,29 +211,58 @@ namespace PgOutput2Json.Kafka
 
             var min = WalPosition.Zero;
             var hasWatermark = false;
+            var timeouts = 0;
+            var pending = new HashSet<int>(partitions.Select(p => p.Partition.Value));
 
-            // Step 3: Poll once per partition
-            foreach (var tpo in partitions)
+            // Step 3: read the last message of every non-empty partition. Consume returns
+            // records from any assigned partition in arrival order, so each record is
+            // attributed to the partition it actually came from
+            while (pending.Count > 0)
             {
                 var record = consumer.Consume(TimeSpan.FromSeconds(5));
+
                 if (record == null)
                 {
-                    throw new Exception($"Cannot read the last WAL end LSN of topic {tpo.Topic}, partition {tpo.Partition}. No messages read from a non-empty partition.");
+                    // a partition that holds records can still be slow to fetch - retries are
+                    // bounded, after that the listener reconnects and the scan starts over
+                    if (++timeouts > 2)
+                    {
+                        throw new Exception($"Cannot read the last WAL end LSN of topic {_options.Topic} - no messages read from {pending.Count} of {partitions.Count} non-empty partitions.");
+                    }
+
+                    continue;
                 }
 
-                if (!record.Message.Value.TryGetWalSeq(out var walSeq, out var messageNo))
+                var partition = record.TopicPartition.Partition.Value;
+
+                if (!pending.Remove(partition)) continue;
+
+                string? value = record.Message.Value;
+
+                WalPosition position;
+
+                if (!value.TryGetWalSeq(out var walSeq, out var messageNo))
                 {
-                    throw new Exception($"Missing WAL end LSN in the message: '{record.Message.Value}'");
-                }
+                    // a tombstone or a foreign message as the last record - the partition
+                    // contributes (0,0) to the minimum, same as an empty partition
+                    if (_logger != null && _logger.IsEnabled(LogLevel.Warning))
+                    {
+                        _logger.LogWarning("Last message in topic {Topic}, partition {Partition} carries no WAL end LSN - the partition contributes (0,0) to the deduplication watermark", _options.Topic, partition);
+                    }
 
-                if (_logger != null && _logger.IsEnabled(LogLevel.Information))
+                    position = WalPosition.Zero;
+                }
+                else
                 {
-                    _logger.LogInformation("Last published WAL LSN for topic {Topic}, partition {Partition}: {LastWalSeq}/{LastMessageNo}", tpo.Topic, tpo.Partition, walSeq, messageNo);
+                    if (_logger != null && _logger.IsEnabled(LogLevel.Information))
+                    {
+                        _logger.LogInformation("Last published WAL LSN for topic {Topic}, partition {Partition}: {LastWalSeq}/{LastMessageNo}", record.Topic, partition, walSeq, messageNo);
+                    }
+
+                    position = new WalPosition(walSeq, messageNo);
                 }
 
-                var position = new WalPosition(walSeq, messageNo);
-
-                _lastPublished[tpo.Partition.Value] = position;
+                _lastPublished[partition] = position;
 
                 // the minimum across the partitions is a safe deduplication watermark -
                 // everything at or below it is already published to all the partitions
@@ -277,10 +316,6 @@ namespace PgOutput2Json.Kafka
         private readonly KafkaPublisherOptions _options;
         private readonly bool _useDeduplication;
         private readonly ILogger<KafkaPublisher>? _logger;
-
-        private readonly Random _random = new();
-
-        private readonly StringBuilder _partitionKeyBuilder = new();
 
         private List<PartitionMetadata> _partitionMetadata = [];
 
