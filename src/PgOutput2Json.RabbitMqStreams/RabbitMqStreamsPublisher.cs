@@ -269,14 +269,23 @@ namespace PgOutput2Json.RabbitMqStreams
 
             foreach (var partition in partitions)
             {
+                // only an empty stream has no committed chunk - any other error must not
+                // inflate the minimum, it propagates and the listener reconnects and retries
                 try
                 {
-                    var stats = await system.StreamStats(partition).ConfigureAwait(false);
-                    var firstOffset = stats.CommittedChunkId();
+                    await system.StreamStats(partition).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (OffsetNotFoundException)
                 {
-                    _logger?.LogInformation("Empty stream detected: {StreamName} ({ErrorMessage}).", partition, ex.Message);
+                    // an empty stream carries no position - it contributes (0,0) to the
+                    // minimum, which forces a full replay: duplicates are safe, a wrong
+                    // watermark is data loss
+                    _logger?.LogInformation("Empty stream detected: {StreamName}.", partition);
+
+                    _lastPublished[partition] = WalPosition.Zero;
+
+                    hasWatermark = true;
+                    min = WalPosition.Zero;
                     continue;
                 }
 
