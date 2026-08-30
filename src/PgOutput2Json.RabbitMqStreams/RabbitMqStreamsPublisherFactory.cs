@@ -13,7 +13,7 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new RabbitMqStreamsPublisher(_options, listenerOptions.BatchSize, loggerFactory);
+            return new RabbitMqStreamsPublisher(_options, listenerOptions.BatchSize, loggerFactory, listenerOptions.UseDeduplication);
         }
     }
 }

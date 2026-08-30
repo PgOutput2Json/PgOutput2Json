@@ -13,10 +13,11 @@ namespace PgOutput2Json.Kafka
 {
     public class KafkaPublisher: MessagePublisher
     {
-        public KafkaPublisher(KafkaPublisherOptions options, ILogger<KafkaPublisher>? logger = null)
+        public KafkaPublisher(KafkaPublisherOptions options, ILogger<KafkaPublisher>? logger = null, bool useDeduplication = true)
         {
             _options = options;
             _logger = logger;
+            _useDeduplication = useDeduplication;
             _partitionMetadata = GetPartitionMetadata(options);
         }
 
@@ -26,11 +27,20 @@ namespace PgOutput2Json.Kafka
             var msgJson = message.Json.ToString();
             var msgKey = message.KeyKolValue.ToString();
 
-            var partitionId = GetPartitionId(message, out var partitionKey);
-
-            if (_options.WriteTableNameToMessageKey) 
+            if (_options.WriteTableNameToMessageKey)
             {
                 msgKey = string.Join("", tableName, msgKey);
+            }
+
+            var partitionId = GetPartitionId(message, msgKey, out var partitionKey);
+
+            if (_useDeduplication && IsAlreadyPublished(partitionId, message.TxFinalLsn, message.MessageNo))
+            {
+                _logger?.LogWarning("Skipping already published message for topic {Topic}, partition {Partition}: " +
+                    "TX Final LSN = {TxFinalLsn}, MessageNo = {MessageNo}",
+                    _options.Topic, partitionId, message.TxFinalLsn, message.MessageNo);
+
+                return Task.CompletedTask;
             }
 
             Headers? headers = null;
@@ -58,7 +68,7 @@ namespace PgOutput2Json.Kafka
                 Key = msgKey,
                 Value = msgJson,
                 Headers = headers
-            }, 
+            },
             deliveryReport =>
             {
                 if (deliveryReport.Error.IsError)
@@ -66,19 +76,64 @@ namespace PgOutput2Json.Kafka
                     throw new Exception(deliveryReport.Error.Reason);
                 }
             });
-            
+
+            if (_useDeduplication)
+            {
+                TrackWalSeq(partitionId, message.TxFinalLsn, message.MessageNo);
+            }
+
             return Task.CompletedTask;
         }
 
-        private int GetPartitionId(JsonMessage message, out string? partitionKey)
+        private int GetPartitionId(JsonMessage message, string msgKey, out string? partitionKey)
         {
             partitionKey = null;
-            if (_partitionMetadata.Count < 2 || message.PartitionKolValue.Length == 0) return Partition.Any;
 
-            partitionKey = message.PartitionKolValue.ToString();
-            var index = Math.Abs(partitionKey.GetHashCode()) % _partitionMetadata.Count;
+            if (_partitionMetadata.Count == 0) return Partition.Any;
+
+            if (_partitionMetadata.Count < 2)
+            {
+                // single partition topic
+                return _partitionMetadata[0].PartitionId;
+            }
+
+            string routingKey;
+
+            if (message.PartitionKolValue.Length > 0)
+            {
+                partitionKey = message.PartitionKolValue.ToString();
+                routingKey = partitionKey;
+            }
+            else
+            {
+                // no partition key columns are configured - librdkafka would hash the message key,
+                // hash it the same way to keep the target partition predictable
+                routingKey = msgKey;
+            }
+
+            var index = (MurmurHash2.Hash(routingKey) & 0x7fffffff) % _partitionMetadata.Count;
 
             return _partitionMetadata[index].PartitionId;
+        }
+
+        private bool IsAlreadyPublished(int partitionId, ulong txFinalLsn, ulong messageNo)
+        {
+            return _lastPublished.TryGetValue(partitionId, out var last)
+                && (txFinalLsn < last.WalSeq || (txFinalLsn == last.WalSeq && messageNo <= last.MessageNo));
+        }
+
+        private void TrackWalSeq(int partitionId, ulong txFinalLsn, ulong messageNo)
+        {
+            // Partition.Any means partition metadata is missing - the target partition cannot be tracked
+            if (partitionId == Partition.Any) return;
+
+            // messages are published in order, so the pair can only move forward
+            if (!_lastPublished.TryGetValue(partitionId, out var last)
+                || txFinalLsn > last.WalSeq
+                || (txFinalLsn == last.WalSeq && messageNo > last.MessageNo))
+            {
+                _lastPublished[partitionId] = (txFinalLsn, messageNo);
+            }
         }
 
         public override Task ConfirmAsync(CancellationToken token)
@@ -134,13 +189,19 @@ namespace PgOutput2Json.Kafka
                     // seek to the last message
                     partitions.Add(new TopicPartitionOffset(tpp, new Offset(endOffsets.High - 1)));
                 }
+                else
+                {
+                    // empty partition - no message was routed to it, excluded from the minimum
+                    _lastPublished[metadata.PartitionId] = (0, 0);
+                }
             }
 
             // Step 2: Assign manually to specific offsets
             consumer.Assign(partitions);
 
-            var lastWalSeq = 0ul;
-            var lastMessageNo = 0ul;
+            var minWalSeq = 0ul;
+            var minMessageNo = 0ul;
+            var hasWatermark = false;
 
             // Step 3: Poll once per partition
             foreach (var tpo in partitions)
@@ -148,26 +209,28 @@ namespace PgOutput2Json.Kafka
                 var record = consumer.Consume(TimeSpan.FromSeconds(5));
                 if (record == null)
                 {
-                    if (_logger != null && _logger.IsEnabled(LogLevel.Warning))
-                    {
-                        _logger.LogWarning("Empty record returned when reading last WAL LSN from topic {Topic}, partition {Partition}", tpo.Topic, tpo.Partition);
-                    }
-                    continue; 
+                    throw new Exception($"Cannot read the last WAL end LSN of topic {tpo.Topic}, partition {tpo.Partition}. No messages read from a non-empty partition.");
                 }
-              
+
                 if (!record.Message.Value.TryGetWalSeq(out var walSeq, out var messageNo))
                 {
                     throw new Exception($"Missing WAL end LSN in the message: '{record.Message.Value}'");
                 }
 
-                if (walSeq > lastWalSeq)
+                if (_logger != null && _logger.IsEnabled(LogLevel.Information))
                 {
-                    lastWalSeq = walSeq;
-                    lastMessageNo = messageNo;
+                    _logger.LogInformation("Last published WAL LSN for topic {Topic}, partition {Partition}: {LastWalSeq}/{LastMessageNo}", tpo.Topic, tpo.Partition, walSeq, messageNo);
                 }
-                else if (walSeq == lastWalSeq && messageNo > lastMessageNo)
+
+                _lastPublished[tpo.Partition.Value] = (walSeq, messageNo);
+
+                // the minimum across the partitions is a safe deduplication watermark -
+                // everything at or below it is already published to all the partitions
+                if (!hasWatermark || walSeq < minWalSeq || (walSeq == minWalSeq && messageNo < minMessageNo))
                 {
-                    lastMessageNo = messageNo;
+                    hasWatermark = true;
+                    minWalSeq = walSeq;
+                    minMessageNo = messageNo;
                 }
             }
 
@@ -175,10 +238,10 @@ namespace PgOutput2Json.Kafka
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, lastWalSeq, lastMessageNo);
+                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, minWalSeq, minMessageNo);
             }
 
-            return Task.FromResult((lastWalSeq, lastMessageNo));
+            return Task.FromResult((minWalSeq, minMessageNo));
         }
 
         private static List<PartitionMetadata> GetPartitionMetadata(KafkaPublisherOptions options)
@@ -212,6 +275,7 @@ namespace PgOutput2Json.Kafka
         private IProducer<string, string>? _producer;
 
         private readonly KafkaPublisherOptions _options;
+        private readonly bool _useDeduplication;
         private readonly ILogger<KafkaPublisher>? _logger;
 
         private readonly Random _random = new();
@@ -219,5 +283,7 @@ namespace PgOutput2Json.Kafka
         private readonly StringBuilder _partitionKeyBuilder = new();
 
         private List<PartitionMetadata> _partitionMetadata = [];
+
+        private readonly Dictionary<int, (ulong WalSeq, ulong MessageNo)> _lastPublished = new();
     }
 }

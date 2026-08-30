@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,11 +12,12 @@ namespace PgOutput2Json.RabbitMqStreams
 {
     public class RabbitMqStreamsPublisher: MessagePublisher
     {
-        public RabbitMqStreamsPublisher(RabbitMqStreamsPublisherOptions options, int batchSize, ILoggerFactory? loggerFactory = null)
+        public RabbitMqStreamsPublisher(RabbitMqStreamsPublisherOptions options, int batchSize, ILoggerFactory? loggerFactory = null, bool useDeduplication = true)
         {
             _options = options;
             _batchSize = batchSize;
-            
+            _useDeduplication = useDeduplication;
+
             _loggerStreamSystem = loggerFactory?.CreateLogger<StreamSystem>();
             _loggerProducer = loggerFactory?.CreateLogger<Producer>();
             _logger = loggerFactory?.CreateLogger<RabbitMqStreamsPublisher>();
@@ -23,18 +25,6 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public async override Task PublishAsync(JsonMessage jsonMsg, CancellationToken token)
         {
-            var producer = await EnsureProducerAsync().ConfigureAwait(false);
-
-            lock (_confirmationLock)
-            {
-                _unconfirmedCount++;
-
-                if (_confirmationTaskCompletionSource == null || _confirmationTaskCompletionSource.Task.IsCompleted)
-                {
-                    _confirmationTaskCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                }
-            }
-
             var json = jsonMsg.Json.ToString();
 
             var msg = new Message(Encoding.UTF8.GetBytes(json))
@@ -55,11 +45,82 @@ namespace PgOutput2Json.RabbitMqStreams
                 };
             }
 
+            // resolves to the same partition the client's routing picks, so
+            // the messages to the same partition can be deduplicated
+            var partitionStream = await ResolvePartitionStreamAsync(msg).ConfigureAwait(false);
+
+            if (partitionStream != null && IsAlreadyPublished(partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo))
+            {
+                _logger?.LogWarning("Skipping already published message for stream {Stream}: " +
+                    "TX Final LSN = {TxFinalLsn}, MessageNo = {MessageNo}",
+                    partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo);
+
+                return;
+            }
+
+            var producer = await EnsureProducerAsync().ConfigureAwait(false);
+
+            lock (_confirmationLock)
+            {
+                _unconfirmedCount++;
+
+                if (_confirmationTaskCompletionSource == null || _confirmationTaskCompletionSource.Task.IsCompleted)
+                {
+                    _confirmationTaskCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+            }
+
             await producer.Send(msg).ConfigureAwait(false);
+
+            if (partitionStream != null)
+            {
+                TrackWalSeq(partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo);
+            }
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
                 _logger.LogDebug("Published to {StreamName}: {Body}", _options.StreamName, json);
+            }
+        }
+
+        private async Task<string?> ResolvePartitionStreamAsync(Message msg)
+        {
+            if (!_useDeduplication) return null;
+
+            // without super streams, the stream is a single partition tracked by its name
+            if (!_options.IsSuperStream) return _options.StreamName;
+
+            var superStreamConfig = _options.SuperStreamConfig;
+
+            // only the murmur hash routing can be replicated client-side to know the target partition
+            if (superStreamConfig?.Routing == null
+                || superStreamConfig.RoutingStrategyType != RoutingStrategyType.Hash
+                || _superStreamPartitions == null)
+            {
+                return null;
+            }
+
+            var strategy = _hashRoutingStrategy ??= new HashRoutingMurmurStrategy(superStreamConfig.Routing);
+
+            var routes = await strategy.Route(msg, _superStreamPartitions).ConfigureAwait(false);
+
+            return routes is { Count: > 0 } ? routes[0] : null;
+        }
+
+        private bool IsAlreadyPublished(string streamName, ulong txFinalLsn, ulong messageNo)
+        {
+            return _lastPublished.TryGetValue(streamName, out var last)
+                && (txFinalLsn < last.WalSeq || (txFinalLsn == last.WalSeq && messageNo <= last.MessageNo));
+        }
+
+        private void TrackWalSeq(string streamName, ulong txFinalLsn, ulong messageNo)
+        {
+            // messages are published in order, so the pair can only move forward
+            if (!_lastPublished.TryGetValue(streamName, out var last)
+                || txFinalLsn > last.WalSeq
+                || (txFinalLsn == last.WalSeq && messageNo > last.MessageNo))
+            {
+                _lastPublished[streamName] = (txFinalLsn, messageNo);
             }
         }
 
@@ -128,7 +189,7 @@ namespace PgOutput2Json.RabbitMqStreams
         private async Task<Producer> EnsureProducerAsync()
         {
             if (_producer != null && _producer.IsOpen()) return _producer;
-            
+
             var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
             _logger?.LogInformation("Creating producer for: {StreamName}", _options.StreamName);
@@ -195,8 +256,17 @@ namespace PgOutput2Json.RabbitMqStreams
                     ? await system.QueryPartition(_options.StreamName).ConfigureAwait(false)
                     : [_options.StreamName];
 
-            var maxWalEnd = 0UL;
-            var maxMessageNo = 0UL;
+            // cached for resolving the routing of messages published later
+            if (_options.IsSuperStream)
+            {
+                _superStreamPartitions = [.. partitions];
+            }
+
+            _lastPublished.Clear();
+
+            var minWalEnd = 0UL;
+            var minMessageNo = 0UL;
+            var hasWatermark = false;
 
             foreach (var partition in partitions)
             {
@@ -257,20 +327,21 @@ namespace PgOutput2Json.RabbitMqStreams
 
                 _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", partition, walEnd, messageNo);
 
-                if (walEnd > maxWalEnd)
+                _lastPublished[partition] = (walEnd, messageNo);
+
+                // the minimum across the partitions is a safe deduplication watermark -
+                // everything at or below it is already published to all the partitions
+                if (!hasWatermark || walEnd < minWalEnd || (walEnd == minWalEnd && messageNo < minMessageNo))
                 {
-                    maxWalEnd = walEnd;
-                    maxMessageNo = messageNo;
-                }
-                else if (walEnd == maxWalEnd && messageNo > maxMessageNo)
-                {
-                    maxMessageNo = messageNo;
+                    hasWatermark = true;
+                    minWalEnd = walEnd;
+                    minMessageNo = messageNo;
                 }
             }
 
-            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, maxWalEnd, maxMessageNo);
+            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, minWalEnd, minMessageNo);
 
-            return (maxWalEnd, maxMessageNo);
+            return (minWalEnd, minMessageNo);
         }
 
         private StreamSystem? _streamSystem;
@@ -283,6 +354,13 @@ namespace PgOutput2Json.RabbitMqStreams
 
         private readonly RabbitMqStreamsPublisherOptions _options;
         private readonly int _batchSize;
+        private readonly bool _useDeduplication;
+
+        private List<string>? _superStreamPartitions;
+        private HashRoutingMurmurStrategy? _hashRoutingStrategy;
+
+        private readonly Dictionary<string, (ulong WalSeq, ulong MessageNo)> _lastPublished = new();
+
         private readonly ILogger<StreamSystem>? _loggerStreamSystem;
         private readonly ILogger<Producer>? _loggerProducer;
         private readonly ILogger<RabbitMqStreamsPublisher>? _logger;

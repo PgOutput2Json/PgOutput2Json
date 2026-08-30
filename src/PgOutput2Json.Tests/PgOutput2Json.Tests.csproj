@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PgOutput2Json\PgOutput2Json.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
   </ItemGroup>
 
 </Project>
