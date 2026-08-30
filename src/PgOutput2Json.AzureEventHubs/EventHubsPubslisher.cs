@@ -89,7 +89,7 @@ namespace PgOutput2Json.AzureEventHubs
 
         public async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return await GetMaxWalOffsetAsync(_options.ConnectionString, _options.EventHubName, token)
+            return await GetMinWalOffsetAsync(_options.ConnectionString, _options.EventHubName, token)
                 .ConfigureAwait(false);
         }
 
@@ -146,70 +146,69 @@ namespace PgOutput2Json.AzureEventHubs
         }
 
         /// <summary>
-        /// Reads the last message from each partition and returns the largest WAL offset.
-        /// Optimized for single publisher scenario - only reads one message per partition.
+        /// Reads the last message from each partition and returns the lowest WAL position -
+        /// everything at or below it is already published to all partitions, so it is the
+        /// safe resume point. Optimized for single publisher scenario - only reads one
+        /// message per partition.
         /// </summary>
         /// <param name="connectionString">Event Hubs connection string</param>
         /// <param name="eventHubName">Event Hub name</param>
         /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The largest WAL offset found, or 0 if no messages found</returns>
-        private static async Task<(ulong, ulong)> GetMaxWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
+        /// <returns>The lowest WAL position found, or (0,0) if any partition is empty</returns>
+        private async Task<(ulong, ulong)> GetMinWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
         {
             await using var consumer = new EventHubConsumerClient(EventHubConsumerClient.DefaultConsumerGroupName, connectionString, eventHubName);
 
             var partitionIds = await consumer.GetPartitionIdsAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            var maxWalOffset = 0UL;
-            var maxMessageNo = 0UL;
+            var min = WalPosition.Zero;
+            var hasWatermark = false;
 
             foreach (var partitionId in partitionIds)
             {
-                try
+                var partitionProps = await consumer.GetPartitionPropertiesAsync(partitionId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                // an empty partition contributes (0,0) to the minimum, which forces a full
+                // replay - duplicates are safe, a wrong watermark is data loss
+                if (partitionProps.IsEmpty)
                 {
-                    // Check if partition has any messages
-                    var partitionProps = await consumer.GetPartitionPropertiesAsync(partitionId, cancellationToken)
-                        .ConfigureAwait(false);
-
-                    if (partitionProps.IsEmpty)
-                    {
-                        return (0L, 0L); // No messages in this partition
-                    }
-
-                    // Read from the last sequence number (the very last message)
-                    var lastEventPosition = EventPosition.FromSequenceNumber(partitionProps.LastEnqueuedSequenceNumber);
-
-                    var readOptions = new ReadEventOptions
-                    {
-                        MaximumWaitTime = TimeSpan.FromSeconds(2) // Short timeout since we only need one message
-                    };
-
-                    await foreach (var partitionEvent in consumer.ReadEventsFromPartitionAsync(partitionId, lastEventPosition, readOptions, cancellationToken))
-                    {
-                        ulong walOffset = GetULongPropValue(partitionEvent, "txFinalLsn");
-                        ulong messageNo = GetULongPropValue(partitionEvent, "messageNo");
-
-                        if (walOffset > maxWalOffset)
-                        {
-                            maxWalOffset = walOffset;
-                            maxMessageNo = messageNo;
-                        }
-                        else if (walOffset == maxWalOffset && messageNo > maxMessageNo)
-                        {
-                            maxMessageNo = messageNo;
-                        }
-
-                        break;
-                    }
+                    return (0UL, 0UL);
                 }
-                catch (Exception ex)
+
+                // Read from the last sequence number (the very last message)
+                var lastEventPosition = EventPosition.FromSequenceNumber(partitionProps.LastEnqueuedSequenceNumber);
+
+                var readOptions = new ReadEventOptions
                 {
-                    Console.WriteLine($"Warning: Could not read from partition {partitionId}: {ex.Message}");
-                    return (0UL, 0L); // Return 0 for failed partitions, don't crash the whole operation
-                }
-            };
+                    MaximumWaitTime = TimeSpan.FromSeconds(2) // Short timeout since we only need one message
+                };
 
-            return (maxWalOffset, maxMessageNo);
+                WalPosition? position = null;
+
+                await foreach (var partitionEvent in consumer.ReadEventsFromPartitionAsync(partitionId, lastEventPosition, readOptions, cancellationToken))
+                {
+                    position = new WalPosition(GetULongPropValue(partitionEvent, "txFinalLsn"), GetULongPropValue(partitionEvent, "messageNo"));
+
+                    break;
+                }
+
+                if (position == null)
+                {
+                    throw new Exception($"Could not read the last message from Event Hub partition {partitionId} - the partition reports sequence number {partitionProps.LastEnqueuedSequenceNumber}, but no event was received in time.");
+                }
+
+                // the minimum across the partitions is a safe deduplication watermark -
+                // everything at or below it is already published to all the partitions
+                if (!hasWatermark || position.Value.IsAtOrBelow(min))
+                {
+                    hasWatermark = true;
+                    min = position.Value;
+                }
+            }
+
+            return (min.WalSeq, min.MessageNo);
         }
 
         private static ulong GetULongPropValue(PartitionEvent partitionEvent, string propName)
