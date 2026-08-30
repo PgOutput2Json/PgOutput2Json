@@ -196,18 +196,16 @@ namespace PgOutput2Json
                                 replicationMessage.Message = message;
                                 replicationMessage.MessageNo++;
 
-                                if (_options.UseDeduplication) {
+                                if (_options.UseDeduplication &&
+                                    new WalPosition(replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo)
+                                        .IsDuplicate(new WalPosition(txFinalLsn, msgNo)))
+                                {
+                                    // already processed
+                                    _logger?.LogWarning("Skipping already published message: " +
+                                        "TX Final LSN = {TxFinalLsn}, " +
+                                        "MessageNo = {MesageNo}", replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo);
 
-                                    if ((replicationMessage.TransactionFinalLsn < txFinalLsn) ||
-                                        (replicationMessage.TransactionFinalLsn == txFinalLsn && replicationMessage.MessageNo <= msgNo))
-                                    {
-                                        // already processed
-                                        _logger?.LogWarning("Skipping already published message: " +
-                                            "TX Final LSN = {TxFinalLsn}, " +
-                                            "MessageNo = {MesageNo}", replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo);
-
-                                        continue;
-                                    }
+                                    continue;
                                 }
 
                                 var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)

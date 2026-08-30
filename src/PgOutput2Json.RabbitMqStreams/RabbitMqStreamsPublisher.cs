@@ -110,17 +110,17 @@ namespace PgOutput2Json.RabbitMqStreams
         private bool IsAlreadyPublished(string streamName, ulong txFinalLsn, ulong messageNo)
         {
             return _lastPublished.TryGetValue(streamName, out var last)
-                && (txFinalLsn < last.WalSeq || (txFinalLsn == last.WalSeq && messageNo <= last.MessageNo));
+                && new WalPosition(txFinalLsn, messageNo).IsDuplicate(last);
         }
 
         private void TrackWalSeq(string streamName, ulong txFinalLsn, ulong messageNo)
         {
-            // messages are published in order, so the pair can only move forward
-            if (!_lastPublished.TryGetValue(streamName, out var last)
-                || txFinalLsn > last.WalSeq
-                || (txFinalLsn == last.WalSeq && messageNo > last.MessageNo))
+            var position = new WalPosition(txFinalLsn, messageNo);
+
+            // messages are published in order, so the position can only move forward
+            if (!_lastPublished.TryGetValue(streamName, out var last) || position.IsAfter(last))
             {
-                _lastPublished[streamName] = (txFinalLsn, messageNo);
+                _lastPublished[streamName] = position;
             }
         }
 
@@ -264,8 +264,7 @@ namespace PgOutput2Json.RabbitMqStreams
 
             _lastPublished.Clear();
 
-            var minWalEnd = 0UL;
-            var minMessageNo = 0UL;
+            var min = WalPosition.Zero;
             var hasWatermark = false;
 
             foreach (var partition in partitions)
@@ -327,21 +326,22 @@ namespace PgOutput2Json.RabbitMqStreams
 
                 _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", partition, walEnd, messageNo);
 
-                _lastPublished[partition] = (walEnd, messageNo);
+                var position = new WalPosition(walEnd, messageNo);
+
+                _lastPublished[partition] = position;
 
                 // the minimum across the partitions is a safe deduplication watermark -
                 // everything at or below it is already published to all the partitions
-                if (!hasWatermark || walEnd < minWalEnd || (walEnd == minWalEnd && messageNo < minMessageNo))
+                if (!hasWatermark || position.IsAtOrBelow(min))
                 {
                     hasWatermark = true;
-                    minWalEnd = walEnd;
-                    minMessageNo = messageNo;
+                    min = position;
                 }
             }
 
-            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, minWalEnd, minMessageNo);
+            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, min.WalSeq, min.MessageNo);
 
-            return (minWalEnd, minMessageNo);
+            return (min.WalSeq, min.MessageNo);
         }
 
         private StreamSystem? _streamSystem;
@@ -359,7 +359,7 @@ namespace PgOutput2Json.RabbitMqStreams
         private List<string>? _superStreamPartitions;
         private HashRoutingMurmurStrategy? _hashRoutingStrategy;
 
-        private readonly Dictionary<string, (ulong WalSeq, ulong MessageNo)> _lastPublished = new();
+        private readonly Dictionary<string, WalPosition> _lastPublished = new();
 
         private readonly ILogger<StreamSystem>? _loggerStreamSystem;
         private readonly ILogger<Producer>? _loggerProducer;

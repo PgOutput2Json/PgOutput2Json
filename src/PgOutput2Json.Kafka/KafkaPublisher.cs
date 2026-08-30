@@ -119,7 +119,7 @@ namespace PgOutput2Json.Kafka
         private bool IsAlreadyPublished(int partitionId, ulong txFinalLsn, ulong messageNo)
         {
             return _lastPublished.TryGetValue(partitionId, out var last)
-                && (txFinalLsn < last.WalSeq || (txFinalLsn == last.WalSeq && messageNo <= last.MessageNo));
+                && new WalPosition(txFinalLsn, messageNo).IsDuplicate(last);
         }
 
         private void TrackWalSeq(int partitionId, ulong txFinalLsn, ulong messageNo)
@@ -127,12 +127,12 @@ namespace PgOutput2Json.Kafka
             // Partition.Any means partition metadata is missing - the target partition cannot be tracked
             if (partitionId == Partition.Any) return;
 
-            // messages are published in order, so the pair can only move forward
-            if (!_lastPublished.TryGetValue(partitionId, out var last)
-                || txFinalLsn > last.WalSeq
-                || (txFinalLsn == last.WalSeq && messageNo > last.MessageNo))
+            var position = new WalPosition(txFinalLsn, messageNo);
+
+            // messages are published in order, so the position can only move forward
+            if (!_lastPublished.TryGetValue(partitionId, out var last) || position.IsAfter(last))
             {
-                _lastPublished[partitionId] = (txFinalLsn, messageNo);
+                _lastPublished[partitionId] = position;
             }
         }
 
@@ -191,16 +191,15 @@ namespace PgOutput2Json.Kafka
                 }
                 else
                 {
-                    // empty partition - no message was routed to it, excluded from the minimum
-                    _lastPublished[metadata.PartitionId] = (0, 0);
+                    // empty partition - no message was routed to it, contributes (0,0) to the minimum
+                    _lastPublished[metadata.PartitionId] = WalPosition.Zero;
                 }
             }
 
             // Step 2: Assign manually to specific offsets
             consumer.Assign(partitions);
 
-            var minWalSeq = 0ul;
-            var minMessageNo = 0ul;
+            var min = WalPosition.Zero;
             var hasWatermark = false;
 
             // Step 3: Poll once per partition
@@ -222,15 +221,16 @@ namespace PgOutput2Json.Kafka
                     _logger.LogInformation("Last published WAL LSN for topic {Topic}, partition {Partition}: {LastWalSeq}/{LastMessageNo}", tpo.Topic, tpo.Partition, walSeq, messageNo);
                 }
 
-                _lastPublished[tpo.Partition.Value] = (walSeq, messageNo);
+                var position = new WalPosition(walSeq, messageNo);
+
+                _lastPublished[tpo.Partition.Value] = position;
 
                 // the minimum across the partitions is a safe deduplication watermark -
                 // everything at or below it is already published to all the partitions
-                if (!hasWatermark || walSeq < minWalSeq || (walSeq == minWalSeq && messageNo < minMessageNo))
+                if (!hasWatermark || position.IsAtOrBelow(min))
                 {
                     hasWatermark = true;
-                    minWalSeq = walSeq;
-                    minMessageNo = messageNo;
+                    min = position;
                 }
             }
 
@@ -238,10 +238,10 @@ namespace PgOutput2Json.Kafka
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, minWalSeq, minMessageNo);
+                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, min.WalSeq, min.MessageNo);
             }
 
-            return Task.FromResult((minWalSeq, minMessageNo));
+            return Task.FromResult((min.WalSeq, min.MessageNo));
         }
 
         private static List<PartitionMetadata> GetPartitionMetadata(KafkaPublisherOptions options)
@@ -284,6 +284,6 @@ namespace PgOutput2Json.Kafka
 
         private List<PartitionMetadata> _partitionMetadata = [];
 
-        private readonly Dictionary<int, (ulong WalSeq, ulong MessageNo)> _lastPublished = new();
+        private readonly Dictionary<int, WalPosition> _lastPublished = new();
     }
 }
