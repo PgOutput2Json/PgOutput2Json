@@ -172,6 +172,16 @@ namespace PgOutput2Json.RabbitMqStreams
             _streamSystem = null;
         }
 
+        private async Task<string[]> QuerySuperStreamPartitionsAsync(StreamSystem system)
+        {
+            var partitions = await system.QueryPartition(_options.StreamName).ConfigureAwait(false);
+
+            // cached for resolving the routing of messages published later
+            _superStreamPartitions = [.. partitions];
+
+            return partitions;
+        }
+
         private async Task<StreamSystem> EnsureStreamSystemAsync()
         {
             if (_streamSystem != null && !_streamSystem.IsClosed) return _streamSystem;
@@ -203,6 +213,16 @@ namespace PgOutput2Json.RabbitMqStreams
                     ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-producer",
                     ConfirmationHandler = confirmation =>
                     {
+                        // a confirmation from a partition missing from the routing snapshot
+                        // means the super stream topology changed - the client-side dedup
+                        // decisions can be stale until the publisher is recreated
+                        if (_options.IsSuperStream
+                            && _superStreamPartitions != null
+                            && !_superStreamPartitions.Contains(confirmation.Stream))
+                        {
+                            _logger?.LogWarning("Confirmation from unknown stream {Stream} - super stream topology changed, client-side deduplication routing may be stale", confirmation.Stream);
+                        }
+
                         switch (confirmation.Status)
                         {
                             case ConfirmationStatus.Confirmed:
@@ -243,6 +263,15 @@ namespace PgOutput2Json.RabbitMqStreams
 
             _logger?.LogInformation("Created producer for: {StreamName}", _options.StreamName);
 
+            // the library resolves its own partition list while creating the super stream
+            // producer - reading ours at the same point keeps the two snapshots from
+            // diverging, otherwise a changed partition count can reroute most keys and
+            // invalidate the deduplication watermarks
+            if (_options.IsSuperStream)
+            {
+                await QuerySuperStreamPartitionsAsync(streamSystem).ConfigureAwait(false);
+            }
+
             return _producer;
         }
 
@@ -256,14 +285,8 @@ namespace PgOutput2Json.RabbitMqStreams
             var system = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
             var partitions = _options.IsSuperStream
-                    ? await system.QueryPartition(_options.StreamName).ConfigureAwait(false)
+                    ? await QuerySuperStreamPartitionsAsync(system).ConfigureAwait(false)
                     : [_options.StreamName];
-
-            // cached for resolving the routing of messages published later
-            if (_options.IsSuperStream)
-            {
-                _superStreamPartitions = [.. partitions];
-            }
 
             _lastPublished.Clear();
 
