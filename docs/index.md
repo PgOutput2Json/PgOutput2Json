@@ -25,6 +25,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **Amazon Kinesis**
 - ✅ **Amazon DynamoDB**
 - ✅ **Azure Event Hubs**
+- ✅ **Webhooks** (used by [PgHook](https://github.com/PgHookCom/PgHook))
 
 Plug-and-play adapters handle the heavy lifting — or handle messages directly in your app for maximum control.
 
@@ -44,7 +45,8 @@ The change events JSON format:
 ```
 {
   "c": "U",             // Change type: I (insert), U (update), D (delete)
-  "w": 2485645760,      // Deduplication key (based on XLogData WAL Start)
+  "w": 2485645760,      // Transaction final LSN — part of the deduplication key
+  "n": 1,               // Message number within the transaction — part of the deduplication key
   "t": "schema.table",  // Table name (if enabled in JSON options)
   "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
                         // or old row values, if the table uses REPLICA IDENTITY FULL
@@ -52,9 +54,24 @@ The change events JSON format:
 }
 ```
 
+## 🔁 Deduplication
+
+The current position of a replication slot is persisted only at checkpoints, so after a crash or a reconnect the slot may replay changes that were already consumed. To make replays harmless, every published message carries a deduplication key — the transaction final LSN (`"w"`) plus the message number within that transaction (`"n"`).
+
+Deduplication is enabled by default (disable it with `.WithDeduplication(false)`) and works on two levels:
+
+1. **On connect**, the library asks the publisher for the last durably published position and skips every replayed message at or below it. For partitioned publishers (Kafka, RabbitMQ Streams super streams) the last position of every partition is read, and the **lowest** one is used — only that position is guaranteed to be published to all partitions. With `.WithDeduplication(false)` this startup scan is skipped.
+2. **During publishing**, partitioned publishers additionally skip messages already sent to their resolved target partition. The target partition is computed client-side using the same deterministic hash the publisher routes with (Kafka murmur2, RabbitMQ super stream murmur3), so routing stays stable across restarts.
+
+If a partition has no readable history — an empty partition, one emptied by retention, or one that cannot be read during the scan — its last position is unknown, which forces a full replay on the next run. The failure mode is therefore always duplicate messages, never silently dropped ones, but consumers should still handle duplicates idempotently (see the note about permanent replication slots below).
+
 ## ⚠️ Development Status
 
 **Still early days** — the library is under active development, but it's **fully usable for testing and early integration**.
+
+## 🤖 AI-assisted Development
+
+For transparency: as of recently, we use AI tools (e.g. Claude Code) for some development tasks — writing and reviewing code, tests, and documentation, and analyzing issues. AI-assisted changes go through the same review and testing as everything else before they are merged into a release.
 
 ## 1. Quick Start
 
@@ -64,6 +81,11 @@ To enable logical replication, add the following setting in your `postgresql.con
 
 ```
 wal_level = logical
+
+# If needed increase the number of WAL senders, replication slots.
+# The default is 10 for both.
+max_wal_senders = 10
+max_replication_slots = 10
 ```
 
 Other necessary settings usually have appropriate default values for a basic setup.
@@ -427,7 +449,7 @@ JSON messages will be published to the specified Redis stream. If a stream name 
 
 ## 7. Using SQLite
 
-PgOutput2Json supports copying modified PostgreSQL rows to SQLite. My default, rows are copied only when they change, using logical replication and compact JSON messages. 
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication and compact JSON messages. 
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.
@@ -534,7 +556,7 @@ public class Worker : BackgroundService
 
 ## 9. Using Amazon Kinesis
 
-PgOutput2Json supports pushing row changes as JSON mesages to Amazon Kinesis.
+PgOutput2Json supports pushing row changes as JSON messages to Amazon Kinesis.
 
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
 
@@ -727,3 +749,81 @@ public class Worker : BackgroundService
 ```
 
 > **Note:** This example uses a **temporary replication slot**, meaning it won't capture changes made while the worker was stopped.
+
+## 12. Using Webhooks
+
+### Create a .NET Worker Service
+
+Set up a new **.NET Worker Service** and add the following package reference:
+
+```
+dotnet add package PgOutput2Json.Webhooks
+```
+
+In your `Worker.cs`, use the following code to configure change propagation to a webhook:
+
+```csharp
+using PgOutput2Json;
+
+public class Worker : BackgroundService  
+{  
+    private readonly ILoggerFactory _loggerFactory;  
+
+    public Worker(ILoggerFactory loggerFactory)  
+    {  
+        _loggerFactory = loggerFactory;  
+    }  
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
+    {  
+        // This code assumes PostgreSQL is running on localhost  
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
+            .WithLoggerFactory(_loggerFactory)  
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
+            .WithPgPublications("my_publication")
+            .UseWebhook("https://example.com/webhooks/pghook", options =>
+            {
+                // Optional: Configure Webhook options
+                // options.WebhookSecret = "test";
+                // options.ConnectTimeout = TimeSpan.FromSeconds(10);
+                // options.RequestTimeout = TimeSpan.FromSeconds(30);
+            })
+            .Build();  
+
+        await pgOutput2Json.StartAsync(stoppingToken);  
+    }  
+}
+```
+
+### Webhook payload
+
+Changes are delivered in batches to your webhook. The POST request body is an array of these elements:
+
+```jsonc
+{
+  "c": "U",             // Change type: I (insert), U (update), D (delete)
+  "w": 2485645760,      // Transaction final LSN — part of the deduplication key
+  "n": 1,               // Message number within the transaction — part of the deduplication key
+  "t": "schema.table",  // Table name (if enabled in JSON options)
+  "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
+                        // or old row values, if the table uses REPLICA IDENTITY FULL
+  "r": { ... }          // New row values (not present for deletes)
+}
+```
+
+### Webhook metadata
+
+If `options.UseStandardWebhooks` is `false`, which is the default, each request includes:
+- `X-Timestamp`: Unix timestamp of when the payload was signed
+- `X-Hub-Signature-256`: HMAC-SHA256 of the request body using your secret (GitHub style, optional, only sent if `options.WebhookSecret` is set)
+  See: [Validating Webhook Deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)
+
+If `options.UseStandardWebhooks` is `true` then each request includes standard headers:
+- `webhook-id`: Id of the message in format FirstDedupKey_LastDedupKey, (eg. `2485645760_2485645760`). 
+  Note that this is not fully standard compliant. It can only be used for idempotency check if the `BatchSize` is 1.
+  Otherwise, deduplication keys from the individual messages should be used.
+- `webhook-timestamp`: Integer unix timestamp (seconds since epoch).
+- `webhook-signature`: The signature of the webhook. See: [Standard Webhooks](https://www.standardwebhooks.com/).
+
+In both cases, the request includes:
+- `User-Agent`: string in this format: `PgHook/ReplicationSlotName`;

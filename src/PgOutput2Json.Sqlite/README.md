@@ -45,7 +45,8 @@ The change events JSON format:
 ```
 {
   "c": "U",             // Change type: I (insert), U (update), D (delete)
-  "w": 2485645760,      // Deduplication key (based on XLogData WAL Start)
+  "w": 2485645760,      // Transaction final LSN — part of the deduplication key
+  "n": 1,               // Message number within the transaction — part of the deduplication key
   "t": "schema.table",  // Table name (if enabled in JSON options)
   "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
                         // or old row values, if the table uses REPLICA IDENTITY FULL
@@ -106,7 +107,7 @@ In the example code below, we'll assume the database name is `my_database`.
 
 ### Using SQLite
 
-PgOutput2Json supports copying modified PostgreSQL rows to SQLite. My default, rows are copied only when they change, using logical replication and compact JSON messages. 
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication and compact JSON messages. 
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. 
