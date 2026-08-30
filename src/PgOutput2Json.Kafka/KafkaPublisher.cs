@@ -97,6 +97,13 @@ namespace PgOutput2Json.Kafka
                 return _partitionMetadata[0].PartitionId;
             }
 
+            // without deduplication and a partition key there is no predictable target to
+            // track - let librdkafka route with the partitioner configured in ProducerConfig
+            if (!_useDeduplication && message.PartitionKolValue.Length == 0)
+            {
+                return Partition.Any;
+            }
+
             string routingKey;
 
             if (message.PartitionKolValue.Length > 0)
@@ -162,6 +169,9 @@ namespace PgOutput2Json.Kafka
 
         public override Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken cancellationToken)
         {
+            // without deduplication there is no need for the full startup scan
+            if (!_useDeduplication) return Task.FromResult((0ul, 0ul));
+
             if (_logger != null && _logger.IsEnabled(LogLevel.Information))
             {
                 _logger.LogInformation("Reading last published WAL LSN for {Topic}", _options.Topic);

@@ -248,6 +248,9 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken stoppingToken)
         {
+            // without deduplication there is no need for the full startup scan
+            if (!_useDeduplication) return (0UL, 0UL);
+
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 
             var system = await EnsureStreamSystemAsync().ConfigureAwait(false);
