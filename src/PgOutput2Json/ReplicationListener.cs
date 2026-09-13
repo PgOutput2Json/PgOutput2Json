@@ -142,6 +142,9 @@ namespace PgOutput2Json
                     // start the keeplive timer just before starting the replication
                     state.IdleWalMessageTimer?.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
 
+                    long skippedCount = 0;
+                    bool startingUp = true; // skip messages only during startup
+
                     // linkedCts.Token is used only in this foreach loop,
                     // since lock ensures idle confirm cannot happen at the same time
                     await foreach (var message in state.Connection.StartReplication(slot, replicationOptions, state.LinkedCts.Token)
@@ -196,17 +199,22 @@ namespace PgOutput2Json
                                 replicationMessage.Message = message;
                                 replicationMessage.MessageNo++;
 
-                                if (_options.UseDeduplication &&
-                                    new WalPosition(replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo)
+                                if (startingUp
+                                    && _options.UseDeduplication
+                                    && new WalPosition(replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo)
                                         .IsDuplicate(new WalPosition(txFinalLsn, msgNo)))
                                 {
                                     // already processed
-                                    _logger?.LogWarning("Skipping already published message: " +
-                                        "TX Final LSN = {TxFinalLsn}, " +
-                                        "MessageNo = {MesageNo}", replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo);
-
+                                    skippedCount++;
                                     continue;
                                 }
+
+                                if (startingUp && skippedCount > 0)
+                                {
+                                    _logger?.LogWarning("Deduplication enabled, skipped {SkippedCount} already published messages.", skippedCount);
+                                }
+
+                                startingUp = false;
 
                                 var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
                                     .ConfigureAwait(false);
