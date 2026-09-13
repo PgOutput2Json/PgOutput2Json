@@ -13,7 +13,7 @@ namespace PgOutput2Json.MongoDb
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new MongoDbPublisher(_options, loggerFactory?.CreateLogger<MongoDbPublisher>());
+            return new MongoDbPublisher(_options, loggerFactory?.CreateLogger<MongoDbPublisher>(), listenerOptions.UseDeduplication);
         }
     }
 }
