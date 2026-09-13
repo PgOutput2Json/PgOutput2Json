@@ -200,6 +200,9 @@ namespace PgOutput2Json.Kafka
 
             var partitions = new List<TopicPartitionOffset>();
 
+            var min = WalPosition.Zero;
+            var hasWatermark = false;
+
             // Step 1, get partitions offsets
             foreach (var metadata in _partitionMetadata)
             {
@@ -214,6 +217,8 @@ namespace PgOutput2Json.Kafka
                     // the partition contributes (0,0) to the minimum, which forces a full
                     // replay - receiving duplicates is safe, a wrong watermark is data loss
                     _lastPublished[metadata.PartitionId] = WalPosition.Zero;
+
+                    hasWatermark = true;
 
                     if (_logger != null && _logger.IsEnabled(LogLevel.Information))
                     {
@@ -230,8 +235,6 @@ namespace PgOutput2Json.Kafka
             // Step 2: Assign manually to specific offsets
             consumer.Assign(partitions);
 
-            var min = WalPosition.Zero;
-            var hasWatermark = false;
             var timeouts = 0;
             var pending = new HashSet<int>(partitions.Select(p => p.Partition.Value));
 
