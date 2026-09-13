@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -17,14 +17,27 @@ namespace PgOutput2Json.AzureEventHubs
         private readonly EventHubsPublisherOptions _options;
         private readonly ILogger<EventHubsPublisher>? _logger;
 
+        private readonly bool _useDeduplication;
+
         private EventHubProducerClient? _producerClient;
 
-        private readonly List<(EventData EventData, string PartitionKey)> _buffer = [];
+        // resolved once and kept in stable numeric order - the routing of a key
+        // must resolve to the same partition on every restart
+        private List<string>? _partitionIds;
 
-        public EventHubsPublisher(EventHubsPublisherOptions options, ILogger<EventHubsPublisher>? logger)
+        private readonly List<(EventData EventData, string? PartitionId, string PartitionKey, WalPosition Position)> _buffer = [];
+
+        private readonly Dictionary<string, WalPosition> _lastPublished = new();
+
+        private bool _dedupSkipActive; // per-partition duplicate checks run only while replaying over the last published positions
+        private long _dedupSkippedCount;
+        private WalPosition _dedupSkipEnd; // highest per-partition watermark from the startup scan - duplicates are impossible past it
+
+        public EventHubsPublisher(EventHubsPublisherOptions options, ILogger<EventHubsPublisher>? logger, bool useDeduplication = true)
         {
             _options = options;
             _logger = logger;
+            _useDeduplication = useDeduplication;
         }
 
         private EventHubProducerClient EnsureClient()
@@ -32,22 +45,52 @@ namespace PgOutput2Json.AzureEventHubs
             return _producerClient ??= new EventHubProducerClient(_options.ConnectionString, _options.EventHubName, _options.ClientOptions);
         }
 
-        public Task PublishAsync(JsonMessage msg, CancellationToken token)
+        public async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
             var tableName = msg.TableName.ToString();
             var keyColValue = msg.KeyKolValue.ToString();
 
-            var eventData = new EventData(msg.Json.ToString());
-
-            eventData.MessageId = string.Join("", tableName, keyColValue);
+            var eventData = new EventData(msg.Json.ToString())
+            {
+                MessageId = string.Join("", tableName, keyColValue)
+            };
 
             eventData.Properties["table"] = tableName;
             eventData.Properties["keyValue"] = keyColValue;
-            eventData.Properties["walOffset"] = msg.WalSeqNo;
+            eventData.Properties["txFinalLsn"] = msg.TxFinalLsn;
+            eventData.Properties["messageNo"] = msg.MessageNo;
 
-            _buffer.Add((eventData, tableName));
+            // the user-configured partition key columns route the row client-side, so the
+            // messages to the same partition can be deduplicated - without them the events
+            // keep the legacy table-name partition key and the partition is chosen by the service
+            string? partitionId = null;
 
-            return Task.CompletedTask;
+            if (msg.PartitionKolValue.Length > 0)
+            {
+                partitionId = await ResolvePartitionIdAsync(msg.PartitionKolValue.ToString(), token).ConfigureAwait(false);
+            }
+
+            if (_useDeduplication && _dedupSkipActive && partitionId != null && IsAlreadyPublished(partitionId, msg.TxFinalLsn, msg.MessageNo))
+            {
+                // already processed
+                _dedupSkippedCount++;
+
+                return;
+            }
+
+            if (_dedupSkipActive && new WalPosition(msg.TxFinalLsn, msg.MessageNo).IsAfter(_dedupSkipEnd))
+            {
+                // the replay overlap is over - no further message can be a per-partition
+                // duplicate, so summarize the skipped ones and stop the per-message checks
+                if (_dedupSkippedCount > 0)
+                {
+                    _logger?.LogWarning("Deduplication enabled, skipped {SkippedCount} already published messages.", _dedupSkippedCount);
+                }
+
+                _dedupSkipActive = false;
+            }
+
+            _buffer.Add((eventData, partitionId, tableName, new WalPosition(msg.TxFinalLsn, msg.MessageNo)));
         }
 
         public async Task ConfirmAsync(CancellationToken token)
@@ -59,21 +102,34 @@ namespace PgOutput2Json.AzureEventHubs
 
             try
             {
-                // Group events by partition key to send them in optimal batches
-                var eventsByPartition = _buffer.GroupBy(x => x.PartitionKey);
+                // group the events by their target - events with a client-resolved partition
+                // are sent to it explicitly, the rest keep the table-name partition key
+                var eventsByTarget = _buffer.GroupBy(x => (x.PartitionId, x.PartitionKey));
 
-                foreach (var partitionGroup in eventsByPartition)
+                foreach (var targetGroup in eventsByTarget)
                 {
-                    var partitionKey = partitionGroup.Key;
-                    var events = partitionGroup.Select(x => x.EventData).ToList();
+                    var partitionId = targetGroup.Key.PartitionId;
 
-                    var batchOptions = new CreateBatchOptions
-                    {
-                        PartitionKey = partitionKey
-                    };
+                    var batchOptions = partitionId != null
+                        ? new CreateBatchOptions { PartitionId = partitionId }
+                        : new CreateBatchOptions { PartitionKey = targetGroup.Key.PartitionKey };
+
+                    var events = targetGroup.Select(x => x.EventData).ToList();
 
                     await SendEventsInBatchesAsync(client, events, batchOptions, token)
                         .ConfigureAwait(false);
+
+                    // the positions are tracked only after the events are durably sent
+                    if (_useDeduplication)
+                    {
+                        foreach (var entry in targetGroup)
+                        {
+                            if (entry.PartitionId != null)
+                            {
+                                TrackWalSeq(entry.PartitionId, entry.Position);
+                            }
+                        }
+                    }
                 }
 
                 _buffer.Clear();
@@ -85,9 +141,12 @@ namespace PgOutput2Json.AzureEventHubs
             }
         }
 
-        public async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return await GetMaxWalOffsetAsync(_options.ConnectionString, _options.EventHubName, token)
+            // without deduplication there is no need for the full startup scan
+            if (!_useDeduplication) return (0UL, 0UL);
+
+            return await GetMinWalOffsetAsync(_options.ConnectionString, _options.EventHubName, token)
                 .ConfigureAwait(false);
         }
 
@@ -143,79 +202,179 @@ namespace PgOutput2Json.AzureEventHubs
             }
         }
 
+        private async Task<string?> ResolvePartitionIdAsync(string routingKey, CancellationToken token)
+        {
+            var partitionIds = await EnsurePartitionIdsAsync(token).ConfigureAwait(false);
+
+            if (partitionIds.Count == 0) return null;
+
+            // murmur2, mirroring the client-side routing of the Kafka adapter
+            var index = (MurmurHash2.Hash(routingKey) & 0x7fffffff) % partitionIds.Count;
+
+            return partitionIds[index];
+        }
+
+        private async Task<List<string>> EnsurePartitionIdsAsync(CancellationToken token)
+        {
+            if (_partitionIds != null) return _partitionIds;
+
+            var partitionIds = await EnsureClient().GetPartitionIdsAsync(token).ConfigureAwait(false);
+
+            // right after startup (or a transient hiccup) the namespace can report no partitions -
+            // routing on an empty list would funnel every event into a single partition, so fail
+            // immediately and let the listener reconnect with fresh metadata
+            if (partitionIds.Length == 0)
+            {
+                throw new Exception("Event Hub returned no partitions - it may not be fully initialized yet.");
+            }
+
+            // stable numeric order - the routing of a key must resolve to the same partition on every restart
+            _partitionIds = [.. partitionIds.OrderBy(int.Parse)];
+
+            _logger?.LogInformation("Partitions: {PartitionIds}", _partitionIds.Aggregate("", (acc, x) => acc + x + ","));
+
+            return _partitionIds;
+        }
+
+        private bool IsAlreadyPublished(string partitionId, ulong txFinalLsn, ulong messageNo)
+        {
+            return _lastPublished.TryGetValue(partitionId, out var last)
+                && new WalPosition(txFinalLsn, messageNo).IsDuplicate(last);
+        }
+
+        private void TrackWalSeq(string partitionId, WalPosition position)
+        {
+            // messages are published in order, so the position can only move forward
+            if (!_lastPublished.TryGetValue(partitionId, out var last) || position.IsAfter(last))
+            {
+                _lastPublished[partitionId] = position;
+            }
+        }
+
         /// <summary>
-        /// Reads the last message from each partition and returns the largest WAL offset.
-        /// Optimized for single publisher scenario - only reads one message per partition.
+        /// Reads the last message from each partition and returns the lowest WAL position -
+        /// everything at or below it is already published to all partitions, so it is the
+        /// safe resume point. Optimized for single publisher scenario - only reads one
+        /// message per partition.
         /// </summary>
         /// <param name="connectionString">Event Hubs connection string</param>
         /// <param name="eventHubName">Event Hub name</param>
         /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The largest WAL offset found, or 0 if no messages found</returns>
-        private static async Task<ulong> GetMaxWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
+        /// <returns>The lowest WAL position found, or (0,0) if any partition is empty</returns>
+        private async Task<(ulong, ulong)> GetMinWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
         {
             await using var consumer = new EventHubConsumerClient(EventHubConsumerClient.DefaultConsumerGroupName, connectionString, eventHubName);
 
             var partitionIds = await consumer.GetPartitionIdsAsync(cancellationToken)
                     .ConfigureAwait(false);
 
-            var maxWalOffset = 0UL;
+            // same guard as the routing - a watermark computed from an incomplete
+            // partition list would over-report durability and skip live messages
+            if (partitionIds.Length == 0)
+            {
+                throw new Exception("Event Hub returned no partitions - it may not be fully initialized yet.");
+            }
+
+            _lastPublished.Clear();
+
+            WalPosition? min = null;
 
             foreach (var partitionId in partitionIds)
             {
-                try
+                var partitionProps = await consumer.GetPartitionPropertiesAsync(partitionId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                // an empty partition forces the watermark down to (0,0) - it was never written
+                // to, or its batch was canceled mid-send on shutdown, where its group is sent
+                // after the others - a full replay re-sends its lost messages: duplicates
+                // are safe, a wrong watermark is data loss
+                if (partitionProps.IsEmpty)
                 {
-                    // Check if partition has any messages
-                    var partitionProps = await consumer.GetPartitionPropertiesAsync(partitionId, cancellationToken)
-                        .ConfigureAwait(false);
+                    _lastPublished[partitionId] = WalPosition.Zero;
 
-                    if (partitionProps.IsEmpty)
-                    {
-                        return 0L; // No messages in this partition
-                    }
+                    min = WalPosition.Zero;
 
-                    // Read from the last sequence number (the very last message)
-                    var lastEventPosition = EventPosition.FromSequenceNumber(partitionProps.LastEnqueuedSequenceNumber);
+                    _logger?.LogInformation("Partition {Partition} is empty - forcing the watermark to (0,0), the replay will re-send its messages", partitionId);
 
-                    var readOptions = new ReadEventOptions
-                    {
-                        MaximumWaitTime = TimeSpan.FromSeconds(2) // Short timeout since we only need one message
-                    };
-
-                    await foreach (var partitionEvent in consumer.ReadEventsFromPartitionAsync(partitionId, lastEventPosition, readOptions, cancellationToken))
-                    {
-                        partitionEvent.Data.Properties.TryGetValue("walOffset", out var walOffsetProp);
-
-                        ulong walOffset;
-
-                        if (walOffsetProp == null)
-                        {
-                            walOffset = 0UL;
-                        }
-                        else if (walOffsetProp is ulong value)
-                        {
-                            walOffset = value;
-                        }
-                        else
-                        {
-                            ulong.TryParse(walOffsetProp.ToString(), out walOffset);
-                        }
-
-                        if (walOffset > maxWalOffset)
-                        {
-                            maxWalOffset = walOffset;
-                        }
-
-                        break;
-                    }
+                    continue;
                 }
-                catch (Exception ex)
+
+                // Read from the last sequence number (the very last message)
+                var lastEventPosition = EventPosition.FromSequenceNumber(partitionProps.LastEnqueuedSequenceNumber);
+
+                var readOptions = new ReadEventOptions
                 {
-                    Console.WriteLine($"Warning: Could not read from partition {partitionId}: {ex.Message}");
-                    return 0UL; // Return 0 for failed partitions, don't crash the whole operation
-                }
-            };
+                    MaximumWaitTime = TimeSpan.FromSeconds(2) // Short timeout since we only need one message
+                };
 
-            return maxWalOffset;
+                WalPosition? position = null;
+
+                await foreach (var partitionEvent in consumer.ReadEventsFromPartitionAsync(partitionId, lastEventPosition, readOptions, cancellationToken))
+                {
+                    position = new WalPosition(GetULongPropValue(partitionEvent, "txFinalLsn"), GetULongPropValue(partitionEvent, "messageNo"));
+
+                    break;
+                }
+
+                if (position == null)
+                {
+                    throw new Exception($"Could not read the last message from Event Hub partition {partitionId} - the partition reports sequence number {partitionProps.LastEnqueuedSequenceNumber}, but no event was received in time.");
+                }
+
+                _logger?.LogInformation("Last published WAL LSN for partition {Partition}: {LastWalSeq}/{LastMessageNo}", partitionId, position.Value.WalSeq, position.Value.MessageNo);
+
+                _lastPublished[partitionId] = position.Value;
+
+                // the minimum across the partitions is a safe deduplication watermark -
+                // everything at or below it is already published to all the partitions
+                if (min == null || position.Value.IsAtOrBelow(min.Value))
+                {
+                    min = position.Value;
+                }
+            }
+
+            // once the stream passes the highest per-partition watermark, no further message
+            // can be a duplicate for any partition - the per-partition checks only run until then
+            _dedupSkipEnd = WalPosition.Zero;
+
+            foreach (var position in _lastPublished.Values)
+            {
+                if (position.IsAfter(_dedupSkipEnd))
+                {
+                    _dedupSkipEnd = position;
+                }
+            }
+
+            _dedupSkippedCount = 0;
+            _dedupSkipActive = true;
+
+            var watermark = min ?? WalPosition.Zero;
+
+            _logger?.LogInformation("Last published WAL LSN for {EventHub}: {LastWalSeq}/{LastMessageNo}", eventHubName, watermark.WalSeq, watermark.MessageNo);
+
+            return (watermark.WalSeq, watermark.MessageNo);
+        }
+
+        private static ulong GetULongPropValue(PartitionEvent partitionEvent, string propName)
+        {
+            partitionEvent.Data.Properties.TryGetValue(propName, out var walOffsetProp);
+
+            ulong propValue;
+
+            if (walOffsetProp == null)
+            {
+                propValue = 0UL;
+            }
+            else if (walOffsetProp is ulong value)
+            {
+                propValue = value;
+            }
+            else
+            {
+                ulong.TryParse(walOffsetProp.ToString(), out propValue);
+            }
+
+            return propValue;
         }
     }
 }

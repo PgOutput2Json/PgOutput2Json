@@ -45,13 +45,25 @@ The change events JSON format:
 ```
 {
   "c": "U",             // Change type: I (insert), U (update), D (delete)
-  "w": 2485645760,      // Deduplication key (based on XLogData WAL Start)
+  "w": 2485645760,      // Transaction final LSN — part of the deduplication key
+  "n": 1,               // Message number within the transaction — part of the deduplication key
   "t": "schema.table",  // Table name (if enabled in JSON options)
   "k": { ... },         // Key values — included for deletes, and for updates if the key changed,
                         // or old row values, if the table uses REPLICA IDENTITY FULL
   "r": { ... }          // New row values (not present for deletes)
 }
 ```
+
+## 🔁 Deduplication
+
+The Kinesis adapter **does not support deduplication**. Amazon Kinesis provides no cheap way to read the last published record of a shard (the `LATEST` shard iterator starts *just after* the most recent record), and shards cannot be targeted client-side — so the adapter cannot recover the last published WAL position after a restart. When the worker restarts, PostgreSQL replays the WAL from the slot's confirmed position, and **already-published messages are sent to Kinesis again**.
+
+Consumers of the Kinesis stream must therefore be prepared for duplicated messages and protect themselves from their ill effects by filtering them out, using the deduplication key carried by every message:
+
+- `w` — the transaction final LSN of the change event
+- `n` — the message number within the transaction
+
+A `(w, n)` pair uniquely identifies a change event: any event at or below the highest `(w, n)` pair a consumer has already processed was already handled and can be safely skipped.
 
 ## ⚠️ Development Status
 

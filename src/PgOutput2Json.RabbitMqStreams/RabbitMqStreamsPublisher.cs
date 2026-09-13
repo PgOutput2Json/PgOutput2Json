@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,11 +12,12 @@ namespace PgOutput2Json.RabbitMqStreams
 {
     public class RabbitMqStreamsPublisher: MessagePublisher
     {
-        public RabbitMqStreamsPublisher(RabbitMqStreamsPublisherOptions options, int batchSize, ILoggerFactory? loggerFactory = null)
+        public RabbitMqStreamsPublisher(RabbitMqStreamsPublisherOptions options, int batchSize, ILoggerFactory? loggerFactory = null, bool useDeduplication = true)
         {
             _options = options;
             _batchSize = batchSize;
-            
+            _useDeduplication = useDeduplication;
+
             _loggerStreamSystem = loggerFactory?.CreateLogger<StreamSystem>();
             _loggerProducer = loggerFactory?.CreateLogger<Producer>();
             _logger = loggerFactory?.CreateLogger<RabbitMqStreamsPublisher>();
@@ -23,18 +25,6 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public async override Task PublishAsync(JsonMessage jsonMsg, CancellationToken token)
         {
-            var producer = await EnsureProducerAsync().ConfigureAwait(false);
-
-            lock (_confirmationLock)
-            {
-                _unconfirmedCount++;
-
-                if (_confirmationTaskCompletionSource == null || _confirmationTaskCompletionSource.Task.IsCompleted)
-                {
-                    _confirmationTaskCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                }
-            }
-
             var json = jsonMsg.Json.ToString();
 
             var msg = new Message(Encoding.UTF8.GetBytes(json))
@@ -55,11 +45,93 @@ namespace PgOutput2Json.RabbitMqStreams
                 };
             }
 
+            // resolves to the same partition the client's routing picks, so
+            // the messages to the same partition can be deduplicated
+            var partitionStream = await ResolvePartitionStreamAsync(msg).ConfigureAwait(false);
+
+            if (_useDeduplication && _dedupSkipActive && partitionStream != null && IsAlreadyPublished(partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo))
+            {
+                // already processed
+                _dedupSkippedCount++;
+
+                return;
+            }
+
+            if (_dedupSkipActive && new WalPosition(jsonMsg.TxFinalLsn, jsonMsg.MessageNo).IsAfter(_dedupSkipEnd))
+            {
+                // the replay overlap is over - no further message can be a per-partition
+                // duplicate, so summarize the skipped ones and stop the per-message checks
+                if (_dedupSkippedCount > 0)
+                {
+                    _logger?.LogWarning("Deduplication enabled, skipped {SkippedCount} already published messages.", _dedupSkippedCount);
+                }
+
+                _dedupSkipActive = false;
+            }
+
+            var producer = await EnsureProducerAsync().ConfigureAwait(false);
+
+            lock (_confirmationLock)
+            {
+                _unconfirmedCount++;
+
+                if (_confirmationTaskCompletionSource == null || _confirmationTaskCompletionSource.Task.IsCompleted)
+                {
+                    _confirmationTaskCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+            }
+
             await producer.Send(msg).ConfigureAwait(false);
+
+            if (partitionStream != null)
+            {
+                TrackWalSeq(partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo);
+            }
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
                 _logger.LogDebug("Published to {StreamName}: {Body}", _options.StreamName, json);
+            }
+        }
+
+        private async Task<string?> ResolvePartitionStreamAsync(Message msg)
+        {
+            if (!_useDeduplication) return null;
+
+            // without super streams, the stream is a single partition tracked by its name
+            if (!_options.IsSuperStream) return _options.StreamName;
+
+            var superStreamConfig = _options.SuperStreamConfig;
+
+            // only the murmur hash routing can be replicated client-side to know the target partition
+            if (superStreamConfig?.Routing == null
+                || superStreamConfig.RoutingStrategyType != RoutingStrategyType.Hash
+                || _superStreamPartitions == null)
+            {
+                return null;
+            }
+
+            var strategy = _hashRoutingStrategy ??= new HashRoutingMurmurStrategy(superStreamConfig.Routing);
+
+            var routes = await strategy.Route(msg, _superStreamPartitions).ConfigureAwait(false);
+
+            return routes is { Count: > 0 } ? routes[0] : null;
+        }
+
+        private bool IsAlreadyPublished(string streamName, ulong txFinalLsn, ulong messageNo)
+        {
+            return _lastPublished.TryGetValue(streamName, out var last)
+                && new WalPosition(txFinalLsn, messageNo).IsDuplicate(last);
+        }
+
+        private void TrackWalSeq(string streamName, ulong txFinalLsn, ulong messageNo)
+        {
+            var position = new WalPosition(txFinalLsn, messageNo);
+
+            // messages are published in order, so the position can only move forward
+            if (!_lastPublished.TryGetValue(streamName, out var last) || position.IsAfter(last))
+            {
+                _lastPublished[streamName] = position;
             }
         }
 
@@ -111,6 +183,16 @@ namespace PgOutput2Json.RabbitMqStreams
             _streamSystem = null;
         }
 
+        private async Task<string[]> QuerySuperStreamPartitionsAsync(StreamSystem system)
+        {
+            var partitions = await system.QueryPartition(_options.StreamName).ConfigureAwait(false);
+
+            // cached for resolving the routing of messages published later
+            _superStreamPartitions = [.. partitions];
+
+            return partitions;
+        }
+
         private async Task<StreamSystem> EnsureStreamSystemAsync()
         {
             if (_streamSystem != null && !_streamSystem.IsClosed) return _streamSystem;
@@ -128,7 +210,7 @@ namespace PgOutput2Json.RabbitMqStreams
         private async Task<Producer> EnsureProducerAsync()
         {
             if (_producer != null && _producer.IsOpen()) return _producer;
-            
+
             var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
             _logger?.LogInformation("Creating producer for: {StreamName}", _options.StreamName);
@@ -142,6 +224,16 @@ namespace PgOutput2Json.RabbitMqStreams
                     ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-producer",
                     ConfirmationHandler = confirmation =>
                     {
+                        // a confirmation from a partition missing from the routing snapshot
+                        // means the super stream topology changed - the client-side dedup
+                        // decisions can be stale until the publisher is recreated
+                        if (_options.IsSuperStream
+                            && _superStreamPartitions != null
+                            && !_superStreamPartitions.Contains(confirmation.Stream))
+                        {
+                            _logger?.LogWarning("Confirmation from unknown stream {Stream} - super stream topology changed, client-side deduplication routing may be stale", confirmation.Stream);
+                        }
+
                         switch (confirmation.Status)
                         {
                             case ConfirmationStatus.Confirmed:
@@ -182,31 +274,55 @@ namespace PgOutput2Json.RabbitMqStreams
 
             _logger?.LogInformation("Created producer for: {StreamName}", _options.StreamName);
 
+            // the library resolves its own partition list while creating the super stream
+            // producer - reading ours at the same point keeps the two snapshots from
+            // diverging, otherwise a changed partition count can reroute most keys and
+            // invalidate the deduplication watermarks
+            if (_options.IsSuperStream)
+            {
+                await QuerySuperStreamPartitionsAsync(streamSystem).ConfigureAwait(false);
+            }
+
             return _producer;
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken stoppingToken)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken stoppingToken)
         {
+            // without deduplication there is no need for the full startup scan
+            if (!_useDeduplication) return (0UL, 0UL);
+
             _logger?.LogInformation("Reading last published WAL LSN for: {StreamName}", _options.StreamName);
 
             var system = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
             var partitions = _options.IsSuperStream
-                    ? await system.QueryPartition(_options.StreamName).ConfigureAwait(false)
+                    ? await QuerySuperStreamPartitionsAsync(system).ConfigureAwait(false)
                     : [_options.StreamName];
 
-            var maxWalEnd = 0UL;
+            _lastPublished.Clear();
+
+            var min = WalPosition.Zero;
+            var hasWatermark = false;
 
             foreach (var partition in partitions)
             {
+                // only an empty stream has no committed chunk - any other error must not
+                // inflate the minimum, it propagates and the listener reconnects and retries
                 try
                 {
-                    var stats = await system.StreamStats(partition).ConfigureAwait(false);
-                    var firstOffset = stats.CommittedChunkId();
+                    await system.StreamStats(partition).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (OffsetNotFoundException)
                 {
-                    _logger?.LogInformation("Empty stream detected: {StreamName} ({ErrorMessage}).", partition, ex.Message);
+                    // an empty stream carries no position - it contributes (0,0) to the
+                    // minimum, which forces a full replay: duplicates are safe, a wrong
+                    // watermark is data loss
+                    _logger?.LogInformation("Empty stream detected: {StreamName}.", partition);
+
+                    _lastPublished[partition] = WalPosition.Zero;
+
+                    hasWatermark = true;
+                    min = WalPosition.Zero;
                     continue;
                 }
 
@@ -249,22 +365,44 @@ namespace PgOutput2Json.RabbitMqStreams
                     throw new Exception($"Cannot read last WAL end LSN. No messages read from an non-empty stream.");
                 }
 
-                if (!json.TryGetWalEnd(out var walEnd))
+                if (!json.TryGetWalSeq(out var walEnd, out var messageNo))
                 {
                     throw new Exception($"Missing WAL end LSN in the message: '{json}'");
                 }
 
-                _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", partition, walEnd);
+                _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", partition, walEnd, messageNo);
 
-                if (walEnd > maxWalEnd)
+                var position = new WalPosition(walEnd, messageNo);
+
+                _lastPublished[partition] = position;
+
+                // the minimum across the partitions is a safe deduplication watermark -
+                // everything at or below it is already published to all the partitions
+                if (!hasWatermark || position.IsAtOrBelow(min))
                 {
-                    maxWalEnd = walEnd;
+                    hasWatermark = true;
+                    min = position;
                 }
             }
 
-            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}", _options.StreamName, maxWalEnd);
-            
-            return maxWalEnd;
+            // once the stream passes the highest per-partition watermark, no further message
+            // can be a duplicate for any partition - the per-partition checks only run until then
+            _dedupSkipEnd = WalPosition.Zero;
+
+            foreach (var position in _lastPublished.Values)
+            {
+                if (position.IsAfter(_dedupSkipEnd))
+                {
+                    _dedupSkipEnd = position;
+                }
+            }
+
+            _dedupSkippedCount = 0;
+            _dedupSkipActive = true;
+
+            _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, min.WalSeq, min.MessageNo);
+
+            return (min.WalSeq, min.MessageNo);
         }
 
         private StreamSystem? _streamSystem;
@@ -277,6 +415,17 @@ namespace PgOutput2Json.RabbitMqStreams
 
         private readonly RabbitMqStreamsPublisherOptions _options;
         private readonly int _batchSize;
+        private readonly bool _useDeduplication;
+
+        private List<string>? _superStreamPartitions;
+        private HashRoutingMurmurStrategy? _hashRoutingStrategy;
+
+        private readonly Dictionary<string, WalPosition> _lastPublished = new();
+
+        private bool _dedupSkipActive; // per-partition duplicate checks run only while replaying over the last published positions
+        private long _dedupSkippedCount;
+        private WalPosition _dedupSkipEnd; // highest per-partition watermark from the startup scan - duplicates are impossible past it
+
         private readonly ILogger<StreamSystem>? _loggerStreamSystem;
         private readonly ILogger<Producer>? _loggerProducer;
         private readonly ILogger<RabbitMqStreamsPublisher>? _logger;

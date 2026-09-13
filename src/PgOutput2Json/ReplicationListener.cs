@@ -132,20 +132,18 @@ namespace PgOutput2Json
 
                     state.MessagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
-                    // virtual lsn is start lsn + msg number
-                    var lastVirtualLsn = new NpgsqlLogSequenceNumber(await state.MessagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false));
+                    // this is used for deduplication
+                    var (txFinalLsn, msgNo) = await state.MessagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false);
 
-                    var lastWalStart = new NpgsqlLogSequenceNumber(0);
-
-                    // this counts messages with the same WalStart
-                    var messageNo = 0UL;
+                    var replicationMessage = new ReplicationMessage { HasRelationChanged = true };
 
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1, messages: true);
 
-                    var replicationMessage = new ReplicationMessage { HasRelationChanged = true, CommitTimeStamp = DateTime.UtcNow, };
-
                     // start the keeplive timer just before starting the replication
                     state.IdleWalMessageTimer?.Change(_options.IdleWalMessageInterval, Timeout.InfiniteTimeSpan);
+
+                    long skippedCount = 0;
+                    bool startingUp = true; // skip messages only during startup
 
                     // linkedCts.Token is used only in this foreach loop,
                     // since lock ensures idle confirm cannot happen at the same time
@@ -170,6 +168,8 @@ namespace PgOutput2Json
                             if (message is BeginMessage beginMsg)
                             {
                                 replicationMessage.CommitTimeStamp = beginMsg.TransactionCommitTimestamp;
+                                replicationMessage.TransactionFinalLsn = (ulong)beginMsg.TransactionFinalLsn;
+                                replicationMessage.MessageNo = 0UL;
                                 continue;
                             }
 
@@ -182,47 +182,53 @@ namespace PgOutput2Json
                                 continue;
                             }
 
-                            if (lastWalStart != message.WalStart)
+                            if (message is LogicalDecodingMessage logicalMsg && logicalMsg.Prefix == "pg2j_keepalive")
                             {
-                                lastWalStart = message.WalStart;
-                                messageNo = 0UL;
-                            }
-                            else
-                            {
-                                messageNo++;
-                            }
-
-                            var virtualLsn = lastWalStart + messageNo;
-
-                            if (virtualLsn <= lastVirtualLsn && _options.UseDeduplication)
-                            {
-                                // already processed
-                                _logger?.LogWarning("Skipping already published message: " +
-                                    "WalStart = {WalStart}, " +
-                                    "MessageNo = {MesageNo}, " +
-                                    "LastVirtualLsn = {LastVirtualLsn}", lastWalStart, messageNo, lastVirtualLsn);
+                                state.LastWalEnd = message.WalEnd;
                                 continue;
                             }
 
-                            lastVirtualLsn = virtualLsn;
-
-                            replicationMessage.Message = message;
-
-                            if (message is not LogicalDecodingMessage logicalDecodingMsg || logicalDecodingMsg.Prefix != "pg2j_keepalive")
+                            if (message is InsertMessage ||
+                                message is DefaultUpdateMessage ||
+                                message is FullUpdateMessage ||
+                                message is IndexUpdateMessage ||
+                                message is KeyDeleteMessage ||
+                                message is FullDeleteMessage ||
+                                message is LogicalDecodingMessage)
                             {
-                                var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, lastVirtualLsn, cancellationToken)
+                                replicationMessage.Message = message;
+                                replicationMessage.MessageNo++;
+
+                                if (startingUp
+                                    && _options.UseDeduplication
+                                    && new WalPosition(replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo)
+                                        .IsDuplicate(new WalPosition(txFinalLsn, msgNo)))
+                                {
+                                    // already processed
+                                    skippedCount++;
+                                    continue;
+                                }
+
+                                if (startingUp && skippedCount > 0)
+                                {
+                                    _logger?.LogWarning("Deduplication enabled, skipped {SkippedCount} already published messages.", skippedCount);
+                                }
+
+                                startingUp = false;
+
+                                var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
                                     .ConfigureAwait(false);
 
                                 replicationMessage.HasRelationChanged = false;
 
                                 await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
                                     .ConfigureAwait(false);
+                            
+                                MetricsHelper.IncrementPublishCounter();
                             }
 
                             // set the lastWalEnd to be sent in status update only after the message was published
                             state.LastWalEnd = message.WalEnd;
-
-                            MetricsHelper.IncrementPublishCounter();
 
                             if (++state.UnconfirmedCount < _options.BatchSize)
                             {

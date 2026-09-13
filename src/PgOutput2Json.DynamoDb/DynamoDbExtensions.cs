@@ -11,6 +11,7 @@ namespace PgOutput2Json.DynamoDb
     internal static class ConfigKey
     {
         public const string WalEnd = "WalEnd";
+        public const string MessageNo = "MessageNo";
         public const string Schema = "Schema";
 
         public const string ConfigTable = "__pg2j_config";
@@ -18,15 +19,20 @@ namespace PgOutput2Json.DynamoDb
 
     internal static class DynamoDbExtensions
     {
-        public static async Task<ulong> GetWalEndAsync(this AmazonDynamoDBClient client, CancellationToken token)
+        public static async Task<(ulong, ulong)> GetWalEndAsync(this AmazonDynamoDBClient client, CancellationToken token)
         {
-            var val = await client.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
-            return val != null ? ulong.Parse(val, CultureInfo.InvariantCulture) : 0;
+            var walEndValue = await client.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var messageNoValue = await client.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
+
+            return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
+                    messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
         }
 
         public static async Task SetSchemaAsync(this AmazonDynamoDBClient client, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
             var json = JsonSerializer.Serialize(cols, JsonContext.Default.ListColumnInfo);
+#pragma warning restore VSTHRD103 // Call async methods when in an async method
             await client.SaveConfigAsync($"{ConfigKey.Schema}_{tableName}", json, token).ConfigureAwait(false);
         }
 

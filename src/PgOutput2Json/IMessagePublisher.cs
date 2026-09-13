@@ -9,7 +9,7 @@ namespace PgOutput2Json
         Task PublishAsync(JsonMessage jsonMessage, CancellationToken token);
         Task ConfirmAsync(CancellationToken token);
 
-        Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token);
+        Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token);
     }
 
     public abstract class MessagePublisher : IMessagePublisher
@@ -18,9 +18,9 @@ namespace PgOutput2Json
         public abstract Task ConfirmAsync(CancellationToken token);
         public abstract ValueTask DisposeAsync();
 
-        public virtual Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public virtual Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return Task.FromResult<ulong>(0);
+            return Task.FromResult<(ulong, ulong)>((0, 0));
         }
     }
 }

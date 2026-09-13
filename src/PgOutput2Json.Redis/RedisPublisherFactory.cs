@@ -13,7 +13,7 @@ namespace PgOutput2Json.Redis
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new RedisPublisher(_options, loggerFactory?.CreateLogger<RedisPublisher>());
+            return new RedisPublisher(_options, loggerFactory?.CreateLogger<RedisPublisher>(), listenerOptions.UseDeduplication);
         }
     }
 }

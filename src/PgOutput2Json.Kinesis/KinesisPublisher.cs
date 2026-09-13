@@ -70,9 +70,16 @@ namespace PgOutput2Json.Kinesis
             _buffer.Clear();
         }
 
-        public Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        /// <summary>
+        /// Kinesis does not support deduplication - the last published WAL position cannot
+        /// be recovered (reading the last record of a shard is not possible cheaply, and
+        /// shards cannot be targeted client-side). Returning (0,0) makes the listener replay
+        /// and re-publish already sent messages - consumers must filter duplicates using the
+        /// deduplication key ("w"/"n") carried by each message.
+        /// </summary>
+        public Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            return Task.FromResult(0UL);
+            return Task.FromResult((0UL, 0UL));
         }
 
         public ValueTask DisposeAsync()

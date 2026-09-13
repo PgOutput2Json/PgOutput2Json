@@ -14,6 +14,8 @@ namespace PgOutput2Json.MongoDb
         private readonly MongoDbPublisherOptions _options;
         private readonly ILogger<MongoDbPublisher>? _logger;
 
+        private readonly bool _useDeduplication;
+
         private MongoClient? _client;
         private IMongoDatabase? _db;
 
@@ -21,11 +23,13 @@ namespace PgOutput2Json.MongoDb
 
         private readonly List<BulkWriteModel> _batch = new(1000);
         private ulong? _lastWal;
+        private ulong _lastMessageNo;
 
-        public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger)
+        public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger, bool useDeduplication = true)
         {
             _options = options;
             _logger = logger;
+            _useDeduplication = useDeduplication;
         }
 
         public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
@@ -36,25 +40,37 @@ namespace PgOutput2Json.MongoDb
 
             using var doc = JsonDocument.Parse(msg.Json.ToString());
 
-            await TryParseSchemaAsync(client, tableName, msg.WalSeqNo, doc, token).ConfigureAwait(false);
+            await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
             await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
+
+            _lastWal = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
         {
             var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            await db.ConfirmBatchAsync(_lastWal, _batch, token).ConfigureAwait(false);
+            // data exporter messages have no LSN info (0,0) - they must not overwrite the replication position;
+            // without deduplication the watermark is not persisted at all
+            var walEnd = _useDeduplication && _lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0)
+                ? _lastWal
+                : null;
+
+            await db.ConfirmBatchAsync(walEnd, _lastMessageNo, _batch, token).ConfigureAwait(false);
 
             _batch.Clear();
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
+            // without deduplication there is no need to read the last published position
+            if (!_useDeduplication) return (0UL, 0UL);
 
-            return await client.GetWalEndAsync(token).ConfigureAwait(false);
+            var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
+
+            return await db.GetWalEndAsync(token).ConfigureAwait(false);
         }
 
         public override ValueTask DisposeAsync()
@@ -80,6 +96,14 @@ namespace PgOutput2Json.MongoDb
 
         private async Task ParseRowAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
         {
+            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
+
+            var changeType = changeTypeElement.GetString();
+
+            if (changeType == "M") return; // logical decoding message - carries no table and no row
+
+            if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
+
             if (!_tableColumns.TryGetValue(tableName, out var columns))
             {
                 columns = await db.GetSchemaAsync(tableName, token).ConfigureAwait(false);
@@ -92,19 +116,13 @@ namespace PgOutput2Json.MongoDb
 
             if (columns == null) throw new Exception("Missing table schema: " + tableName);
 
-            if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
-            if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
-
-            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
             doc.RootElement.TryGetProperty("k", out var keyElement);
             doc.RootElement.TryGetProperty("r", out var rowElement);
 
             db.UpsertOrDelete(_batch, tableName, columns, changeTypeElement, keyElement, rowElement);
-
-            _lastWal = walEnd;
         }
 
-        private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, ulong walSeq, JsonDocument doc, CancellationToken token)
+        private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
         {
             if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
 

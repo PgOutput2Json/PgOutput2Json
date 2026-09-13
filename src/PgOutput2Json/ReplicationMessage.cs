@@ -7,6 +7,8 @@ namespace PgOutput2Json
     {
         public PgOutputReplicationMessage? Message { get; set; }
         public DateTime CommitTimeStamp { get; set; }
+        public ulong TransactionFinalLsn { get; set; }
+        public ulong MessageNo { get; set; }
         public bool HasRelationChanged { get; set; }
     }
 }

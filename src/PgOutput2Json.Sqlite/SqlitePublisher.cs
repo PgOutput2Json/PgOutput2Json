@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data.Common;
 using System.Text.Json;
@@ -18,7 +18,10 @@ namespace PgOutput2Json.Sqlite
         private SqliteConnection? _connection;
         private DbTransaction? _transaction;
 
-        private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = [];
+        private readonly Dictionary<string, TableContext> _tables = [];
+
+        private ulong _lastWalEnd;
+        private ulong _lastMessageNo;
 
         public SqlitePublisher(SqlitePublisherOptions options, ILogger<SqlitePublisher>? logger)
         {
@@ -30,23 +33,70 @@ namespace PgOutput2Json.Sqlite
         {
             var connection = await EnsureConnectionInTransactionAsync(token).ConfigureAwait(false);
 
-            var json = msg.Json.ToString();
-            var tableName = msg.TableName.ToString();
+            using var doc = JsonDocument.Parse(msg.Json.ToString());
 
-            using var doc = JsonDocument.Parse(json);
+            await ApplyChangeAsync(connection, msg.TableName.ToString(), doc, token).ConfigureAwait(false);
 
-            await TryParseSchemaAsync(connection, tableName, doc, token).ConfigureAwait(false);
+            _lastWalEnd = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
+        }
 
-            await ParseRowAsync(connection, tableName, doc, token).ConfigureAwait(false);
+        private async Task ApplyChangeAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        {
+            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
+
+            var changeType = changeTypeElement.GetString();
+
+            if (changeType == "M") return; // logical decoding message - carries no table and no row
+
+            if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
+
+            var table = await EnsureTableAsync(connection, tableName, doc, token).ConfigureAwait(false);
+
+            doc.RootElement.TryGetProperty("k", out var keyElement);
+            doc.RootElement.TryGetProperty("r", out var rowElement);
+
+            if (changeType == "I")
+            {
+                await connection.InsertAsync(table.Commands, rowElement, ignoreConflicts: true, token).ConfigureAwait(false);
+            }
+            else if (changeType == "U")
+            {
+                await UpdateRowAsync(connection, table, rowElement, token).ConfigureAwait(false);
+            }
+            else if (changeType == "D")
+            {
+                await connection.DeleteAsync(table.Commands, keyElement, token).ConfigureAwait(false);
+            }
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
         {
             if (_transaction == null) return;
 
-            await _transaction.CommitAsync(token).ConfigureAwait(false);
+            try
+            {
+                // data exporter messages have no LSN info - they must not overwrite the replication position
+                if (_connection != null && (_lastWalEnd != 0 || _lastMessageNo != 0))
+                {
+                    await _connection.SetWalEndAsync(_lastWalEnd, _lastMessageNo, token).ConfigureAwait(false);
+                }
 
-            _transaction = null;
+                await _transaction.CommitAsync(token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _transaction = null;
+                _lastWalEnd = 0;
+                _lastMessageNo = 0;
+
+                // prepared commands keep a reference to the transaction they are bound to -
+                // clear it so they never hold a completed transaction
+                foreach (var table in _tables.Values)
+                {
+                    table.Commands.SetTransaction(null);
+                }
+            }
 
             if (_options.UseWal)
             {
@@ -56,7 +106,7 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        public override async Task<ulong> GetLastPublishedWalSeqAsync(CancellationToken token)
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
             var cn = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
@@ -65,6 +115,13 @@ namespace PgOutput2Json.Sqlite
 
         public override async ValueTask DisposeAsync()
         {
+            foreach (var table in _tables.Values)
+            {
+                await table.DisposeAsync().ConfigureAwait(false);
+            }
+
+            _tables.Clear();
+
             if (_connection != null)
             {
                 try
@@ -78,35 +135,74 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        private async Task ParseRowAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private static async Task UpdateRowAsync(SqliteConnection connection, TableContext table, JsonElement rowElement, CancellationToken token)
         {
-            if (!_tableColumns.TryGetValue(tableName, out var columns))
+            var hasToast = HasUnchangedToast(rowElement);
+
+            var updatedCount = hasToast
+                ? await connection.FallbackUpdateAsync(table.Commands, table.FullTableName, rowElement, token).ConfigureAwait(false)
+                : await connection.UpdateAsync(table.Commands, rowElement, token).ConfigureAwait(false);
+
+            if (updatedCount == 0)
             {
-                columns = await SqliteConnectionExtensions.GetSchemaAsync(connection, tableName, token).ConfigureAwait(false);
-
-                if (columns != null)
-                {
-                    _tableColumns[tableName] = columns;
-                }
+                // row does not exist - insert it (same behavior as update-or-insert)
+                await connection.InsertAsync(table.Commands, rowElement, ignoreConflicts: false, token).ConfigureAwait(false);
             }
-
-            if (columns == null) throw new Exception("Missing table schema: " + tableName);
-
-            if (!doc.RootElement.TryGetProperty("w", out var walEndElement)) throw new Exception("Invalid JSON - missing WAL end LSN");
-            if (!walEndElement.TryGetUInt64(out var walEnd)) throw new Exception($"Invalid JSON - invalid WAL end LSN {walEndElement.GetRawText()}");
-
-            doc.RootElement.TryGetProperty("c", out var changeTypeElement);
-            doc.RootElement.TryGetProperty("k", out var keyElement);
-            doc.RootElement.TryGetProperty("r", out var rowElement);
-
-            await connection.UpdateOrInsertAsync(walEnd, tableName, columns, changeTypeElement, keyElement, rowElement, _logger, token)
-                .ConfigureAwait(false);
         }
 
-        private async Task TryParseSchemaAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private static bool HasUnchangedToast(JsonElement rowElement)
         {
-            if (!doc.RootElement.TryGetProperty("s", out var schemaElement)) return;
+            if (rowElement.ValueKind != JsonValueKind.Array) return false;
 
+            foreach (var value in rowElement.EnumerateArray())
+            {
+                if (value.ValueKind == JsonValueKind.String && value.GetString() == "__TOAST__") return true;
+            }
+
+            return false;
+        }
+
+        private async Task<TableContext> EnsureTableAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        {
+            if (doc.RootElement.TryGetProperty("s", out var schemaElement))
+            {
+                // relation message - schema changed, rebuild the cached commands
+
+                var columns = ParseSchema(schemaElement);
+
+                var table = new TableContext(tableName, connection.CreatePreparedCommands(tableName, columns));
+
+                if (_tables.Remove(tableName, out var existing))
+                {
+                    await existing.DisposeAsync().ConfigureAwait(false);
+                }
+
+                _tables[tableName] = table;
+
+                await connection.CreateOrAlterTableAsync(tableName, columns, token).ConfigureAwait(false);
+
+                await connection.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
+
+                return table;
+            }
+
+            if (_tables.TryGetValue(tableName, out var cached)) return cached;
+
+            // schema not cached - try loading it from the config table
+
+            var storedColumns = await connection.GetTableSchemaAsync(tableName, token).ConfigureAwait(false);
+
+            if (storedColumns == null) throw new Exception("Missing table schema: " + tableName);
+
+            var restored = new TableContext(tableName, connection.CreatePreparedCommands(tableName, storedColumns));
+
+            _tables[tableName] = restored;
+
+            return restored;
+        }
+
+        private static List<ColumnInfo> ParseSchema(JsonElement schemaElement)
+        {
             if (schemaElement.ValueKind != JsonValueKind.Array) throw new Exception("Invalid schema - expected array");
 
             var columns = new List<ColumnInfo>();
@@ -133,11 +229,7 @@ namespace PgOutput2Json.Sqlite
                 }
             }
 
-            _tableColumns[tableName] = columns;
-
-            await connection.CreateOrAlterTableAsync(tableName, columns, token).ConfigureAwait(false);
-
-            await connection.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
+            return columns;
         }
 
         private async Task<SqliteConnection> EnsureConnectionAsync(CancellationToken token)
@@ -167,9 +259,36 @@ namespace PgOutput2Json.Sqlite
         {
             var connection = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
-            _transaction ??= await connection.BeginTransactionAsync(token).ConfigureAwait(false);
+            if (_transaction == null)
+            {
+                var transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
+
+                _transaction = transaction;
+
+                // cached commands are bound to the transaction they were created in -
+                // they must be re-bound or execution fails with TransactionConnectionMismatch
+                foreach (var table in _tables.Values)
+                {
+                    table.Commands.SetTransaction((SqliteTransaction)transaction);
+                }
+            }
 
             return connection;
+        }
+
+        private sealed class TableContext : IAsyncDisposable
+        {
+            public string FullTableName { get; }
+
+            public PreparedCommands Commands { get; }
+
+            public TableContext(string fullTableName, PreparedCommands commands)
+            {
+                FullTableName = fullTableName;
+                Commands = commands;
+            }
+
+            public ValueTask DisposeAsync() => Commands.DisposeAsync();
         }
     }
 }
