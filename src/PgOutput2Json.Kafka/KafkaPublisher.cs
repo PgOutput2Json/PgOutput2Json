@@ -200,8 +200,7 @@ namespace PgOutput2Json.Kafka
 
             var partitions = new List<TopicPartitionOffset>();
 
-            var min = WalPosition.Zero;
-            var hasWatermark = false;
+            WalPosition? min = null;
 
             // Step 1, get partitions offsets
             foreach (var metadata in _partitionMetadata)
@@ -218,7 +217,7 @@ namespace PgOutput2Json.Kafka
                     // replay - receiving duplicates is safe, a wrong watermark is data loss
                     _lastPublished[metadata.PartitionId] = WalPosition.Zero;
 
-                    hasWatermark = true;
+                    min = WalPosition.Zero;
 
                     if (_logger != null && _logger.IsEnabled(LogLevel.Information))
                     {
@@ -290,9 +289,8 @@ namespace PgOutput2Json.Kafka
 
                 // the minimum across the partitions is a safe deduplication watermark -
                 // everything at or below it is already published to all the partitions
-                if (!hasWatermark || position.IsAtOrBelow(min))
+                if (min == null || position.IsAtOrBelow(min.Value))
                 {
-                    hasWatermark = true;
                     min = position;
                 }
             }
@@ -314,12 +312,14 @@ namespace PgOutput2Json.Kafka
             _dedupSkippedCount = 0;
             _dedupSkipActive = true;
 
+            var watermark = min ?? WalPosition.Zero;
+
             if (_logger != null && _logger.IsEnabled(LogLevel.Information))
             {
-                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, min.WalSeq, min.MessageNo);
+                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, watermark.WalSeq, watermark.MessageNo);
             }
 
-            return Task.FromResult((min.WalSeq, min.MessageNo));
+            return Task.FromResult((watermark.WalSeq, watermark.MessageNo));
         }
 
         private static List<PartitionMetadata> GetPartitionMetadata(KafkaPublisherOptions options)
