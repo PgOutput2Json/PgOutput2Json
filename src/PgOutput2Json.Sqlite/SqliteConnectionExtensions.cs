@@ -234,7 +234,9 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// <summary>
         /// Creates prepared parameterized commands for inserting/updating/deleting rows of the table.
         /// The commands are cached and reused until a relation message (schema change) is received.
-        /// They are created without a transaction - SQLite applies the connection's active transaction at execution time.
+        /// Each command captures the connection's current transaction at creation time and execution
+        /// requires the command's transaction to match the connection's current one - use
+        /// <see cref="PreparedCommands.SetTransaction"/> to re-bind cached commands to a new transaction.
         /// </summary>
         public static PreparedCommands CreatePreparedCommands(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns)
         {
@@ -567,6 +569,28 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             UpdateCommand = updateCommand;
             DeleteCommand = deleteCommand;
             Columns = columns;
+        }
+
+        /// <summary>
+        /// Re-binds all prepared commands to the given transaction.
+        /// Commands capture the connection's active transaction when created, and execution
+        /// requires the command's transaction to match the connection's current one -
+        /// so cached commands must be re-bound whenever a new transaction is started.
+        /// </summary>
+        public void SetTransaction(SqliteTransaction? transaction)
+        {
+            InsertCommand.Transaction = transaction;
+            InsertIgnoreCommand.Transaction = transaction;
+
+            if (UpdateCommand != null)
+            {
+                UpdateCommand.Transaction = transaction;
+            }
+
+            if (DeleteCommand != null)
+            {
+                DeleteCommand.Transaction = transaction;
+            }
         }
 
         public async ValueTask DisposeAsync()

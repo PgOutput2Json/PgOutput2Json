@@ -89,6 +89,13 @@ namespace PgOutput2Json.Sqlite
                 _transaction = null;
                 _lastWalEnd = 0;
                 _lastMessageNo = 0;
+
+                // prepared commands keep a reference to the transaction they are bound to -
+                // clear it so they never hold a completed transaction
+                foreach (var table in _tables.Values)
+                {
+                    table.Commands.SetTransaction(null);
+                }
             }
 
             if (_options.UseWal)
@@ -252,7 +259,19 @@ namespace PgOutput2Json.Sqlite
         {
             var connection = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
-            _transaction ??= await connection.BeginTransactionAsync(token).ConfigureAwait(false);
+            if (_transaction == null)
+            {
+                var transaction = await connection.BeginTransactionAsync(token).ConfigureAwait(false);
+
+                _transaction = transaction;
+
+                // cached commands are bound to the transaction they were created in -
+                // they must be re-bound or execution fails with TransactionConnectionMismatch
+                foreach (var table in _tables.Values)
+                {
+                    table.Commands.SetTransaction((SqliteTransaction)transaction);
+                }
+            }
 
             return connection;
         }
