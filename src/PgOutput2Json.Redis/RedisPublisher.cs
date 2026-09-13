@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -10,10 +11,16 @@ namespace PgOutput2Json.Redis
 {
     public class RedisPublisher : MessagePublisher
     {
-        public RedisPublisher(RedisPublisherOptions options, ILogger<RedisPublisher>? logger = null)
+        private const string ConfigKeySuffix = "__pg2j_config";
+
+        private const string WalEndField = "wal_end";
+        private const string MessageNoField = "message_no";
+
+        public RedisPublisher(RedisPublisherOptions options, ILogger<RedisPublisher>? logger = null, bool useDeduplication = true)
         {
             _options = options;
             _logger = logger;
+            _useDeduplication = useDeduplication;
         }
 
         public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
@@ -62,6 +69,9 @@ namespace PgOutput2Json.Redis
                     _logger.LogDebug("Published to Stream={StreamName}, Body={Body}", name, json);
                 }
             }
+
+            _lastWal = msg.TxFinalLsn;
+            _lastMessageNo = msg.MessageNo;
         }
 
         private int GetPartitionId(JsonMessage msg, string tableName)
@@ -77,7 +87,9 @@ namespace PgOutput2Json.Redis
                 partitionKey = msg.KeyKolValue.ToString();
             }
 
-            return partitionKey != string.Empty ? Math.Abs(partitionKey.GetHashCode()) % partitionCount : 0;
+            // murmur2, the same client-side routing the Kafka adapter uses - stable across
+            // restarts, unlike string.GetHashCode(), and without the Math.Abs(int.MinValue) overflow
+            return partitionKey != string.Empty ? (MurmurHash2.Hash(partitionKey) & 0x7fffffff) % partitionCount : 0;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -88,45 +100,50 @@ namespace PgOutput2Json.Redis
             }
 
             DisposeTasks();
+
+            if (_redis == null || !_useDeduplication) return;
+
+            // data exporter messages have no LSN info (0,0) - they must not overwrite the replication position;
+            // channels carry no history, so there is nothing to deduplicate against
+            if (_options.PublishMode == PublishMode.Channel || (_lastWal == 0 && _lastMessageNo == 0)) return;
+
+            // both fields land in one atomic HSET - the watermark cannot be caught half-written
+            await _redis.GetDatabase().HashSetAsync(ConfigKeyName, [
+                new HashEntry(WalEndField, _lastWal.ToString(CultureInfo.InvariantCulture)),
+                new HashEntry(MessageNoField, _lastMessageNo.ToString(CultureInfo.InvariantCulture))
+            ], flags: CommandFlags.DemandMaster).ConfigureAwait(false);
         }
 
         public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
+            // without deduplication there is no need to read the last published position
+            if (!_useDeduplication) return (0UL, 0UL);
+
             if (_options.PublishMode == PublishMode.Channel) return (0, 0); // cannot do de-duplication with channels
 
             _redis ??= await ConnectionMultiplexer.ConnectAsync(_options.Redis)
                 .ConfigureAwait(false);
 
-            var entries = await _redis.GetDatabase()
-                .StreamRangeAsync(_options.StreamName, "-", "+", count: 1, messageOrder: Order.Descending, flags: CommandFlags.DemandMaster)
+            var values = await _redis.GetDatabase()
+                .HashGetAsync(ConfigKeyName, [WalEndField, MessageNoField], CommandFlags.DemandMaster)
                 .ConfigureAwait(false);
 
-            if (entries.Length == 0)
+            // no config yet - a fresh setup
+            if (values[0].IsNull && values[1].IsNull) return (0, 0);
+
+            var walEndValue = values[0].IsNull ? null : values[0].ToString();
+            var messageNoValue = values[1].IsNull ? null : values[1].ToString();
+
+            if (!ulong.TryParse(walEndValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var walEnd)
+                || !ulong.TryParse(messageNoValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var messageNo))
             {
-                return (0, 0);
-            }
-
-            var lastEntry = entries[^1];
-
-            if (lastEntry.Values.Length == 0)
-            {
-                throw new Exception($"Could not rad WAL end LSN - missing entry value");
-            }
-
-            var json = lastEntry.Values[0].Value.ToString();
-
-            if (string.IsNullOrEmpty(json))
-            {
-                throw new Exception($"Could not rad WAL end LSN - entry value is null or empty");
-            }
-
-            if (!json.TryGetWalSeq(out var walEnd, out var messageNo))
-            {
-                throw new Exception($"Missing WAL end LSN in the message: '{json}'");
+                throw new Exception($"Missing or invalid WAL end LSN in the config of stream '{_options.StreamName}'");
             }
 
             return (walEnd, messageNo);
         }
+
+        private string ConfigKeyName => string.Join(':', _options.StreamName, ConfigKeySuffix);
 
         private void DisposeTasks()
         {
@@ -148,5 +165,10 @@ namespace PgOutput2Json.Redis
 
         private readonly RedisPublisherOptions _options;
         private readonly ILogger<RedisPublisher>? _logger;
+
+        private readonly bool _useDeduplication;
+
+        private ulong _lastWal;
+        private ulong _lastMessageNo;
     }
 }
