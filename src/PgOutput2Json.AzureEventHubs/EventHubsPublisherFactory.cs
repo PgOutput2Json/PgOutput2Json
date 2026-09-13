@@ -13,7 +13,7 @@ namespace PgOutput2Json.AzureEventHubs
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new EventHubsPublisher(_options, loggerFactory?.CreateLogger<EventHubsPublisher>());
+            return new EventHubsPublisher(_options, loggerFactory?.CreateLogger<EventHubsPublisher>(), listenerOptions.UseDeduplication);
         }
     }
 }
