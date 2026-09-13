@@ -326,9 +326,18 @@ namespace PgOutput2Json.Kafka
             using var adminClient = new AdminClientBuilder(config).Build();
 
             var metadata = adminClient.GetMetadata(options.Topic, TimeSpan.FromSeconds(10));
-            var partitions = metadata.Topics.FirstOrDefault(t => t.Topic == options.Topic)?.Partitions;
+            var topic = metadata.Topics.FirstOrDefault(t => t.Topic == options.Topic);
 
-            return partitions ?? [];
+            // right after startup (or when the topic does not exist yet) the metadata comes
+            // back without partitions - routing on an empty list would fall back to
+            // Partition.Any, silently disabling the client-side routing and the per-partition
+            // deduplication - so fail immediately and let the listener reconnect
+            if (topic == null || topic.Partitions.Count == 0)
+            {
+                throw new Exception($"Topic {options.Topic} has no partitions - it may not be created yet.");
+            }
+
+            return topic.Partitions.ToList();
         }
 
         private IProducer<string, string> EnsureProducer()
