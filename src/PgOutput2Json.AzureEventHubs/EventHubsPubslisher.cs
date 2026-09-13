@@ -231,6 +231,8 @@ namespace PgOutput2Json.AzureEventHubs
             // stable numeric order - the routing of a key must resolve to the same partition on every restart
             _partitionIds = [.. partitionIds.OrderBy(int.Parse)];
 
+            _logger?.LogInformation("Partitions: {PartitionIds}", _partitionIds.Aggregate("", (acc, x) => acc + x + ","));
+
             return _partitionIds;
         }
 
@@ -258,7 +260,7 @@ namespace PgOutput2Json.AzureEventHubs
         /// <param name="connectionString">Event Hubs connection string</param>
         /// <param name="eventHubName">Event Hub name</param>
         /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The lowest WAL position found, or (0,0) if no partition holds messages</returns>
+        /// <returns>The lowest WAL position found, or (0,0) if any partition is empty</returns>
         private async Task<(ulong, ulong)> GetMinWalOffsetAsync(string connectionString, string eventHubName, CancellationToken cancellationToken = default)
         {
             await using var consumer = new EventHubConsumerClient(EventHubConsumerClient.DefaultConsumerGroupName, connectionString, eventHubName);
@@ -275,20 +277,22 @@ namespace PgOutput2Json.AzureEventHubs
 
             _lastPublished.Clear();
 
-            var min = WalPosition.Zero;
-            var hasWatermark = false;
+            WalPosition? min = null;
 
             foreach (var partitionId in partitionIds)
             {
                 var partitionProps = await consumer.GetPartitionPropertiesAsync(partitionId, cancellationToken)
                     .ConfigureAwait(false);
 
-                // an empty partition was never written to, or its history was removed by
-                // retention - its per-partition watermark is (0,0), so nothing can be
-                // skipped for it and every message routed to it must be sent
+                // an empty partition forces the watermark down to (0,0) - it was never written
+                // to, or its batch was canceled mid-send on shutdown, where its group is sent
+                // after the others - a full replay re-sends its lost messages: duplicates
+                // are safe, a wrong watermark is data loss
                 if (partitionProps.IsEmpty)
                 {
                     _lastPublished[partitionId] = WalPosition.Zero;
+
+                    min = WalPosition.Zero;
 
                     continue;
                 }
@@ -321,9 +325,8 @@ namespace PgOutput2Json.AzureEventHubs
 
                 // the minimum across the partitions is a safe deduplication watermark -
                 // everything at or below it is already published to all the partitions
-                if (!hasWatermark || position.Value.IsAtOrBelow(min))
+                if (min == null || position.Value.IsAtOrBelow(min.Value))
                 {
-                    hasWatermark = true;
                     min = position.Value;
                 }
             }
@@ -343,9 +346,11 @@ namespace PgOutput2Json.AzureEventHubs
             _dedupSkippedCount = 0;
             _dedupSkipActive = true;
 
-            _logger?.LogInformation("Last published WAL LSN for {EventHub}: {LastWalSeq}/{LastMessageNo}", eventHubName, min.WalSeq, min.MessageNo);
+            var watermark = min ?? WalPosition.Zero;
 
-            return (min.WalSeq, min.MessageNo);
+            _logger?.LogInformation("Last published WAL LSN for {EventHub}: {LastWalSeq}/{LastMessageNo}", eventHubName, watermark.WalSeq, watermark.MessageNo);
+
+            return (watermark.WalSeq, watermark.MessageNo);
         }
 
         private static ulong GetULongPropValue(PartitionEvent partitionEvent, string propName)
