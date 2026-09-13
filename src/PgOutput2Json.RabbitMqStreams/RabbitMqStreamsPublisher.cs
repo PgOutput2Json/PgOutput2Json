@@ -49,13 +49,24 @@ namespace PgOutput2Json.RabbitMqStreams
             // the messages to the same partition can be deduplicated
             var partitionStream = await ResolvePartitionStreamAsync(msg).ConfigureAwait(false);
 
-            if (partitionStream != null && IsAlreadyPublished(partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo))
+            if (_useDeduplication && _dedupSkipActive && partitionStream != null && IsAlreadyPublished(partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo))
             {
-                _logger?.LogWarning("Skipping already published message for stream {Stream}: " +
-                    "TX Final LSN = {TxFinalLsn}, MessageNo = {MessageNo}",
-                    partitionStream, jsonMsg.TxFinalLsn, jsonMsg.MessageNo);
+                // already processed
+                _dedupSkippedCount++;
 
                 return;
+            }
+
+            if (_dedupSkipActive && new WalPosition(jsonMsg.TxFinalLsn, jsonMsg.MessageNo).IsAfter(_dedupSkipEnd))
+            {
+                // the replay overlap is over - no further message can be a per-partition
+                // duplicate, so summarize the skipped ones and stop the per-message checks
+                if (_dedupSkippedCount > 0)
+                {
+                    _logger?.LogWarning("Deduplication enabled, skipped {SkippedCount} already published messages.", _dedupSkippedCount);
+                }
+
+                _dedupSkipActive = false;
             }
 
             var producer = await EnsureProducerAsync().ConfigureAwait(false);
@@ -374,6 +385,21 @@ namespace PgOutput2Json.RabbitMqStreams
                 }
             }
 
+            // once the stream passes the highest per-partition watermark, no further message
+            // can be a duplicate for any partition - the per-partition checks only run until then
+            _dedupSkipEnd = WalPosition.Zero;
+
+            foreach (var position in _lastPublished.Values)
+            {
+                if (position.IsAfter(_dedupSkipEnd))
+                {
+                    _dedupSkipEnd = position;
+                }
+            }
+
+            _dedupSkippedCount = 0;
+            _dedupSkipActive = true;
+
             _logger?.LogInformation("Last published WAL LSN for {Stream}: {LastWalSeq}/{LastMessageNo}", _options.StreamName, min.WalSeq, min.MessageNo);
 
             return (min.WalSeq, min.MessageNo);
@@ -395,6 +421,10 @@ namespace PgOutput2Json.RabbitMqStreams
         private HashRoutingMurmurStrategy? _hashRoutingStrategy;
 
         private readonly Dictionary<string, WalPosition> _lastPublished = new();
+
+        private bool _dedupSkipActive; // per-partition duplicate checks run only while replaying over the last published positions
+        private long _dedupSkippedCount;
+        private WalPosition _dedupSkipEnd; // highest per-partition watermark from the startup scan - duplicates are impossible past it
 
         private readonly ILogger<StreamSystem>? _loggerStreamSystem;
         private readonly ILogger<Producer>? _loggerProducer;
