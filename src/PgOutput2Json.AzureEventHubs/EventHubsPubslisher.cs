@@ -220,6 +220,14 @@ namespace PgOutput2Json.AzureEventHubs
 
             var partitionIds = await EnsureClient().GetPartitionIdsAsync(token).ConfigureAwait(false);
 
+            // right after startup (or a transient hiccup) the namespace can report no partitions -
+            // routing on an empty list would funnel every event into a single partition, so fail
+            // immediately and let the listener reconnect with fresh metadata
+            if (partitionIds.Length == 0)
+            {
+                throw new Exception("Event Hub returned no partitions - it may not be fully initialized yet.");
+            }
+
             // stable numeric order - the routing of a key must resolve to the same partition on every restart
             _partitionIds = [.. partitionIds.OrderBy(int.Parse)];
 
@@ -257,6 +265,13 @@ namespace PgOutput2Json.AzureEventHubs
 
             var partitionIds = await consumer.GetPartitionIdsAsync(cancellationToken)
                     .ConfigureAwait(false);
+
+            // same guard as the routing - a watermark computed from an incomplete
+            // partition list would over-report durability and skip live messages
+            if (partitionIds.Length == 0)
+            {
+                throw new Exception("Event Hub returned no partitions - it may not be fully initialized yet.");
+            }
 
             _lastPublished.Clear();
 
