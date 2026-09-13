@@ -294,6 +294,8 @@ namespace PgOutput2Json.AzureEventHubs
 
                     min = WalPosition.Zero;
 
+                    _logger?.LogInformation("Partition {Partition} is empty - forcing the watermark to (0,0), the replay will re-send its messages", partitionId);
+
                     continue;
                 }
 
