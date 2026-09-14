@@ -20,7 +20,7 @@
                                   packable projects where the files exist.
     -->
     <PropertyGroup>
-        <Version>1.5.0</Version>
+        <Version>2.0.0-rc.1</Version>
         <Nullable>enable</Nullable>
         <ImplicitUsings>disable</ImplicitUsings>
         <Authors>PgOutput2Json</Authors>
