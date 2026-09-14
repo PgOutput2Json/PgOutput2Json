@@ -1,0 +1,39 @@
+<Project>
+
+    <!--
+        Shared build and package metadata for every project under src/.
+
+        Imported before each project body, so everything here is a default:
+        a project's own PropertyGroup overrides it (TestWorker relies on that
+        to switch ImplicitUsings to enable).
+
+        Deliberately NOT hoisted here:
+          TargetFrameworks        Tests and TestWorker declare a single
+                                  TargetFramework; setting both properties
+                                  on one project breaks the build.
+          GeneratePackageOnBuild  TestWorker does not set IsPackable=false,
+                                  so it would try to pack and fail on its
+                                  missing icon.png.
+          Description             differs per package, and it is what readers
+                                  of the NuGet page see.
+          icon.png / README.md    those item groups only belong to the 11
+                                  packable projects where the files exist.
+    -->
+    <PropertyGroup>
+        <Version>1.5.0</Version>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+        <Authors>PgOutput2Json</Authors>
+        <Copyright>Copyright (c) 2021 PgOutput2Json</Copyright>
+        <RepositoryUrl>https://github.com/PgOutput2Json/PgOutput2Json</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/PgOutput2Json/PgOutput2Json</PackageProjectUrl>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageIcon>icon.png</PackageIcon>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
+        <IsTrimmable>true</IsTrimmable>
+    </PropertyGroup>
+
+</Project>
