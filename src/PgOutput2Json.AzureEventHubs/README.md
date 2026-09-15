@@ -17,9 +17,9 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 ## 🔌 Supported Outputs
 
 - ✅ **.NET application** via a simple delegate handler
-- ✅ **Kafka**
-- ✅ **RabbitMQ** (Streams + Classic Queues)
-- ✅ **Redis** (Streams + Pub/Sub Channels)
+- ✅ **Kafka** (used by [PgHook.Kafka](https://github.com/PgHookCom/PgHook.Kafka))
+- ✅ **RabbitMQ** (Streams + Classic Queues - used by [PgHook.RabbitMqStreams](https://github.com/PgHookCom/PgHook.RabbitMqStreams))
+- ✅ **Redis** (Streams + Pub/Sub Channels - used by [PgHook.Redis](https://github.com/PgHookCom/PgHook.Redis))
 - ✅ **SQLite** (used by [PgFreshCache](https://github.com/PgOutput2Json/PgFreshCache))
 - ✅ **MongoDB**
 - ✅ **Amazon Kinesis**
