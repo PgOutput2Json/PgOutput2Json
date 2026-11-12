@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -161,6 +162,8 @@ namespace PgOutput2Json
                             {
                                 replicationMessage.HasRelationChanged = true;
 
+                                ValidatePartitionKeyColumns(rel);
+
                                 // Relation Message has WalEnd=0/0
                                 continue;
                             }
@@ -278,6 +281,55 @@ namespace PgOutput2Json
             }
 
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
+        }
+
+        /// <summary>
+        /// Partition key values are read from the key row for deletes, which contains only the replica
+        /// identity columns. A partition key column outside the replica identity therefore yields an empty
+        /// partition key for deletes, routing them to a different partition than the row's inserts and updates.
+        /// The relation message is the only place where the actual replica identity is known, so it is checked here.
+        /// pgoutput sends the relation once per connection (and again on schema change), so this is logged rarely.
+        /// </summary>
+        private void ValidatePartitionKeyColumns(RelationMessage rel)
+        {
+            if (_logger == null || _options.PartitionKeyColumns.Count == 0) return;
+
+            var tableName = $"{rel.Namespace}.{rel.RelationName}";
+
+            if (!_options.PartitionKeyColumns.TryGetValue(tableName, out var partitionCols)) return;
+
+            _options.IncludedColumns.TryGetValue(tableName, out var includedCols);
+
+            foreach (var partitionCol in partitionCols)
+            {
+                RelationMessage.Column? column = null;
+
+                foreach (var col in rel.Columns)
+                {
+                    if (col.ColumnName == partitionCol)
+                    {
+                        column = col;
+                        break;
+                    }
+                }
+
+                if (column == null)
+                {
+                    _logger.LogError("Partition key column {Column} does not exist in table {Table} - partition key will be incomplete for all messages",
+                        partitionCol, tableName);
+                }
+                else if (includedCols != null && !includedCols.Contains(partitionCol))
+                {
+                    _logger.LogError("Partition key column {Column} of table {Table} is not in the included columns - partition key will be incomplete for all messages",
+                        partitionCol, tableName);
+                }
+                else if ((column.Value.Flags & RelationMessage.Column.ColumnFlags.PartOfKey) == 0)
+                {
+                    _logger.LogError("Partition key column {Column} of table {Table} is not part of the replica identity - deletes will not carry the partition key " +
+                        "and may be routed to a different partition. Use primary key columns for partitioning, or set REPLICA IDENTITY FULL on the table.",
+                        partitionCol, tableName);
+                }
+            }
         }
 
         private static async Task ConfirmAsync(ConnectionState cs)
