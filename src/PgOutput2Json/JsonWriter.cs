@@ -327,7 +327,9 @@ namespace PgOutput2Json
 
                 StringBuilder? partitionKeyBuilder = null;
 
-                if (IsPartitionKeyCol(partitionKeyFields, col))
+                // like the key value, the partition key is taken from a single row only - the new row for
+                // inserts and updates, the key row for deletes - so an update hashes the same as an insert
+                if (writeToKeyValueBuilder && IsPartitionKeyCol(partitionKeyFields, col))
                 {
                     partitionKeyBuilder = PartitionColValueBuilder;
                     partitionKeyBuilder.Append(partitionKeyBuilder.Length == 0 ? '[' : ',');
@@ -418,7 +420,12 @@ namespace PgOutput2Json
                 }
             }
 
-            if (KeyColValueBuilder.Length > 0 )
+            if (!writeToKeyValueBuilder)
+            {
+                return;
+            }
+
+            if (KeyColValueBuilder.Length > 0)
             {
                 KeyColValueBuilder.Append(']');
             }
