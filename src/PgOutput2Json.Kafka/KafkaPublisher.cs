@@ -23,6 +23,9 @@ namespace PgOutput2Json.Kafka
 
         public override Task PublishAsync(JsonMessage message, CancellationToken token)
         {
+            // fail fast - the listener reconnects without confirming, and resumes from the last published position
+            ThrowIfDeliveryFailed();
+
             var tableName = message.TableName.ToString();
             var msgJson = message.Json.ToString();
             var msgKey = message.KeyKolValue.ToString();
@@ -82,9 +85,12 @@ namespace PgOutput2Json.Kafka
             },
             deliveryReport =>
             {
+                // Runs on the librdkafka poll thread, where Confluent.Kafka swallows exceptions - throwing here
+                // would let Flush return normally and the WAL be confirmed for an undelivered message.
+                // Record the first failure instead, ConfirmAsync and PublishAsync rethrow it.
                 if (deliveryReport.Error.IsError)
                 {
-                    throw new Exception(deliveryReport.Error.Reason);
+                    Interlocked.CompareExchange(ref _deliveryError, new ProduceException<string, string>(deliveryReport.Error, deliveryReport), null);
                 }
             });
 
@@ -158,7 +164,20 @@ namespace PgOutput2Json.Kafka
         {
             _producer?.Flush(token);
 
+            // Flush returns normally even if some deliveries failed - they are reported only to the handler
+            ThrowIfDeliveryFailed();
+
             return Task.CompletedTask;
+        }
+
+        private void ThrowIfDeliveryFailed()
+        {
+            var error = Volatile.Read(ref _deliveryError);
+
+            if (error != null)
+            {
+                throw new Exception($"Kafka delivery to topic {_options.Topic} failed: {error.Error.Reason}", error);
+            }
         }
 
         public override ValueTask DisposeAsync()
@@ -360,6 +379,8 @@ namespace PgOutput2Json.Kafka
         }
 
         private IProducer<string, string>? _producer;
+
+        private ProduceException<string, string>? _deliveryError; // first failed delivery, set on the librdkafka poll thread
 
         private readonly KafkaPublisherOptions _options;
         private readonly bool _useDeduplication;
