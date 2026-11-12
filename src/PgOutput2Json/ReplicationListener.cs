@@ -191,6 +191,18 @@ namespace PgOutput2Json
                                 continue;
                             }
 
+                            if (message is LogicalDecodingMessage nonTxMsg && (nonTxMsg.Flags & 1) == 0)
+                            {
+                                // A non-transactional message is sent outside of Begin/Commit, as soon as it is decoded,
+                                // so it has no transaction of its own - without this it would inherit the deduplication
+                                // key of the previous transaction (or 0/1 after a reconnect, and be skipped as a duplicate).
+                                // Its own LSN is a valid key: it is decoded in WAL order, and every transaction sent
+                                // after it commits at a higher LSN. The counter is incremented to 1 below.
+                                replicationMessage.TransactionFinalLsn = (ulong)nonTxMsg.MessageLsn;
+                                replicationMessage.CommitTimeStamp = nonTxMsg.ServerClock;
+                                replicationMessage.MessageNo = 0UL;
+                            }
+
                             if (message is InsertMessage ||
                                 message is DefaultUpdateMessage ||
                                 message is FullUpdateMessage ||
