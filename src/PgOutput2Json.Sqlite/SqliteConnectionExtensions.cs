@@ -459,6 +459,71 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Moves a row to its new key, if the update changed the key. The key element holds the old values of
+        /// the key columns, the row element the new row. The other columns are written by the update that follows.
+        /// </summary>
+        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
+        {
+            if (keyElement.ValueKind != JsonValueKind.Array) return;
+
+            var columns = commands.Columns;
+
+            var keyColumns = new List<int>();
+            var changed = false;
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (!columns[i].IsKey) continue;
+
+                // the key element has the key columns only
+                if (keyColumns.Count >= keyElement.GetArrayLength()) return;
+
+                changed |= keyElement[keyColumns.Count].GetRawText() != rowElement[i].GetRawText();
+
+                keyColumns.Add(i);
+            }
+
+            if (!changed) return;
+
+            // with REPLICA IDENTITY FULL every column is a key column, and a large one may come as unchanged
+            var setColumns = keyColumns
+                .Where(i => !(rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == ToastValue))
+                .ToList();
+
+            if (setColumns.Count == 0) return;
+
+            // OR REPLACE: a replayed key change may find the new key already there
+            var sqlBuilder = new StringBuilder($"UPDATE OR REPLACE \"{GetTableName(fullTableName)}\" SET ");
+
+            for (var j = 0; j < setColumns.Count; j++)
+            {
+                if (j > 0) sqlBuilder.Append(", ");
+                sqlBuilder.Append($"\"{columns[setColumns[j]].Name}\" = @p{j}");
+            }
+
+            sqlBuilder.Append(" WHERE ");
+            sqlBuilder.Append(BuildKeyWhereClause(columns, setColumns.Count));
+
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = sqlBuilder.ToString();
+
+            for (var j = 0; j < setColumns.Count; j++)
+            {
+                cmd.Parameters.AddWithValue($"@p{j}", DBNull.Value);
+                BindValue(cmd.Parameters[j], rowElement[setColumns[j]], columns[setColumns[j]]);
+            }
+
+            for (var j = 0; j < keyColumns.Count; j++)
+            {
+                cmd.Parameters.AddWithValue($"@p{setColumns.Count + j}", DBNull.Value);
+                BindValue(cmd.Parameters[setColumns.Count + j], keyElement[j], columns[keyColumns[j]]);
+            }
+
+            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
         public static async Task DeleteAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement keyElement, CancellationToken token)
         {
             var deleteCommand = commands.DeleteCommand;
