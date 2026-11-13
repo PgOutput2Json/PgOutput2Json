@@ -55,7 +55,7 @@ namespace PgOutput2Json.IntegrationTests
                 .WithCommand("-c", "wal_level=logical", "-c", "max_replication_slots=100", "-c", "max_wal_senders=100")
                 .Build();
 
-            await _postgres.StartAsync();
+            await StartWithRetryAsync(_postgres);
 
             PgMajorVersion = await Db.ScalarAsync<int>("SELECT current_setting('server_version_num')::int / 10000");
         }
@@ -66,7 +66,7 @@ namespace PgOutput2Json.IntegrationTests
             {
                 _kafka = new KafkaBuilder("apache/kafka:3.9.0").Build();
 
-                await _kafka.StartAsync();
+                await StartWithRetryAsync(_kafka);
             }
 
             return _kafka.GetBootstrapAddress();
@@ -78,7 +78,7 @@ namespace PgOutput2Json.IntegrationTests
             {
                 _mongo = new MongoDbBuilder("mongo:8").Build();
 
-                await _mongo.StartAsync();
+                await StartWithRetryAsync(_mongo);
             }
 
             return _mongo.GetConnectionString();
@@ -90,7 +90,7 @@ namespace PgOutput2Json.IntegrationTests
             {
                 _dynamoDb = new DynamoDbBuilder("amazon/dynamodb-local:latest").Build();
 
-                await _dynamoDb.StartAsync();
+                await StartWithRetryAsync(_dynamoDb);
             }
 
             return _dynamoDb.GetConnectionString();
@@ -109,7 +109,7 @@ namespace PgOutput2Json.IntegrationTests
                     .WithEnvironment("RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS", "-rabbitmq_stream advertised_host localhost")
                     .Build();
 
-                await container.StartAsync();
+                await StartWithRetryAsync(container);
 
                 var result = await container.ExecAsync(["rabbitmq-plugins", "enable", "rabbitmq_stream"]);
 
@@ -129,7 +129,7 @@ namespace PgOutput2Json.IntegrationTests
             {
                 _redis = new RedisBuilder("redis:7").Build();
 
-                await _redis.StartAsync();
+                await StartWithRetryAsync(_redis);
             }
 
             return _redis.GetConnectionString();
@@ -144,10 +144,31 @@ namespace PgOutput2Json.IntegrationTests
             {
                 _localStack = new LocalStackBuilder("localstack/localstack:3").Build();
 
-                await _localStack.StartAsync();
+                await StartWithRetryAsync(_localStack);
             }
 
             return _localStack.GetConnectionString();
+        }
+
+        /// <summary>
+        /// Starting a container pulls its image, and a pull fails now and then, mostly on a CI runner.
+        /// </summary>
+        private static async Task StartWithRetryAsync(DotNet.Testcontainers.Containers.IContainer container)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await container.StartAsync();
+                    return;
+                }
+                catch (Exception ex) when (attempt < 3)
+                {
+                    Console.WriteLine($"Starting {container.Image.FullName} failed, trying again: {ex.Message}");
+
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                }
+            }
         }
 
         [AssemblyCleanup]
