@@ -164,6 +164,12 @@ No need to manage exchanges or queues — everything will flow directly through 
 
 > **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.
 
+## Super Streams and Compact Mode
+
+In compact mode (`JsonWriteMode.Compact`), row values are sent without column names, and the schema (`"s"`) comes only with the first row of a table after a connect or a table change. A super stream spreads the rows of a table across its partitions, so the schema lands in only one partition.
+
+With compact mode on a super stream, consumers must therefore share the last schema per table across all partitions, for example in a common store. A single (non-super) stream has no such limitation.
+
 ## Working with Permanent Replication Slots
 
 If you want to capture changes made while the worker is stopped, you need a permanent replication slot. 
