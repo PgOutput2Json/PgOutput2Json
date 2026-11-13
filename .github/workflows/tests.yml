@@ -1,7 +1,8 @@
 # Builds the solution and runs the unit and the integration tests.
-# The integration tests start PostgreSQL and Kafka with Testcontainers, on the runner's Docker.
-# The "test" job runs everything on PostgreSQL 16. The "postgres" job repeats the PostgreSQL tests
-# on the other supported versions.
+# The integration tests start their containers with Testcontainers, on the runner's Docker.
+#   test      builds, runs the unit tests and the PostgreSQL tests on PostgreSQL 16
+#   outputs   runs the tests of the outputs (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB, Kinesis, webhooks, SQLite)
+#   postgres  repeats the PostgreSQL tests on the other supported versions
 name: Tests
 
 on:
@@ -45,7 +46,23 @@ jobs:
         run: dotnet test src/PgOutput2Json.Tests/PgOutput2Json.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
 
       - name: Integration tests
-        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --filter "FullyQualifiedName!~.Outputs." --logger "console;verbosity=normal"
+
+  outputs:
+    name: Outputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Output tests
+        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --filter "FullyQualifiedName~.Outputs." --logger "console;verbosity=normal"
 
   postgres:
     name: PostgreSQL ${{ matrix.postgres }}

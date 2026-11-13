@@ -4,8 +4,11 @@ using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Testcontainers.DynamoDb;
 using Testcontainers.Kafka;
+using Testcontainers.LocalStack;
 using Testcontainers.MongoDb;
 using Testcontainers.PostgreSql;
+using Testcontainers.RabbitMq;
+using Testcontainers.Redis;
 
 namespace PgOutput2Json.IntegrationTests
 {
@@ -19,6 +22,9 @@ namespace PgOutput2Json.IntegrationTests
         private static KafkaContainer? _kafka;
         private static MongoDbContainer? _mongo;
         private static DynamoDbContainer? _dynamoDb;
+        private static RabbitMqContainer? _rabbitMq;
+        private static RedisContainer? _redis;
+        private static LocalStackContainer? _localStack;
 
         public static string PgConnectionString => _postgres!.GetConnectionString();
 
@@ -90,12 +96,69 @@ namespace PgOutput2Json.IntegrationTests
             return _dynamoDb.GetConnectionString();
         }
 
+        /// <summary>
+        /// RabbitMQ with the stream plugin. The stream port is mapped to a random port, so stream clients
+        /// must use an address resolver for <see cref="RabbitMqStreamPort"/> on localhost.
+        /// </summary>
+        public static async Task<RabbitMqContainer> GetRabbitMqAsync()
+        {
+            if (_rabbitMq == null)
+            {
+                var container = new RabbitMqBuilder("rabbitmq:4-management")
+                    .WithPortBinding(5552, true)
+                    .WithEnvironment("RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS", "-rabbitmq_stream advertised_host localhost")
+                    .Build();
+
+                await container.StartAsync();
+
+                var result = await container.ExecAsync(["rabbitmq-plugins", "enable", "rabbitmq_stream"]);
+
+                if (result.ExitCode != 0) throw new InvalidOperationException($"Could not enable the stream plugin: {result.Stderr}");
+
+                _rabbitMq = container;
+            }
+
+            return _rabbitMq;
+        }
+
+        public static int RabbitMqStreamPort => _rabbitMq!.GetMappedPublicPort(5552);
+
+        public static async Task<string> GetRedisConnectionStringAsync()
+        {
+            if (_redis == null)
+            {
+                _redis = new RedisBuilder("redis:7").Build();
+
+                await _redis.StartAsync();
+            }
+
+            return _redis.GetConnectionString();
+        }
+
+        /// <summary>
+        /// LocalStack, for Kinesis.
+        /// </summary>
+        public static async Task<string> GetLocalStackUrlAsync()
+        {
+            if (_localStack == null)
+            {
+                _localStack = new LocalStackBuilder("localstack/localstack:3").Build();
+
+                await _localStack.StartAsync();
+            }
+
+            return _localStack.GetConnectionString();
+        }
+
         [AssemblyCleanup]
         public static async Task StopAsync()
         {
             if (_kafka != null) await _kafka.DisposeAsync();
             if (_mongo != null) await _mongo.DisposeAsync();
             if (_dynamoDb != null) await _dynamoDb.DisposeAsync();
+            if (_rabbitMq != null) await _rabbitMq.DisposeAsync();
+            if (_redis != null) await _redis.DisposeAsync();
+            if (_localStack != null) await _localStack.DisposeAsync();
             if (_postgres != null) await _postgres.DisposeAsync();
         }
     }
