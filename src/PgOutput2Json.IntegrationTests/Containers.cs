@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -17,14 +18,31 @@ namespace PgOutput2Json.IntegrationTests
 
         public static string PgConnectionString => _postgres!.GetConnectionString();
 
+        /// <summary>
+        /// The PostgreSQL image to test against, e.g. PG_IMAGE=postgres:14. The CI runs the tests for each supported version.
+        /// </summary>
+        public static string PgImage => Environment.GetEnvironmentVariable("PG_IMAGE") is { Length: > 0 } image ? image : "postgres:16";
+
+        public static int PgMajorVersion { get; private set; }
+
+        /// <summary>
+        /// Ends the test as inconclusive on a PostgreSQL version without the feature it needs.
+        /// </summary>
+        public static void RequirePg(int majorVersion, string feature)
+        {
+            if (PgMajorVersion < majorVersion) Assert.Inconclusive($"{feature} need PostgreSQL {majorVersion}, this is {PgMajorVersion}");
+        }
+
         [AssemblyInitialize]
         public static async Task StartAsync(TestContext _)
         {
-            _postgres = new PostgreSqlBuilder("postgres:16")
+            _postgres = new PostgreSqlBuilder(PgImage)
                 .WithCommand("-c", "wal_level=logical", "-c", "max_replication_slots=100", "-c", "max_wal_senders=100")
                 .Build();
 
             await _postgres.StartAsync();
+
+            PgMajorVersion = await Db.ScalarAsync<int>("SELECT current_setting('server_version_num')::int / 10000");
         }
 
         public static async Task<string> GetKafkaBootstrapServersAsync()

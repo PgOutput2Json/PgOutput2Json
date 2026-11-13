@@ -232,6 +232,8 @@ namespace PgOutput2Json.IntegrationTests
         [TestMethod]
         public async Task Copy_should_apply_the_row_filter_and_the_column_list()
         {
+            Containers.RequirePg(15, "Row filters and column lists");
+
             await Db.ExecuteAsync(@"
                 CREATE TABLE ts_flt (id int PRIMARY KEY, v text, secret text);
                 INSERT INTO ts_flt VALUES (1, 'a', 'x'), (2, '', 'x'), (3, NULL, 'x');
@@ -259,6 +261,43 @@ namespace PgOutput2Json.IntegrationTests
 
             // an empty string in the last column, a null, and the same columns from the stream
             CollectionAssert.AreEqual(new[] { "{\"id\":2,\"v\":\"\"}", "{\"id\":3,\"v\":null}", "{\"id\":4,\"v\":\"d\"}" }, rows);
+        }
+
+        [TestMethod]
+        [DataRow("ts_part", false, "public.ts_part_eu[1,\"eu\"] public.ts_part_us[2,\"us\"]", "public.ts_part_eu[3,\"eu\"]")]
+        [DataRow("ts_root", true, "public.ts_root[1,\"eu\"] public.ts_root[2,\"us\"]", "public.ts_root[3,\"eu\"]")]
+        public async Task Partitioned_table_should_be_copied_and_streamed_under_the_published_name(string name, bool viaRoot, string copied, string streamed)
+        {
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int, region text, v text, PRIMARY KEY (id, region)) PARTITION BY LIST (region);
+                CREATE TABLE {name}_eu PARTITION OF {name} FOR VALUES IN ('eu');
+                CREATE TABLE {name}_us PARTITION OF {name} FOR VALUES IN ('us');
+                INSERT INTO {name} VALUES (1, 'eu', 'a'), (2, 'us', 'b');
+                CREATE PUBLICATION {name}_pub FOR TABLE {name} WITH (publish_via_partition_root = {viaRoot});");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+
+            var publisher = new CollectingPublisherFactory();
+
+            await using (new RunningListener(CreateBuilder(name, publisher)))
+            {
+                // the partitions are synced one by one, or the root as one table
+                await Wait.UntilAsync(async () => (await Db.TableStatesAsync($"{name}_slot")).Split(',').All(s => s.EndsWith(":ready")) && publisher.Messages.Count >= 2, "the copy");
+
+                await Db.ExecuteAsync($"INSERT INTO {name} VALUES (3, 'eu', 'c')");
+
+                await Wait.UntilAsync(() => publisher.Messages.Count >= 3, "the streamed row");
+            }
+
+            var messages = publisher.Messages;
+
+            Assert.AreEqual(copied, string.Join(" ", messages.Take(2).Select(m => m.Table + m.Key).OrderBy(x => x)));
+            Assert.AreEqual(streamed, messages[2].Table + messages[2].Key);
+            Assert.AreEqual("C C I", string.Join(" ", messages.Select(ChangeType)));
+
+            var expectedStates = viaRoot ? $"public.{name}:ready" : $"public.{name}_eu:ready,public.{name}_us:ready";
+
+            Assert.AreEqual(expectedStates, await Db.TableStatesAsync($"{name}_slot"));
         }
 
         [TestMethod]

@@ -136,6 +136,25 @@ namespace PgOutput2Json.IntegrationTests
         /// </summary>
         public TimeSpan SyncConfirmDelay { get; set; }
 
+        /// <summary>
+        /// Called before a message is collected, and before a batch is confirmed. Throw to make the publisher fail.
+        /// </summary>
+        public Action<JsonMessage>? OnPublish { get; set; }
+        public Action? OnConfirm { get; set; }
+
+        /// <summary>
+        /// The number of messages in each confirmed batch.
+        /// </summary>
+        public List<int> ConfirmedBatches { get { lock (_messages) return _confirmedBatches.ToList(); } }
+
+        /// <summary>
+        /// The number of publishers created: one per connection of the listener, and one per table sync.
+        /// </summary>
+        public int PublisherCount => _publisherCount;
+
+        private readonly List<int> _confirmedBatches = [];
+        private int _publisherCount;
+
         public (ulong TxFinalLsn, ulong MessageNo) LastConfirmed
         {
             get { lock (_messages) return _lastConfirmed; }
@@ -143,6 +162,8 @@ namespace PgOutput2Json.IntegrationTests
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
+            Interlocked.Increment(ref _publisherCount);
+
             return new Publisher(this);
         }
 
@@ -150,9 +171,14 @@ namespace PgOutput2Json.IntegrationTests
         {
             private (ulong, ulong) _lastPublished;
             private bool _hasSyncMessages;
+            private int _unconfirmed;
 
             public override Task PublishAsync(JsonMessage message, CancellationToken token)
             {
+                owner.OnPublish?.Invoke(message);
+
+                _unconfirmed++;
+
                 owner._messages.Enqueue(new PublishedMessage(
                     message.Json.ToString(),
                     message.TableName.ToString(),
@@ -177,6 +203,15 @@ namespace PgOutput2Json.IntegrationTests
 
             public override async Task ConfirmAsync(CancellationToken token)
             {
+                owner.OnConfirm?.Invoke();
+
+                if (_unconfirmed > 0)
+                {
+                    lock (owner._messages) owner._confirmedBatches.Add(_unconfirmed);
+
+                    _unconfirmed = 0;
+                }
+
                 if (_hasSyncMessages && owner.SyncConfirmDelay > TimeSpan.Zero)
                 {
                     await Task.Delay(owner.SyncConfirmDelay, token);

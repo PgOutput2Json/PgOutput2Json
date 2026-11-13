@@ -21,7 +21,7 @@ dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.cs
 dotnet run --project src/PgOutput2Json.TestWorker/PgOutput2Json.TestWorker.csproj
 ```
 
-Both test projects run on every pull request and on `main` (`.github/workflows/tests.yml`).
+Both test projects run on every pull request and on `main` (`.github/workflows/tests.yml`). The integration tests use PostgreSQL 16 unless `PG_IMAGE` is set (e.g. `PG_IMAGE=postgres:14`); the CI repeats them on versions 14 to 18. A test that needs a newer version calls `Containers.RequirePg`.
 
 The website (landing page and docs, Astro + Starlight) is in `website/` and is deployed to GitHub Pages by `.github/workflows/website.yml`. Its docs pages were split from `README.md`: when the README or an adapter README changes, update the matching page in `website/src/content/docs/docs/`. See `website/README.md`.
 

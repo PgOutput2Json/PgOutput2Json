@@ -187,6 +187,8 @@ namespace PgOutput2Json.IntegrationTests
         [TestMethod]
         public async Task Table_in_two_publications_should_be_copied_once_with_either_row_filter()
         {
+            Containers.RequirePg(15, "Row filters");
+
             await Db.ExecuteAsync(@"
                 CREATE TABLE tss_two (id int PRIMARY KEY);
                 INSERT INTO tss_two VALUES (1), (2), (3), (4);
