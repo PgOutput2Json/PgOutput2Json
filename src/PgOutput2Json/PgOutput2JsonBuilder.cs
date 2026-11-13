@@ -131,29 +131,29 @@ namespace PgOutput2Json
         {
             if (_listenerOptions.DataSourceBuilder.ConnectionString == string.Empty)
             {
-                throw new ArgumentNullException("PostgreSQL data source must be configured");
+                throw new InvalidOperationException("PostgreSQL data source must be configured");
             }
 
             if (_listenerOptions.PublicationNames == null || _listenerOptions.PublicationNames.Length == 0)
             {
-                throw new ArgumentNullException("At least one PostgreSQL publication name must be provided");
+                throw new InvalidOperationException("At least one PostgreSQL publication name must be provided");
             }
 
             if (_messagePublisherFactory == null)
             {
-                throw new ArgumentNullException("MessagePublisherFactory must be provided");
+                throw new InvalidOperationException("MessagePublisherFactory must be provided");
             }
 
             if (_listenerOptions.BatchSize <= 0)
             {
-                throw new ArgumentOutOfRangeException("Batch size must be greater than zero");
+                throw new InvalidOperationException("Batch size must be greater than zero");
             }
 
             // if not explicitely specified in builder, use temporary slot only if slot name is not provided
 
             if (!_listenerOptions.UseTemporarySlot && string.IsNullOrWhiteSpace(_listenerOptions.ReplicationSlotName))
             {
-                throw new ArgumentOutOfRangeException("Replication slot name must be provided for permanent slots");
+                throw new InvalidOperationException("Replication slot name must be provided for permanent slots");
             }
 
             _listenerOptions.DataSourceBuilder.ConnectionStringBuilder.Timezone ??= "UTC";
