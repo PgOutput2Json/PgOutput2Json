@@ -1,5 +1,7 @@
 # Builds the solution and runs the unit and the integration tests.
 # The integration tests start PostgreSQL and Kafka with Testcontainers, on the runner's Docker.
+# The "test" job runs everything on PostgreSQL 16. The "postgres" job repeats the PostgreSQL tests
+# on the other supported versions.
 name: Tests
 
 on:
@@ -44,3 +46,26 @@ jobs:
 
       - name: Integration tests
         run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+
+  postgres:
+    name: PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [14, 15, 17, 18]
+    env:
+      PG_IMAGE: postgres:${{ matrix.postgres }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # the tests of the outputs do not depend on the PostgreSQL version
+      - name: Integration tests
+        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --filter "FullyQualifiedName!~Kafka" --logger "console;verbosity=normal"

@@ -41,6 +41,8 @@ PostgreSQL 10+ ships with a built-in logical decoding plugin called `pgoutput`, 
 
 No extra plugins needed — `pgoutput` comes with PostgreSQL by default.
 
+PgOutput2Json needs **PostgreSQL 14 or newer**, and is tested with versions 14 to 18. Row filters and column lists in publications need PostgreSQL 15.
+
 The change events JSON format:
 ```
 {
