@@ -20,9 +20,8 @@ namespace PgOutput2Json.Kafka
 
         /// <summary>
         /// librdkafka producer configuration. Unless set explicitly, the publisher enables idempotence
-        /// (<c>EnableIdempotence = true</c>, <c>EnableGaplessGuarantee = true</c>), disables the per-message
-        /// timeout (<c>MessageTimeoutMs = 0</c>) and uses the <c>Murmur2Random</c> partitioner, so every partition
-        /// receives its messages in order and without gaps. Use <see cref="ConfirmTimeout"/> to limit how long
+        /// (<c>EnableIdempotence = true</c>), disables the per-message timeout (<c>MessageTimeoutMs = 0</c>)
+        /// and uses the <c>Murmur2Random</c> partitioner. Use <see cref="ConfirmTimeout"/> to limit how long
         /// a batch may take.
         /// </summary>
         public ProducerConfig ProducerConfig { get; set; } = new ProducerConfig

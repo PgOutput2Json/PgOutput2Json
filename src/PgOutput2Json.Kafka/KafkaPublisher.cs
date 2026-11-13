@@ -218,12 +218,12 @@ namespace PgOutput2Json.Kafka
         }
 
         /// <summary>
-        /// Defaults that keep the messages of a partition in WAL order, without gaps, so a consumer can
-        /// deduplicate with a "highest position seen" watermark:
+        /// Defaults that keep the messages of a partition in WAL order:
         /// - idempotence: the broker rejects out-of-sequence writes, so retries cannot reorder or duplicate
         /// - no per-message timeout: a timed-out message is skipped while later ones are still delivered (a gap)
-        /// - gap-less guarantee: any other error that could leave a gap stops the producer with a fatal error
         /// - murmur2_random partitioner: the Kafka default, and the hash used here for partition key columns
+        /// A message the broker rejects can still leave a gap, which the replay then fills out of order -
+        /// EnableGaplessGuarantee prevents that, but it is experimental in librdkafka, so it is left to the user.
         /// Explicit user settings are kept - librdkafka refuses to start with ones incompatible with idempotence.
         /// The user's config object is copied, not modified.
         /// </summary>
@@ -233,11 +233,6 @@ namespace PgOutput2Json.Kafka
             var config = new ProducerConfig(settings);
 
             config.EnableIdempotence ??= true;
-
-            if (config.EnableIdempotence == true)
-            {
-                config.EnableGaplessGuarantee ??= true;
-            }
 
             // delivery.timeout.ms is an alias of message.timeout.ms, without a typed property
             if (config.MessageTimeoutMs == null && !settings.ContainsKey("delivery.timeout.ms"))

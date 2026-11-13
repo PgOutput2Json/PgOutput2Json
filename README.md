@@ -92,7 +92,7 @@ A replay is usually one batch, but it can be more:
 Every message carries a deduplication key: the transaction final LSN (`"w"`) plus the message number within that transaction (`"n"`). Consumers use it in one of two ways:
 
 - **Apply changes idempotently.** Upsert and delete by key. Replayed changes arrive in order, so the result is the same.
-- **Keep a watermark.** Remember the highest `(w, n)` pair processed and skip anything at or below it. Keep one watermark per table, in each partition or stream you read: the order is guaranteed only there.
+- **Keep a watermark.** Remember the highest `(w, n)` pair processed and skip anything at or below it. Keep one watermark per table, in each partition or stream you read: the order is guaranteed only there. On Kafka, a message the broker rejects can arrive late and out of order; see the Kafka output for how to prevent that.
 
 The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off; it has no effect on the other outputs.
 

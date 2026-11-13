@@ -161,23 +161,30 @@ Once the service is running, any changes made to the tables listed in `my_public
 
 Messages are confirmed to PostgreSQL in batches, and only after Kafka has acknowledged every message in the batch. If the batch fails, it is not confirmed: the publisher reconnects and PostgreSQL replays the unconfirmed changes.
 
-Delivery is at-least-once: after a failure, the replayed changes are published to Kafka again, and consumers deduplicate on the `w`/`n` fields. To make that simple, every partition receives its messages in order and without gaps: a consumer can remember the highest `(w, n)` pair it processed, per table and partition, and skip anything at or below it. So, unless you set them yourself, the publisher configures the producer with:
+Delivery is at-least-once: after a failure, the replayed changes are published to Kafka again, and consumers deduplicate on the `w`/`n` fields. Unless you set them yourself, the publisher configures the producer with:
 
 | Setting | Value | Why |
 |---|---|---|
 | `EnableIdempotence` | `true` | The broker rejects out-of-sequence writes, so retries cannot reorder or duplicate messages. |
 | `MessageTimeoutMs` | `0` (infinite) | librdkafka times out each message separately. A timed-out message is skipped while later ones are still delivered, which leaves a gap. |
-| `EnableGaplessGuarantee` | `true` | Any other error that could leave a gap stops the producer with a fatal error instead. librdkafka marks this setting as experimental. |
 | `Partitioner` | `Murmur2Random` | The partitioner of the Java client, so a key lands in the same partition as with other Kafka producers. |
 
-The time limit applies to the whole batch instead, through `KafkaPublisherOptions.ConfirmTimeout` (5 minutes by default). While Kafka is unavailable, the confirm waits and logs a warning every 30 seconds. When the timeout expires, the producer is discarded and the listener reconnects. The whole producer is discarded, never single messages, so no gap can form.
+The time limit applies to the whole batch instead, through `KafkaPublisherOptions.ConfirmTimeout` (5 minutes by default). While Kafka is unavailable, the confirm waits and logs a warning every 30 seconds. When the timeout expires, the producer is discarded and the listener reconnects.
 
 Things to be aware of:
 
 - Idempotence requires `acks=all`, at most 5 in-flight requests and retries above 0. If you set an incompatible value explicitly (for example `Acks = Acks.Leader`), the producer fails to start.
-- If you change the first three settings, a failed delivery can leave a gap. The gap is filled when the batch is replayed, but the messages are then out of order, and a consumer that keeps a watermark skips the late ones.
-- If a message is permanently rejected (for example, it is larger than the topic's `max.message.bytes`), the publisher keeps failing on that message until the problem is fixed. Skipping it would lose the change.
+- If a message is permanently rejected (for example, it is larger than the topic's `max.message.bytes`), the publisher keeps failing on that message until the problem is fixed. Skipping it would lose the change. Each attempt publishes the other messages of the unconfirmed batch again.
 - While the confirm waits, no further changes are read, and PostgreSQL retains the WAL for the replication slot until the batch is confirmed. A long Kafka outage therefore grows `pg_wal` on the database server.
+
+### Messages out of order after a rejected message
+
+When the broker rejects a message, Kafka can still accept the messages sent after it. The batch is not confirmed and is replayed, so the rejected message reaches the topic once the problem is fixed, but **after** messages that follow it in the WAL. For example, if message 2 of 1, 2, 3 is rejected, the partition ends up with 1, 3, 1, 2, 3.
+
+- A consumer that applies changes idempotently is not affected: a row may show an older version for a moment, and the replay brings it up to date.
+- A consumer that keeps a watermark (the highest `(w, n)` pair processed) skips the late message as a duplicate, and loses it.
+
+To prevent this, set `ProducerConfig.EnableGaplessGuarantee = true`. librdkafka then stops the producer with a fatal error instead of sending anything after a failed message, and the publisher reconnects and replays in order. It is not enabled by default because librdkafka marks the setting as experimental ("subject to change or removal") and logs a warning on start when it is set.
 
 ### Routing
 

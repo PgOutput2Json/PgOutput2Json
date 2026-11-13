@@ -61,7 +61,7 @@ Available adapters: `RabbitMq`, `RabbitMqStreams`, `Kafka`, `Redis`, `Sqlite`, `
 
 Delivery is at-least-once: a batch is confirmed to PostgreSQL only after the output acknowledged it, and PostgreSQL replays unconfirmed changes after a reconnect. Each published message carries a deduplication key: the transaction final LSN ("w" in the JSON) plus a counter ("n") that is reset at every `BeginMessage`. Consumers deduplicate with it.
 
-The message outputs (Kafka, RabbitMQ, RabbitMQ Streams, Redis, Kinesis, Event Hubs, Webhooks) publish replayed changes again. They must keep the messages of a partition in WAL order and never skip a failed message, so a consumer can keep a "highest position seen" watermark per table and partition.
+The message outputs (Kafka, RabbitMQ, RabbitMQ Streams, Redis, Kinesis, Event Hubs, Webhooks) publish replayed changes again. They must keep the messages of a partition in WAL order and never skip a failed message, so a consumer can keep a "highest position seen" watermark per table and partition. Known exception: Kafka can accept messages sent after a rejected one, and the replay then fills the gap out of order; `EnableGaplessGuarantee` (experimental in librdkafka, off by default) prevents it.
 
 The stores (SQLite, MongoDB, DynamoDB) save the last position with the data and return it from `GetLastPublishedWalSeqAsync`; the listener skips replayed messages at or below it (`ReplicationListenerOptions.UseDeduplication`, on by default).
 

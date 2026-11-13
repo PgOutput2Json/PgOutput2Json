@@ -9,14 +9,14 @@ namespace PgOutput2Json.Tests
     public class KafkaProducerConfigTest
     {
         [TestMethod]
-        public void CreateProducerConfig_should_default_to_gapless_delivery()
+        public void CreateProducerConfig_should_default_to_ordered_delivery()
         {
             var options = new KafkaPublisherOptions();
 
             var config = KafkaPublisher.CreateProducerConfig(options);
 
             Assert.AreEqual(true, config.EnableIdempotence);
-            Assert.AreEqual(true, config.EnableGaplessGuarantee);
+            Assert.IsNull(config.EnableGaplessGuarantee);
             Assert.AreEqual(0, config.MessageTimeoutMs);
             Assert.AreEqual(Partitioner.Murmur2Random, config.Partitioner);
             Assert.AreEqual("localhost:9092", config.BootstrapServers);
@@ -42,7 +42,7 @@ namespace PgOutput2Json.Tests
                 ProducerConfig = new ProducerConfig
                 {
                     EnableIdempotence = true,
-                    EnableGaplessGuarantee = false,
+                    EnableGaplessGuarantee = true,
                     MessageTimeoutMs = 5000,
                     Partitioner = Partitioner.Consistent,
                 }
@@ -51,23 +51,9 @@ namespace PgOutput2Json.Tests
             var config = KafkaPublisher.CreateProducerConfig(options);
 
             Assert.AreEqual(true, config.EnableIdempotence);
-            Assert.AreEqual(false, config.EnableGaplessGuarantee);
+            Assert.AreEqual(true, config.EnableGaplessGuarantee);
             Assert.AreEqual(5000, config.MessageTimeoutMs);
             Assert.AreEqual(Partitioner.Consistent, config.Partitioner);
-        }
-
-        [TestMethod]
-        public void CreateProducerConfig_should_not_enable_gapless_without_idempotence()
-        {
-            var options = new KafkaPublisherOptions
-            {
-                ProducerConfig = new ProducerConfig { EnableIdempotence = false }
-            };
-
-            var config = KafkaPublisher.CreateProducerConfig(options);
-
-            Assert.AreEqual(false, config.EnableIdempotence);
-            Assert.IsNull(config.EnableGaplessGuarantee);
         }
 
         [TestMethod]
