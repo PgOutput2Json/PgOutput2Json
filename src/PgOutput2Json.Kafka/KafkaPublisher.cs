@@ -84,16 +84,7 @@ namespace PgOutput2Json.Kafka
                 Value = msgJson,
                 Headers = headers
             },
-            deliveryReport =>
-            {
-                // Runs on the librdkafka poll thread, where Confluent.Kafka swallows exceptions - throwing here
-                // would let Flush return normally and the WAL be confirmed for an undelivered message.
-                // Record the first failure instead, ConfirmAsync and PublishAsync rethrow it.
-                if (deliveryReport.Error.IsError)
-                {
-                    Interlocked.CompareExchange(ref _deliveryError, new ProduceException<string, string>(deliveryReport.Error, deliveryReport), null);
-                }
-            });
+            OnDelivery);
 
             if (_useDeduplication)
             {
@@ -101,6 +92,17 @@ namespace PgOutput2Json.Kafka
             }
 
             return Task.CompletedTask;
+        }
+
+        private void OnDelivery(DeliveryReport<string, string> deliveryReport)
+        {
+            // Runs on the librdkafka poll thread, where Confluent.Kafka swallows exceptions - throwing here
+            // would let Flush return normally and the WAL be confirmed for an undelivered message.
+            // Record the first failure instead, ConfirmAsync and PublishAsync rethrow it.
+            if (deliveryReport.Error.IsError)
+            {
+                Interlocked.CompareExchange(ref _deliveryError, new ProduceException<string, string>(deliveryReport.Error, deliveryReport), null);
+            }
         }
 
         private int GetPartitionId(JsonMessage message, string msgKey, out string? partitionKey)

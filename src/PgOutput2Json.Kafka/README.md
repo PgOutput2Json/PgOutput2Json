@@ -161,13 +161,13 @@ Once the service is running, any changes made to the tables listed in `my_public
 
 Messages are confirmed to PostgreSQL in batches, and only after Kafka has acknowledged every message in the batch. If the batch fails, it is not confirmed: the publisher reconnects and PostgreSQL replays the unconfirmed changes.
 
-With deduplication enabled (the default), each message is published to Kafka exactly once. On reconnect, the publisher reads the last message of every partition and skips everything up to it. That is correct only if every partition holds an unbroken, ordered prefix of the published messages: if a message is in the topic, all earlier messages for that partition are too. So, unless you set them yourself, the publisher configures the producer with:
+With deduplication enabled (the default), each message is published to Kafka once, apart from the rare duplicates described below. On reconnect, the publisher reads the last message of every partition and skips everything up to it. That is correct only if every partition holds an unbroken, ordered prefix of the published messages: if a message is in the topic, all earlier messages for that partition are too. So, unless you set them yourself, the publisher configures the producer with:
 
 | Setting | Value | Why |
 |---|---|---|
 | `EnableIdempotence` | `true` | The broker rejects out-of-sequence writes, so retries cannot reorder or duplicate messages. |
 | `MessageTimeoutMs` | `0` (infinite) | librdkafka times out each message separately. A timed-out message is skipped while later ones are still delivered, which leaves a gap. |
-| `EnableGaplessGuarantee` | `true` | Any other error that could leave a gap stops the producer with a fatal error instead. |
+| `EnableGaplessGuarantee` | `true` | Any other error that could leave a gap stops the producer with a fatal error instead. librdkafka marks this setting as experimental. |
 
 The time limit applies to the whole batch instead, through `KafkaPublisherOptions.ConfirmTimeout` (5 minutes by default). While Kafka is unavailable, the confirm waits and logs a warning every 30 seconds. When the timeout expires, the producer is discarded and the listener reconnects. The whole producer is discarded, never single messages, so no gap can form.
 

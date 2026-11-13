@@ -420,11 +420,6 @@ namespace PgOutput2Json
                 }
             }
 
-            if (!writeToKeyValueBuilder)
-            {
-                return;
-            }
-
             if (KeyColValueBuilder.Length > 0)
             {
                 KeyColValueBuilder.Append(']');
