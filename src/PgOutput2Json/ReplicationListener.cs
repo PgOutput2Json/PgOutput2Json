@@ -417,13 +417,13 @@ namespace PgOutput2Json
         {
             var cs = (ConnectionState)state!;
 
+            if (cs.CancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             try
             {
-                if (cs.CancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
-
                 await using var conn = new NpgsqlConnection(_options.ConnectionString);
                 await conn.OpenAsync(cs.CancellationToken).ConfigureAwait(false);
 
@@ -433,7 +433,21 @@ namespace PgOutput2Json
                 await cmd.ExecuteNonQueryAsync(cs.CancellationToken).ConfigureAwait(false);
 
                 _logger.SafeLogDebug("Emitted idle WAL pg2j_keepalive message");
+            }
+            catch (OperationCanceledException) when (cs.CancellationToken.IsCancellationRequested)
+            {
+                // stopping - nothing to do
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.SafeLogError(ex, "Error emitting idle WAL message");
+            }
 
+            // Reschedule after a failure too: the main loop reschedules only when a message arrives, and
+            // on an idle database none would - the keepalives would stop until the next real change.
+            try
+            {
                 using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                 {
                     // checking for disposal inside the lock
@@ -449,7 +463,7 @@ namespace PgOutput2Json
             }
             catch (Exception ex)
             {
-                _logger.SafeLogError(ex, "Error emitting idle WAL message");
+                _logger.SafeLogError(ex, "Error rescheduling idle WAL message");
             }
         }
 #pragma warning restore VSTHRD100 // Avoid async void methods
