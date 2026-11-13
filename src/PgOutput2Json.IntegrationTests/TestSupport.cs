@@ -247,7 +247,10 @@ namespace PgOutput2Json.IntegrationTests
             return _entries.Any(x => x.Level == level && x.Text.Contains(text, StringComparison.Ordinal));
         }
 
-        public override string ToString() => string.Join(Environment.NewLine, _entries.Select(x => $"{x.Level}: {x.Text}"));
+        /// <summary>
+        /// The warnings and errors, one per line.
+        /// </summary>
+        public override string ToString() => string.Join(Environment.NewLine, _entries.Where(x => x.Level >= LogLevel.Warning).Select(x => $"{x.Level}: {x.Text}"));
 
         public void AddProvider(ILoggerProvider provider)
         {

@@ -68,4 +68,4 @@ jobs:
 
       # the tests of the outputs do not depend on the PostgreSQL version
       - name: Integration tests
-        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --filter "FullyQualifiedName!~Kafka" --logger "console;verbosity=normal"
+        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --filter "FullyQualifiedName!~.Outputs." --logger "console;verbosity=normal"
