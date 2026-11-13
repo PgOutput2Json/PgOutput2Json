@@ -1,10 +1,10 @@
-using System.Text;
+﻿using System.Text;
 
-namespace PgOutput2Json.Redis
+namespace PgOutput2Json
 {
     /// <summary>
-    /// MurmurHash2 - the same hash the Kafka adapter uses for its client-side routing.
-    /// Used to select the target partition of a message client-side.
+    /// MurmurHash2, compatible with the hash of the Kafka murmur2 partitioners.
+    /// Used by the adapters that select the target partition of a message themselves.
     /// The hash is stable across restarts, unlike string.GetHashCode().
     /// </summary>
     internal static class MurmurHash2

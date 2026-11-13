@@ -13,11 +13,12 @@ namespace PgOutput2Json.Tests
         {
             var options = new KafkaPublisherOptions();
 
-            var config = KafkaPublisher.CreateProducerConfig(options, true, null);
+            var config = KafkaPublisher.CreateProducerConfig(options);
 
             Assert.AreEqual(true, config.EnableIdempotence);
             Assert.AreEqual(true, config.EnableGaplessGuarantee);
             Assert.AreEqual(0, config.MessageTimeoutMs);
+            Assert.AreEqual(Partitioner.Murmur2Random, config.Partitioner);
             Assert.AreEqual("localhost:9092", config.BootstrapServers);
         }
 
@@ -26,7 +27,7 @@ namespace PgOutput2Json.Tests
         {
             var options = new KafkaPublisherOptions();
 
-            KafkaPublisher.CreateProducerConfig(options, true, null);
+            KafkaPublisher.CreateProducerConfig(options);
 
             Assert.IsNull(options.ProducerConfig.EnableIdempotence);
             Assert.IsNull(options.ProducerConfig.EnableGaplessGuarantee);
@@ -43,14 +44,16 @@ namespace PgOutput2Json.Tests
                     EnableIdempotence = true,
                     EnableGaplessGuarantee = false,
                     MessageTimeoutMs = 5000,
+                    Partitioner = Partitioner.Consistent,
                 }
             };
 
-            var config = KafkaPublisher.CreateProducerConfig(options, true, null);
+            var config = KafkaPublisher.CreateProducerConfig(options);
 
             Assert.AreEqual(true, config.EnableIdempotence);
             Assert.AreEqual(false, config.EnableGaplessGuarantee);
             Assert.AreEqual(5000, config.MessageTimeoutMs);
+            Assert.AreEqual(Partitioner.Consistent, config.Partitioner);
         }
 
         [TestMethod]
@@ -61,7 +64,7 @@ namespace PgOutput2Json.Tests
                 ProducerConfig = new ProducerConfig { EnableIdempotence = false }
             };
 
-            var config = KafkaPublisher.CreateProducerConfig(options, true, null);
+            var config = KafkaPublisher.CreateProducerConfig(options);
 
             Assert.AreEqual(false, config.EnableIdempotence);
             Assert.IsNull(config.EnableGaplessGuarantee);
@@ -73,7 +76,7 @@ namespace PgOutput2Json.Tests
             var options = new KafkaPublisherOptions();
             options.ProducerConfig.Set("delivery.timeout.ms", "5000");
 
-            var config = KafkaPublisher.CreateProducerConfig(options, true, null);
+            var config = KafkaPublisher.CreateProducerConfig(options);
 
             Assert.IsNull(config.MessageTimeoutMs);
             Assert.AreEqual("5000", config.Get("delivery.timeout.ms"));

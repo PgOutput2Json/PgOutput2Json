@@ -1,6 +1,6 @@
 ---
 title: Amazon Kinesis
-description: Publish PostgreSQL changes to Amazon Kinesis with PgOutput2Json.Kinesis. The adapter has no deduplication.
+description: Publish PostgreSQL changes to Amazon Kinesis with PgOutput2Json.Kinesis. Delivery is at-least-once.
 ---
 
 PgOutput2Json supports pushing row changes as JSON messages to Amazon Kinesis.
@@ -54,13 +54,13 @@ public class Worker : BackgroundService
 }
 ```
 
-## Deduplication
+## Delivery and deduplication
 
-The Kinesis adapter **does not support deduplication**. Amazon Kinesis provides no cheap way to read the last published record of a shard (the `LATEST` shard iterator starts *just after* the most recent record), and shards cannot be targeted client-side — so the adapter cannot recover the last published WAL position after a restart. When the worker restarts, PostgreSQL replays the WAL from the slot's confirmed position, and **already-published messages are sent to Kinesis again**.
+The Kinesis adapter delivers at-least-once, like the other message outputs: after a failure or a restart, the changes PostgreSQL replays are sent to Kinesis again.
 
-Consumers of the Kinesis stream must therefore be prepared for duplicated messages and protect themselves from their ill effects by filtering them out, using the deduplication key carried by every message:
+Consumers of the Kinesis stream must therefore be prepared for duplicated messages and filter them out, using the deduplication key carried by every message:
 
 - `w` — the transaction final LSN of the change event
 - `n` — the message number within the transaction
 
-A `(w, n)` pair uniquely identifies a change event: any event at or below the highest `(w, n)` pair a consumer has already processed was already handled and can be safely skipped.
+A `(w, n)` pair uniquely identifies a change event. A consumer that remembers the highest pair it processed, per table and shard, can skip anything at or below it.

@@ -8,23 +8,21 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 using Confluent.Kafka;
-using System.Text.Json;
 
 namespace PgOutput2Json.Kafka
 {
     public class KafkaPublisher: MessagePublisher
     {
-        public KafkaPublisher(KafkaPublisherOptions options, ILogger<KafkaPublisher>? logger = null, bool useDeduplication = true)
+        public KafkaPublisher(KafkaPublisherOptions options, ILogger<KafkaPublisher>? logger = null)
         {
             _options = options;
             _logger = logger;
-            _useDeduplication = useDeduplication;
             _partitionMetadata = GetPartitionMetadata(options);
         }
 
         public override Task PublishAsync(JsonMessage message, CancellationToken token)
         {
-            // fail fast - the listener reconnects without confirming, and resumes from the last published position
+            // fail fast - the listener reconnects without confirming, and PostgreSQL replays the unconfirmed changes
             ThrowIfDeliveryFailed();
 
             var tableName = message.TableName.ToString();
@@ -36,27 +34,7 @@ namespace PgOutput2Json.Kafka
                 msgKey = string.Join("", tableName, msgKey);
             }
 
-            var partitionId = GetPartitionId(message, msgKey, out var partitionKey);
-
-            if (_useDeduplication && _dedupSkipActive && IsAlreadyPublished(partitionId, message.TxFinalLsn, message.MessageNo))
-            {
-                // already processed
-                _dedupSkippedCount++;
-
-                return Task.CompletedTask;
-            }
-
-            if (_dedupSkipActive && new WalPosition(message.TxFinalLsn, message.MessageNo).IsAfter(_dedupSkipEnd))
-            {
-                // the replay overlap is over - no further message can be a per-partition
-                // duplicate, so summarize the skipped ones and stop the per-message checks
-                if (_dedupSkippedCount > 0)
-                {
-                    _logger?.LogWarning("Deduplication enabled, skipped {SkippedCount} already published messages.", _dedupSkippedCount);
-                }
-
-                _dedupSkipActive = false;
-            }
+            var partition = GetPartition(message, out var partitionKey);
 
             Headers? headers = null;
 
@@ -78,18 +56,13 @@ namespace PgOutput2Json.Kafka
                 _logger.LogDebug("Publishing to Topic={Topic}, Key={Key}, Body={Body}", _options.Topic, msgKey, message.Json.ToString());
             }
 
-            producer.Produce(new TopicPartition(_options.Topic, partitionId), new Message<string, string>
+            producer.Produce(new TopicPartition(_options.Topic, partition), new Message<string, string>
             {
                 Key = msgKey,
                 Value = msgJson,
                 Headers = headers
             },
             OnDelivery);
-
-            if (_useDeduplication)
-            {
-                TrackWalSeq(partitionId, message.TxFinalLsn, message.MessageNo);
-            }
 
             return Task.CompletedTask;
         }
@@ -105,62 +78,22 @@ namespace PgOutput2Json.Kafka
             }
         }
 
-        private int GetPartitionId(JsonMessage message, string msgKey, out string? partitionKey)
+        /// <summary>
+        /// Without partition key columns librdkafka routes by the message key, with the partitioner configured
+        /// in ProducerConfig (murmur2_random by default). A partition key differs from the message key, so it is
+        /// hashed here, the same way: (murmur2 &amp; 0x7fffffff) % partition count.
+        /// </summary>
+        private Partition GetPartition(JsonMessage message, out string? partitionKey)
         {
             partitionKey = null;
 
-            if (_partitionMetadata.Count == 0) return Partition.Any;
+            if (message.PartitionKolValue.Length == 0) return Partition.Any;
 
-            if (_partitionMetadata.Count < 2)
-            {
-                // single partition topic
-                return _partitionMetadata[0].PartitionId;
-            }
+            partitionKey = message.PartitionKolValue.ToString();
 
-            // without deduplication and a partition key there is no predictable target to
-            // track - let librdkafka route with the partitioner configured in ProducerConfig
-            if (!_useDeduplication && message.PartitionKolValue.Length == 0)
-            {
-                return Partition.Any;
-            }
-
-            string routingKey;
-
-            if (message.PartitionKolValue.Length > 0)
-            {
-                partitionKey = message.PartitionKolValue.ToString();
-                routingKey = partitionKey;
-            }
-            else
-            {
-                // no partition key columns are configured - librdkafka would hash the message key,
-                // hash it the same way to keep the target partition predictable
-                routingKey = msgKey;
-            }
-
-            var index = (MurmurHash2.Hash(routingKey) & 0x7fffffff) % _partitionMetadata.Count;
+            var index = (MurmurHash2.Hash(partitionKey) & 0x7fffffff) % _partitionMetadata.Count;
 
             return _partitionMetadata[index].PartitionId;
-        }
-
-        private bool IsAlreadyPublished(int partitionId, ulong txFinalLsn, ulong messageNo)
-        {
-            return _lastPublished.TryGetValue(partitionId, out var last)
-                && new WalPosition(txFinalLsn, messageNo).IsDuplicate(last);
-        }
-
-        private void TrackWalSeq(int partitionId, ulong txFinalLsn, ulong messageNo)
-        {
-            // Partition.Any means partition metadata is missing - the target partition cannot be tracked
-            if (partitionId == Partition.Any) return;
-
-            var position = new WalPosition(txFinalLsn, messageNo);
-
-            // messages are published in order, so the position can only move forward
-            if (!_lastPublished.TryGetValue(partitionId, out var last) || position.IsAfter(last))
-            {
-                _lastPublished[partitionId] = position;
-            }
         }
 
         public override Task ConfirmAsync(CancellationToken token)
@@ -179,7 +112,7 @@ namespace PgOutput2Json.Kafka
         /// <summary>
         /// Waits until Kafka acknowledged every message published since the last confirm. The per-message timeout
         /// is disabled by default, so the deadline applies to the batch as a whole: when it expires the confirm fails
-        /// and the producer is discarded - never single messages, which would leave a gap in a partition.
+        /// and the producer is discarded - never single messages, which would leave a gap in the order.
         /// </summary>
         private void WaitForDelivery(IProducer<string, string> producer, CancellationToken token)
         {
@@ -245,150 +178,6 @@ namespace PgOutput2Json.Kafka
             return ValueTask.CompletedTask;
         }
 
-        public override Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken cancellationToken)
-        {
-            // without deduplication there is no need for the full startup scan
-            if (!_useDeduplication) return Task.FromResult((0ul, 0ul));
-
-            if (_logger != null && _logger.IsEnabled(LogLevel.Information))
-            {
-                _logger.LogInformation("Reading last published WAL LSN for {Topic}", _options.Topic);
-            }
-
-            var config = _options.ConsumerConfig ?? new ConsumerConfig(_options.ProducerConfig.ToDictionary());
-
-            config.AutoOffsetReset = AutoOffsetReset.Latest;
-            config.GroupId = $"{_options.Topic}-dedupe-{Guid.NewGuid()}";
-            config.EnableAutoCommit = false;
-
-            using var consumer = new ConsumerBuilder<string, string>(config).Build();
-
-            _lastPublished.Clear();
-
-            var partitions = new List<TopicPartitionOffset>();
-
-            WalPosition? min = null;
-
-            // Step 1, get partitions offsets
-            foreach (var metadata in _partitionMetadata)
-            {
-                var tpp = new TopicPartition(_options.Topic, new Partition(metadata.PartitionId));
-
-                var endOffsets = consumer.QueryWatermarkOffsets(tpp, TimeSpan.FromSeconds(5));
-
-                // Low == High means there are no readable records - the partition is empty,
-                // or its whole history was deleted by retention or compaction
-                if (endOffsets.High == 0 || endOffsets.Low >= endOffsets.High)
-                {
-                    // the partition contributes (0,0) to the minimum, which forces a full
-                    // replay - receiving duplicates is safe, a wrong watermark is data loss
-                    _lastPublished[metadata.PartitionId] = WalPosition.Zero;
-
-                    min = WalPosition.Zero;
-
-                    if (_logger != null && _logger.IsEnabled(LogLevel.Information))
-                    {
-                        _logger.LogInformation("No readable messages in topic {Topic}, partition {Partition}", _options.Topic, metadata.PartitionId);
-                    }
-
-                    continue;
-                }
-
-                // seek to the last message
-                partitions.Add(new TopicPartitionOffset(tpp, new Offset(endOffsets.High - 1)));
-            }
-
-            // Step 2: Assign manually to specific offsets
-            consumer.Assign(partitions);
-
-            var timeouts = 0;
-            var pending = new HashSet<int>(partitions.Select(p => p.Partition.Value));
-
-            // Step 3: read the last message of every non-empty partition. Consume returns
-            // records from any assigned partition in arrival order, so each record is
-            // attributed to the partition it actually came from
-            while (pending.Count > 0)
-            {
-                var record = consumer.Consume(TimeSpan.FromSeconds(5));
-
-                if (record == null)
-                {
-                    // a partition that holds records can still be slow to fetch - retries are
-                    // bounded, after that the listener reconnects and the scan starts over
-                    if (++timeouts > 2)
-                    {
-                        throw new Exception($"Cannot read the last WAL end LSN of topic {_options.Topic} - no messages read from {pending.Count} of {partitions.Count} non-empty partitions.");
-                    }
-
-                    continue;
-                }
-
-                var partition = record.TopicPartition.Partition.Value;
-
-                if (!pending.Remove(partition)) continue;
-
-                string? value = record.Message.Value;
-
-                WalPosition position;
-
-                if (!value.TryGetWalSeq(out var walSeq, out var messageNo))
-                {
-                    // a tombstone or a foreign message as the last record - the partition
-                    // contributes (0,0) to the minimum, same as an empty partition
-                    if (_logger != null && _logger.IsEnabled(LogLevel.Warning))
-                    {
-                        _logger.LogWarning("Last message in topic {Topic}, partition {Partition} carries no WAL end LSN - the partition contributes (0,0) to the deduplication watermark", _options.Topic, partition);
-                    }
-
-                    position = WalPosition.Zero;
-                }
-                else
-                {
-                    if (_logger != null && _logger.IsEnabled(LogLevel.Information))
-                    {
-                        _logger.LogInformation("Last published WAL LSN for topic {Topic}, partition {Partition}: {LastWalSeq}/{LastMessageNo}", record.Topic, partition, walSeq, messageNo);
-                    }
-
-                    position = new WalPosition(walSeq, messageNo);
-                }
-
-                _lastPublished[partition] = position;
-
-                // the minimum across the partitions is a safe deduplication watermark -
-                // everything at or below it is already published to all the partitions
-                if (min == null || position.IsAtOrBelow(min.Value))
-                {
-                    min = position;
-                }
-            }
-
-            consumer.Close();
-
-            // once the stream passes the highest per-partition watermark, no further message
-            // can be a duplicate for any partition - the per-partition checks only run until then
-            _dedupSkipEnd = WalPosition.Zero;
-
-            foreach (var position in _lastPublished.Values)
-            {
-                if (position.IsAfter(_dedupSkipEnd))
-                {
-                    _dedupSkipEnd = position;
-                }
-            }
-
-            _dedupSkippedCount = 0;
-            _dedupSkipActive = true;
-
-            var watermark = min ?? WalPosition.Zero;
-
-            if (_logger != null && _logger.IsEnabled(LogLevel.Information))
-            {
-                _logger.LogInformation("Last published WAL LSN for {Topic}: {LastWalSeq}/{LastMessageNo}", _options.Topic, watermark.WalSeq, watermark.MessageNo);
-            }
-
-            return Task.FromResult((watermark.WalSeq, watermark.MessageNo));
-        }
-
         private static List<PartitionMetadata> GetPartitionMetadata(KafkaPublisherOptions options)
         {
             var config = options.AdminClientConfig ?? new AdminClientConfig(options.ProducerConfig.ToDictionary());
@@ -399,15 +188,15 @@ namespace PgOutput2Json.Kafka
             var topic = metadata.Topics.FirstOrDefault(t => t.Topic == options.Topic);
 
             // right after startup (or when the topic does not exist yet) the metadata comes
-            // back without partitions - routing on an empty list would fall back to
-            // Partition.Any, silently disabling the client-side routing and the per-partition
-            // deduplication - so fail immediately and let the listener reconnect
+            // back without partitions - a partition key cannot be routed on an empty list,
+            // so fail immediately and let the listener reconnect
             if (topic == null || topic.Partitions.Count == 0)
             {
                 throw new Exception($"Topic {options.Topic} has no partitions - it may not be created yet.");
             }
 
-            return topic.Partitions.ToList();
+            // ordered by id, so a partition key maps to the same partition on every start
+            return topic.Partitions.OrderBy(p => p.PartitionId).ToList();
         }
 
         private IProducer<string, string> EnsureProducer()
@@ -416,7 +205,7 @@ namespace PgOutput2Json.Kafka
 
             _logger?.LogInformation("Creating Kafka producer");
 
-            var config = CreateProducerConfig(_options, _useDeduplication, _logger);
+            var config = CreateProducerConfig(_options);
 
             _producer = new ProducerBuilder<string, string>(config)
                 .SetErrorHandler((_, e) => _logger?.LogError("Kafka producer error: IsFatal={IsFatal}, Code={Code}, Reason={Reason}", e.IsFatal, e.Code, e.Reason))
@@ -429,15 +218,16 @@ namespace PgOutput2Json.Kafka
         }
 
         /// <summary>
-        /// Deduplication reads the last message of every partition and treats everything before it as published.
-        /// That holds only if each partition receives an unbroken, ordered prefix of the published messages:
+        /// Defaults that keep the messages of a partition in WAL order, without gaps, so a consumer can
+        /// deduplicate with a "highest position seen" watermark:
         /// - idempotence: the broker rejects out-of-sequence writes, so retries cannot reorder or duplicate
         /// - no per-message timeout: a timed-out message is skipped while later ones are still delivered (a gap)
         /// - gap-less guarantee: any other error that could leave a gap stops the producer with a fatal error
+        /// - murmur2_random partitioner: the Kafka default, and the hash used here for partition key columns
         /// Explicit user settings are kept - librdkafka refuses to start with ones incompatible with idempotence.
         /// The user's config object is copied, not modified.
         /// </summary>
-        internal static ProducerConfig CreateProducerConfig(KafkaPublisherOptions options, bool useDeduplication, ILogger? logger)
+        internal static ProducerConfig CreateProducerConfig(KafkaPublisherOptions options)
         {
             var settings = options.ProducerConfig.ToDictionary(kv => kv.Key, kv => kv.Value);
             var config = new ProducerConfig(settings);
@@ -450,21 +240,12 @@ namespace PgOutput2Json.Kafka
             }
 
             // delivery.timeout.ms is an alias of message.timeout.ms, without a typed property
-            settings.TryGetValue("delivery.timeout.ms", out var deliveryTimeout);
-
-            if (config.MessageTimeoutMs == null && deliveryTimeout == null)
+            if (config.MessageTimeoutMs == null && !settings.ContainsKey("delivery.timeout.ms"))
             {
                 config.MessageTimeoutMs = 0;
             }
 
-            var messageTimeout = config.MessageTimeoutMs?.ToString() ?? deliveryTimeout;
-
-            if (useDeduplication && (config.EnableIdempotence != true || config.EnableGaplessGuarantee != true || messageTimeout != "0"))
-            {
-                logger?.LogWarning("Kafka producer for topic {Topic} runs with EnableIdempotence={EnableIdempotence}, EnableGaplessGuarantee={EnableGaplessGuarantee}, MessageTimeoutMs={MessageTimeoutMs}. " +
-                    "A failed delivery can leave a gap in a partition, and deduplication may then skip messages that were never published.",
-                    options.Topic, config.EnableIdempotence, config.EnableGaplessGuarantee, messageTimeout);
-            }
+            config.Partitioner ??= Partitioner.Murmur2Random;
 
             return config;
         }
@@ -477,15 +258,8 @@ namespace PgOutput2Json.Kafka
         private ProduceException<string, string>? _deliveryError; // first failed delivery, set on the librdkafka poll thread
 
         private readonly KafkaPublisherOptions _options;
-        private readonly bool _useDeduplication;
         private readonly ILogger<KafkaPublisher>? _logger;
 
-        private List<PartitionMetadata> _partitionMetadata = [];
-
-        private readonly Dictionary<int, WalPosition> _lastPublished = new();
-
-        private bool _dedupSkipActive; // per-partition duplicate checks run only while replaying over the last published positions
-        private long _dedupSkippedCount;
-        private WalPosition _dedupSkipEnd; // highest per-partition watermark from the startup scan - duplicates are impossible past it
+        private readonly List<PartitionMetadata> _partitionMetadata;
     }
 }

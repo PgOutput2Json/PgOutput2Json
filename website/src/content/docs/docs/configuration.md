@@ -42,7 +42,7 @@ Table names are schema-qualified, for example `public.my_table`.
 | Method | Default | What it does |
 |---|---|---|
 | `WithBatchSize(batchSize)` | `100` | The number of messages published before they are confirmed to the output and to PostgreSQL. A smaller batch is confirmed after 100 ms without new messages. |
-| `WithDeduplication(useDeduplication)` | `true` | Skips the changes PostgreSQL replays after a reconnect. See [Deduplication](../deduplication/). |
+| `WithDeduplication(useDeduplication)` | `true` | SQLite, MongoDB and DynamoDB only: skips the changes PostgreSQL replays after a reconnect. See [Delivery and deduplication](../deduplication/). |
 | `WithIdleWalMessageInterval(interval)` | 10 seconds | How often a small message is written to the WAL while the published tables are idle, so the slot keeps moving when only other tables change. `TimeSpan.Zero` disables it. |
 
 ## Initial data copy

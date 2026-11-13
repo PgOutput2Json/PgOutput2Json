@@ -262,11 +262,6 @@ namespace PgOutput2Json.Webhooks
             response.EnsureSuccessStatusCode();
         }
 
-        public Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
-        {
-            return Task.FromResult((0UL, 0UL)); // no de-duplication
-        }
-
         public Task PublishAsync(JsonMessage jsonMessage, CancellationToken token)
         {
             if (_payload.Length > 0)

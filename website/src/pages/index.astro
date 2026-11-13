@@ -30,10 +30,10 @@ const facts = [
     link: 'Getting started',
   },
   {
-    title: 'Replayed changes are skipped',
-    text: 'A slot can replay changes after a crash or a reconnect. Every message carries a key, the transaction LSN and a counter, and the library skips what the output already has.',
+    title: 'At-least-once, with a key to deduplicate',
+    text: 'A slot replays unconfirmed changes after a crash or a reconnect, and they are published again. Every message carries a key, the transaction LSN and a counter, so consumers can skip what they already have.',
     href: doc('deduplication'),
-    link: 'Deduplication',
+    link: 'Delivery and deduplication',
   },
   {
     title: 'Confirmed only after the output has it',

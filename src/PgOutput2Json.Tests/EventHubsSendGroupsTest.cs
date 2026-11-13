@@ -64,14 +64,14 @@ namespace PgOutput2Json.Tests
 
         private static EventHubsPublisher.BufferEntry Entry(string? partitionId, string tableName, ulong messageNo)
         {
-            return new EventHubsPublisher.BufferEntry(new EventData("{}"), partitionId, tableName, new WalPosition(100, messageNo));
+            return new EventHubsPublisher.BufferEntry(new EventData("{}") { MessageId = messageNo.ToString() }, partitionId, tableName);
         }
 
         // "target:messageNo,messageNo" per group, in send order
         private static string[] Describe(IEnumerable<List<EventHubsPublisher.BufferEntry>> groups)
         {
             return groups
-                .Select(g => $"{g[0].PartitionId ?? g[0].PartitionKey}:{string.Join(",", g.Select(x => x.Position.MessageNo))}")
+                .Select(g => $"{g[0].PartitionId ?? g[0].PartitionKey}:{string.Join(",", g.Select(x => x.EventData.MessageId))}")
                 .ToArray();
         }
     }
