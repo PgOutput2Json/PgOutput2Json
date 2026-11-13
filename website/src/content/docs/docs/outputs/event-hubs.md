@@ -33,7 +33,7 @@ Event Hubs uses the partition key (derived from table name) to distribute messag
 - Load is distributed across multiple partitions for better throughput
 - Parallel processing capabilities for consumers
 
-With partition-key columns configured for a table (`WithPartitionKeyFields`), its rows are routed by those columns instead, and the partition is chosen client-side. See [Deduplication](../../deduplication/).
+With partition-key columns configured for a table (`WithPartitionKeyFields`), its rows are routed by those columns instead, and the partition is chosen client-side (murmur2 over the column values).
 
 ## Create a .NET Worker Service
 

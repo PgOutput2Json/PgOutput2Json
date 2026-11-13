@@ -1,7 +1,5 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-using PgOutput2Json.Kafka;
-
 namespace PgOutput2Json.Tests
 {
     [TestClass]

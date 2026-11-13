@@ -30,7 +30,7 @@ export function toPlainMarkdown(doc: Doc): string {
 
 export const intro = `# PgOutput2Json
 
-> ${DESCRIPTION} It reads the built-in pgoutput plugin, so PostgreSQL needs no extension. Every message carries a deduplication key, and changes replayed after a reconnect are skipped. .NET 8, 9 and 10.
+> ${DESCRIPTION} It reads the built-in pgoutput plugin, so PostgreSQL needs no extension. Delivery is at-least-once, and every message carries a deduplication key. .NET 8, 9 and 10.
 
 The library is under active development. Source: ${GITHUB_URL}`;
 

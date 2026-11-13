@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -17,7 +19,7 @@ namespace PgOutput2Json.IntegrationTests
     public class KafkaPublisherTest
     {
         [TestMethod]
-        public async Task Restart_should_not_publish_a_message_twice()
+        public async Task Replay_should_publish_the_messages_again_in_order()
         {
             var bootstrapServers = await Containers.GetKafkaBootstrapServersAsync();
 
@@ -51,13 +53,85 @@ namespace PgOutput2Json.IntegrationTests
 
             await Db.ExecuteAsync("INSERT INTO kafka_restart VALUES (4, 'd')");
 
-            // the first three rows are replayed, and must be skipped as already published
+            // delivery is at-least-once: the first three rows are replayed and published again, consumers deduplicate
             await using (new RunningListener(CreateBuilder("kafka_restart_replay_slot")))
             {
-                await Wait.UntilAsync(() => ReadIds(bootstrapServers, "kafka_restart").Count >= 4, "4 messages in the topic", 60);
+                await Wait.UntilAsync(() => ReadIds(bootstrapServers, "kafka_restart").Count >= 7, "7 messages in the topic", 60);
             }
 
-            CollectionAssert.AreEqual(new[] { 1, 2, 3, 4 }, ReadIds(bootstrapServers, "kafka_restart"));
+            CollectionAssert.AreEqual(new[] { 1, 2, 3, 1, 2, 3, 4 }, ReadIds(bootstrapServers, "kafka_restart"));
+        }
+
+        [TestMethod]
+        public async Task Message_key_should_route_like_the_murmur2_partitioner()
+        {
+            var records = await PublishToPartitionsAsync("kafka_route_key", builder => builder);
+
+            foreach (var record in records)
+            {
+                Assert.AreEqual(ExpectedPartition(record.Message.Key), record.Partition.Value, $"key {record.Message.Key}");
+            }
+        }
+
+        [TestMethod]
+        public async Task Partition_key_columns_should_route_by_murmur2_of_the_partition_key()
+        {
+            var records = await PublishToPartitionsAsync("kafka_route_pk", builder => builder.WithPartitionKeyFields("public.kafka_route_pk", "v"));
+
+            foreach (var record in records)
+            {
+                var partitionKey = Encoding.UTF8.GetString(record.Message.Headers.GetLastBytes("partition_key"));
+
+                Assert.AreNotEqual(record.Message.Key, partitionKey);
+                Assert.AreEqual(ExpectedPartition(partitionKey), record.Partition.Value, $"partition key {partitionKey}");
+            }
+        }
+
+        private const int RoutePartitions = 4;
+        private const int RouteRows = 40;
+
+        private static int ExpectedPartition(string key) => (MurmurHash2.Hash(key) & 0x7fffffff) % RoutePartitions;
+
+        /// <summary>
+        /// Publishes rows to a topic with several partitions and returns the records of all the partitions.
+        /// </summary>
+        private static async Task<List<ConsumeResult<string, string>>> PublishToPartitionsAsync(string name, Func<PgOutput2JsonBuilder, PgOutput2JsonBuilder> configure)
+        {
+            var bootstrapServers = await Containers.GetKafkaBootstrapServersAsync();
+
+            await CreateTopicAsync(bootstrapServers, name, null, RoutePartitions);
+
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int PRIMARY KEY, v text);
+                ALTER TABLE {name} REPLICA IDENTITY FULL;
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+
+            var builder = configure(PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications($"{name}_pub")
+                .WithPgReplicationSlot($"{name}_slot")
+                .UseKafka(options =>
+                {
+                    options.Topic = name;
+                    options.WriteHeaders = true;
+                    options.ProducerConfig.BootstrapServers = bootstrapServers;
+                }));
+
+            await using (new RunningListener(builder))
+            {
+                await Db.ExecuteAsync($"INSERT INTO {name} SELECT i, 'v' || (i % 7) FROM generate_series(1, {RouteRows}) i");
+
+                await Wait.UntilAsync(() => ReadAll(bootstrapServers, name, RoutePartitions).Count >= RouteRows, $"{RouteRows} messages in the topic", 60);
+            }
+
+            var records = ReadAll(bootstrapServers, name, RoutePartitions);
+
+            Assert.AreEqual(RouteRows, records.Count);
+            Assert.IsTrue(records.Select(r => r.Partition.Value).Distinct().Count() > 1, "all the messages went to one partition");
+
+            return records;
         }
 
         [TestMethod]
@@ -109,17 +183,32 @@ namespace PgOutput2Json.IntegrationTests
             CollectionAssert.AreEqual(new[] { 1 }, ReadIds(bootstrapServers, "kafka_rejected"));
         }
 
-        private static async Task CreateTopicAsync(string bootstrapServers, string topic, Dictionary<string, string>? configs)
+        private static async Task CreateTopicAsync(string bootstrapServers, string topic, Dictionary<string, string>? configs, int partitions = 1)
         {
             using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build();
 
-            await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1, Configs = configs }]);
+            await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = partitions, ReplicationFactor = 1, Configs = configs }]);
         }
 
         /// <summary>
         /// The row ids of all the messages in the single-partition topic, in the topic order.
         /// </summary>
         private static List<int> ReadIds(string bootstrapServers, string topic)
+        {
+            return ReadAll(bootstrapServers, topic, 1)
+                .Select(r =>
+                {
+                    using var json = JsonDocument.Parse(r.Message.Value);
+
+                    return json.RootElement.GetProperty("r").GetProperty("id").GetInt32();
+                })
+                .ToList();
+        }
+
+        /// <summary>
+        /// All the records of the topic, partition by partition.
+        /// </summary>
+        private static List<ConsumeResult<string, string>> ReadAll(string bootstrapServers, string topic, int partitions)
         {
             var config = new ConsumerConfig
             {
@@ -130,24 +219,23 @@ namespace PgOutput2Json.IntegrationTests
 
             using var consumer = new ConsumerBuilder<string, string>(config).Build();
 
-            var partition = new TopicPartition(topic, 0);
-            var end = consumer.QueryWatermarkOffsets(partition, TimeSpan.FromSeconds(10)).High;
+            var records = new List<ConsumeResult<string, string>>();
 
-            consumer.Assign(new TopicPartitionOffset(partition, Offset.Beginning));
-
-            var ids = new List<int>();
-
-            while (ids.Count < end.Value)
+            for (var i = 0; i < partitions; i++)
             {
-                var result = consumer.Consume(TimeSpan.FromSeconds(10))
-                    ?? throw new TimeoutException($"Could not read topic {topic}");
+                var partition = new TopicPartition(topic, i);
+                var end = consumer.QueryWatermarkOffsets(partition, TimeSpan.FromSeconds(10)).High;
 
-                using var json = JsonDocument.Parse(result.Message.Value);
+                consumer.Assign(new TopicPartitionOffset(partition, Offset.Beginning));
 
-                ids.Add(json.RootElement.GetProperty("r").GetProperty("id").GetInt32());
+                for (var read = 0; read < end.Value; read++)
+                {
+                    records.Add(consumer.Consume(TimeSpan.FromSeconds(10))
+                        ?? throw new TimeoutException($"Could not read topic {topic}"));
+                }
             }
 
-            return ids;
+            return records;
         }
     }
 }

@@ -20,9 +20,9 @@ namespace PgOutput2Json.Kafka
 
         /// <summary>
         /// librdkafka producer configuration. Unless set explicitly, the publisher enables idempotence
-        /// (<c>EnableIdempotence = true</c>, <c>EnableGaplessGuarantee = true</c>) and disables the per-message
-        /// timeout (<c>MessageTimeoutMs = 0</c>), so every partition receives an unbroken, ordered prefix of the
-        /// published messages. Use <see cref="ConfirmTimeout"/> to limit how long a batch may take.
+        /// (<c>EnableIdempotence = true</c>), disables the per-message timeout (<c>MessageTimeoutMs = 0</c>)
+        /// and uses the <c>Murmur2Random</c> partitioner. Use <see cref="ConfirmTimeout"/> to limit how long
+        /// a batch may take.
         /// </summary>
         public ProducerConfig ProducerConfig { get; set; } = new ProducerConfig
         {
@@ -38,13 +38,7 @@ namespace PgOutput2Json.Kafka
         public TimeSpan ConfirmTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
-        /// This is used only if UseDeduplication is set to true, to read the last LSN stored in the topic.
-        /// If not set, then the client config information is extracted from ProducerConfig.
-        /// </summary>
-        public ConsumerConfig? ConsumerConfig { get; set; }
-
-        /// <summary>
-        /// This is used only if UseDeduplication is set to true, to read the last LSN stored in the topic.
+        /// Used to read the partitions of the topic on start.
         /// If not set, then the client config information is extracted from ProducerConfig.
         /// </summary>
         public AdminClientConfig? AdminClientConfig { get; set; }

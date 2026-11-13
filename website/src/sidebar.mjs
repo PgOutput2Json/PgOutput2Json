@@ -6,7 +6,7 @@ export const sidebar = [
       { label: 'Getting started', slug: 'docs/getting-started' },
       { label: 'Change events', slug: 'docs/change-events' },
       { label: 'Permanent replication slots', slug: 'docs/replication-slots' },
-      { label: 'Deduplication', slug: 'docs/deduplication' },
+      { label: 'Delivery and deduplication', slug: 'docs/deduplication' },
     ],
   },
   {

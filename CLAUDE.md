@@ -45,7 +45,7 @@ PostgreSQL WAL
 - **`ReplicationListener`** — The core loop. Opens a `LogicalReplicationConnection`, starts replication, dispatches each WAL message. Manages two timers: an idle confirmation timer (sends WAL status after `BatchWaitTime`) and an idle WAL message timer (calls `pg_logical_emit_message` to prevent `restart_lsn` from lagging). Auto-reconnects after errors with a 10s delay. Uses `AsyncLock` to coordinate the main loop and timer callbacks.
 - **`JsonWriter`** — Converts `InsertMessage`, `UpdateMessage` (Default/Full/Index), and `DeleteMessage` into a `JsonMessage`. Supports `Default` and `Compact` write modes. In Compact mode, column names are omitted from row arrays and sent in a `"s"` schema property with the first row after each Relation message (first use of a relation on a connection, or a change).
 - **`JsonMessage`** — Reused single instance per `JsonWriter`. Holds `StringBuilder`s for: JSON body, table name, key column value(s), and partition key value(s).
-- **`IMessagePublisher` / `MessagePublisher`** — Interface for all output backends. Must implement `PublishAsync`, `ConfirmAsync`, and optionally `GetLastPublishedWalSeqAsync` (used for deduplication — if non-zero, messages with virtual LSN ≤ that value are skipped on reconnect).
+- **`IMessagePublisher` / `MessagePublisher`** — Interface for all output backends. Must implement `PublishAsync` and `ConfirmAsync`. `GetLastPublishedWalSeqAsync` is optional (default `(0,0)`): only the outputs that save their position with the data implement it, and the listener then skips replayed messages at or below that position.
 - **`IMessagePublisherFactory`** — Creates a new `IMessagePublisher` per connection/slot. All adapter packages implement this.
 - **`DataExporter`** — Handles optional initial data copy via PostgreSQL `COPY ... TO STDOUT HEADER`. Tracks progress in a `__pg2j_data_copy_progress` table. Runs before replication starts.
 
@@ -57,13 +57,15 @@ Each adapter in `src/PgOutput2Json.<Name>/` provides:
 
 Available adapters: `RabbitMq`, `RabbitMqStreams`, `Kafka`, `Redis`, `Sqlite`, `MongoDb`, `Kinesis`, `DynamoDb`, `AzureEventHubs`, `Webhooks`.
 
-### Deduplication
+### Delivery and Deduplication
 
-Because PostgreSQL can replay WAL on reconnect, messages can arrive twice. Each published message carries a deduplication key: the transaction final LSN ("w" in the JSON) plus a counter ("n") that is reset at every `BeginMessage`. On connect, the listener asks the publisher for the last published position via `GetLastPublishedWalSeqAsync` and skips every message at or below it.
+Delivery is at-least-once: a batch is confirmed to PostgreSQL only after the output acknowledged it, and PostgreSQL replays unconfirmed changes after a reconnect. Each published message carries a deduplication key: the transaction final LSN ("w" in the JSON) plus a counter ("n") that is reset at every `BeginMessage`. Consumers deduplicate with it.
 
-For partitioned publishers (Kafka, RabbitMQ super streams, and Event Hubs when partition-key columns are configured), `GetLastPublishedWalSeqAsync` returns the MINIMUM of the per-partition watermarks — a safe resume point, since everything at or below it is durably published — and the publisher additionally tracks one watermark per partition and skips messages it has already sent to the resolved target partition. Target partitions are computed client-side with a deterministic hash (Kafka murmur2, RabbitMQ murmur3 with seed 104729 via `HashRoutingMurmurStrategy`, Event Hubs murmur2 over the user's partition-key columns; without them Event Hubs keeps the legacy table-name partition key and routing stays service-side), so routing is stable across restarts. Messages skipped by either level still advance the WAL confirmation.
+The message outputs (Kafka, RabbitMQ, RabbitMQ Streams, Redis, Kinesis, Event Hubs, Webhooks) publish replayed changes again. They must keep the messages of a partition in WAL order and never skip a failed message, so a consumer can keep a "highest position seen" watermark per table and partition. Known exception: Kafka can accept messages sent after a rejected one, and the replay then fills the gap out of order; `EnableGaplessGuarantee` (experimental in librdkafka, off by default) prevents it.
 
-The Kinesis adapter does not support deduplication: `GetLastPublishedWalSeqAsync` always returns `(0,0)` (Kinesis offers no cheap per-shard last-record read, nor client-side shard targeting), so every restart replays and re-publishes the stream. Consumers must filter duplicates themselves using the `w`/`n` deduplication key — documented in the Kinesis adapter's README.
+The stores (SQLite, MongoDB, DynamoDB) save the last position with the data and return it from `GetLastPublishedWalSeqAsync`; the listener skips replayed messages at or below it (`ReplicationListenerOptions.UseDeduplication`, on by default).
+
+Routing: Kafka routes by message key with librdkafka's `Murmur2Random` partitioner; with partition-key columns the publisher picks the partition itself with the same hash (`MurmurHash2` in the core project, also used by Event Hubs and Redis). RabbitMQ super streams are routed by the client library.
 
 ### Batching
 

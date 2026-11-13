@@ -133,8 +133,8 @@ namespace PgOutput2Json
 
                     state.MessagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
-                    // this is used for deduplication
-                    var (txFinalLsn, msgNo) = await state.MessagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false);
+                    // (0, 0) unless the publisher saves its position with the data
+                    var lastPublished = await state.MessagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false);
 
                     var replicationMessage = new ReplicationMessage { HasRelationChanged = true };
 
@@ -216,8 +216,7 @@ namespace PgOutput2Json
 
                                 if (startingUp
                                     && _options.UseDeduplication
-                                    && new WalPosition(replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo)
-                                        .IsDuplicate(new WalPosition(txFinalLsn, msgNo)))
+                                    && (replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo).CompareTo(lastPublished) <= 0)
                                 {
                                     // already processed
                                     skippedCount++;
