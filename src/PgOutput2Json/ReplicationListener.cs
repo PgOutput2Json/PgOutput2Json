@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -161,6 +162,8 @@ namespace PgOutput2Json
                             {
                                 replicationMessage.HasRelationChanged = true;
 
+                                ValidatePartitionKeyColumns(rel);
+
                                 // Relation Message has WalEnd=0/0
                                 continue;
                             }
@@ -186,6 +189,18 @@ namespace PgOutput2Json
                             {
                                 state.LastWalEnd = message.WalEnd;
                                 continue;
+                            }
+
+                            if (message is LogicalDecodingMessage nonTxMsg && (nonTxMsg.Flags & 1) == 0)
+                            {
+                                // A non-transactional message is sent outside of Begin/Commit, as soon as it is decoded,
+                                // so it has no transaction of its own - without this it would inherit the deduplication
+                                // key of the previous transaction (or 0/1 after a reconnect, and be skipped as a duplicate).
+                                // Its own LSN is a valid key: it is decoded in WAL order, and every transaction sent
+                                // after it commits at a higher LSN. The counter is incremented to 1 below.
+                                replicationMessage.TransactionFinalLsn = (ulong)nonTxMsg.MessageLsn;
+                                replicationMessage.CommitTimeStamp = nonTxMsg.ServerClock;
+                                replicationMessage.MessageNo = 0UL;
                             }
 
                             if (message is InsertMessage ||
@@ -280,6 +295,55 @@ namespace PgOutput2Json
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
         }
 
+        /// <summary>
+        /// Partition key values are read from the key row for deletes, which contains only the replica
+        /// identity columns. A partition key column outside the replica identity therefore yields an empty
+        /// partition key for deletes, routing them to a different partition than the row's inserts and updates.
+        /// The relation message is the only place where the actual replica identity is known, so it is checked here.
+        /// pgoutput sends the relation once per connection (and again on schema change), so this is logged rarely.
+        /// </summary>
+        private void ValidatePartitionKeyColumns(RelationMessage rel)
+        {
+            if (_logger == null || _options.PartitionKeyColumns.Count == 0) return;
+
+            var tableName = $"{rel.Namespace}.{rel.RelationName}";
+
+            if (!_options.PartitionKeyColumns.TryGetValue(tableName, out var partitionCols)) return;
+
+            _options.IncludedColumns.TryGetValue(tableName, out var includedCols);
+
+            foreach (var partitionCol in partitionCols)
+            {
+                RelationMessage.Column? column = null;
+
+                foreach (var col in rel.Columns)
+                {
+                    if (col.ColumnName == partitionCol)
+                    {
+                        column = col;
+                        break;
+                    }
+                }
+
+                if (column == null)
+                {
+                    _logger.LogError("Partition key column {Column} does not exist in table {Table} - partition key will be incomplete for all messages",
+                        partitionCol, tableName);
+                }
+                else if (includedCols != null && !includedCols.Contains(partitionCol))
+                {
+                    _logger.LogError("Partition key column {Column} of table {Table} is not in the included columns - partition key will be incomplete for all messages",
+                        partitionCol, tableName);
+                }
+                else if ((column.Value.Flags & RelationMessage.Column.ColumnFlags.PartOfKey) == 0)
+                {
+                    _logger.LogError("Partition key column {Column} of table {Table} is not part of the replica identity - deletes will not carry the partition key " +
+                        "and may be routed to a different partition. Use primary key columns for partitioning, or set REPLICA IDENTITY FULL on the table.",
+                        partitionCol, tableName);
+                }
+            }
+        }
+
         private static async Task ConfirmAsync(ConnectionState cs)
         {
             if (cs.UnconfirmedCount > 0 && cs.MessagePublisher != null)
@@ -353,13 +417,13 @@ namespace PgOutput2Json
         {
             var cs = (ConnectionState)state!;
 
+            if (cs.CancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             try
             {
-                if (cs.CancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
-
                 await using var conn = new NpgsqlConnection(_options.ConnectionString);
                 await conn.OpenAsync(cs.CancellationToken).ConfigureAwait(false);
 
@@ -369,7 +433,21 @@ namespace PgOutput2Json
                 await cmd.ExecuteNonQueryAsync(cs.CancellationToken).ConfigureAwait(false);
 
                 _logger.SafeLogDebug("Emitted idle WAL pg2j_keepalive message");
+            }
+            catch (OperationCanceledException) when (cs.CancellationToken.IsCancellationRequested)
+            {
+                // stopping - nothing to do
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.SafeLogError(ex, "Error emitting idle WAL message");
+            }
 
+            // Reschedule after a failure too: the main loop reschedules only when a message arrives, and
+            // on an idle database none would - the keepalives would stop until the next real change.
+            try
+            {
                 using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                 {
                     // checking for disposal inside the lock
@@ -385,7 +463,7 @@ namespace PgOutput2Json
             }
             catch (Exception ex)
             {
-                _logger.SafeLogError(ex, "Error emitting idle WAL message");
+                _logger.SafeLogError(ex, "Error rescheduling idle WAL message");
             }
         }
 #pragma warning restore VSTHRD100 // Avoid async void methods

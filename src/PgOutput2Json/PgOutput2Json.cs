@@ -22,15 +22,20 @@ namespace PgOutput2Json
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
+            CancellationToken token;
+
             lock (_lock)
             {
                 if (_cancellationTokenSource != null) return; // already running
                 _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                // read inside the lock - a concurrent Dispose sets the field to null
+                token = _cancellationTokenSource.Token;
             }
 
             try
             {
-                await _listener.ListenForChangesAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
+                await _listener.ListenForChangesAsync(token).ConfigureAwait(false);
             }
             finally
             {

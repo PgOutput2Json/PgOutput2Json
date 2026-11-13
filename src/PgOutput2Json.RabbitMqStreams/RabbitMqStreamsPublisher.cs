@@ -73,6 +73,13 @@ namespace PgOutput2Json.RabbitMqStreams
 
             lock (_confirmationLock)
             {
+                // A failed confirmation must fail the batch. Replacing the faulted source would lose the failure,
+                // and since the failed message is never counted as confirmed, the confirm would hang forever.
+                if (_confirmationTaskCompletionSource?.Task.Exception is { } failure)
+                {
+                    throw failure.InnerException ?? failure;
+                }
+
                 _unconfirmedCount++;
 
                 if (_confirmationTaskCompletionSource == null || _confirmationTaskCompletionSource.Task.IsCompleted)
@@ -242,7 +249,7 @@ namespace PgOutput2Json.RabbitMqStreams
                                     _unconfirmedCount--;
                                     if (_unconfirmedCount == 0)
                                     {
-                                        _confirmationTaskCompletionSource?.SetResult();
+                                        _confirmationTaskCompletionSource?.TrySetResult();
                                     }
                                 }
 
@@ -257,7 +264,7 @@ namespace PgOutput2Json.RabbitMqStreams
                             case ConfirmationStatus.ClientTimeoutError:
                                 lock (_confirmationLock)
                                 {
-                                    _confirmationTaskCompletionSource?.SetException(new Exception(
+                                    _confirmationTaskCompletionSource?.TrySetException(new Exception(
                                         $"Stream {confirmation.Stream} Message {confirmation.PublishingId} failed with {confirmation.Status}"));
                                 }
                                 break;

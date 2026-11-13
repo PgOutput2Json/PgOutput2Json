@@ -1,4 +1,5 @@
 ﻿using Confluent.Kafka;
+using System;
 using System.Collections.Generic;
 
 namespace PgOutput2Json.Kafka
@@ -17,10 +18,24 @@ namespace PgOutput2Json.Kafka
         /// </summary>
         public bool WriteTableNameToMessageKey { get; set; } = false;
 
+        /// <summary>
+        /// librdkafka producer configuration. Unless set explicitly, the publisher enables idempotence
+        /// (<c>EnableIdempotence = true</c>, <c>EnableGaplessGuarantee = true</c>) and disables the per-message
+        /// timeout (<c>MessageTimeoutMs = 0</c>), so every partition receives an unbroken, ordered prefix of the
+        /// published messages. Use <see cref="ConfirmTimeout"/> to limit how long a batch may take.
+        /// </summary>
         public ProducerConfig ProducerConfig { get; set; } = new ProducerConfig
         {
             BootstrapServers = "localhost:9092",
         };
+
+        /// <summary>
+        /// Maximum time to wait for Kafka to acknowledge all the messages published since the last confirm.
+        /// When it expires, the confirm fails, the producer is discarded, and the listener reconnects and replays
+        /// the unconfirmed changes. Zero or <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> waits forever.
+        /// Default is 5 minutes.
+        /// </summary>
+        public TimeSpan ConfirmTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
         /// This is used only if UseDeduplication is set to true, to read the last LSN stored in the topic.

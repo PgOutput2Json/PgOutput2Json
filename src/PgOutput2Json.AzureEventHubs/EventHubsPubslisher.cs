@@ -25,7 +25,7 @@ namespace PgOutput2Json.AzureEventHubs
         // must resolve to the same partition on every restart
         private List<string>? _partitionIds;
 
-        private readonly List<(EventData EventData, string? PartitionId, string PartitionKey, WalPosition Position)> _buffer = [];
+        private readonly List<BufferEntry> _buffer = [];
 
         private readonly Dictionary<string, WalPosition> _lastPublished = new();
 
@@ -90,7 +90,7 @@ namespace PgOutput2Json.AzureEventHubs
                 _dedupSkipActive = false;
             }
 
-            _buffer.Add((eventData, partitionId, tableName, new WalPosition(msg.TxFinalLsn, msg.MessageNo)));
+            _buffer.Add(new BufferEntry(eventData, partitionId, tableName, new WalPosition(msg.TxFinalLsn, msg.MessageNo)));
         }
 
         public async Task ConfirmAsync(CancellationToken token)
@@ -102,33 +102,23 @@ namespace PgOutput2Json.AzureEventHubs
 
             try
             {
-                // group the events by their target - events with a client-resolved partition
-                // are sent to it explicitly, the rest keep the table-name partition key
-                var eventsByTarget = _buffer.GroupBy(x => (x.PartitionId, x.PartitionKey));
-
-                foreach (var targetGroup in eventsByTarget)
+                foreach (var group in GetSendGroups(_buffer))
                 {
-                    var partitionId = targetGroup.Key.PartitionId;
+                    var partitionId = group[0].PartitionId;
 
                     var batchOptions = partitionId != null
                         ? new CreateBatchOptions { PartitionId = partitionId }
-                        : new CreateBatchOptions { PartitionKey = targetGroup.Key.PartitionKey };
+                        : new CreateBatchOptions { PartitionKey = group[0].PartitionKey };
 
-                    var events = targetGroup.Select(x => x.EventData).ToList();
+                    var events = group.Select(x => x.EventData).ToList();
 
                     await SendEventsInBatchesAsync(client, events, batchOptions, token)
                         .ConfigureAwait(false);
 
                     // the positions are tracked only after the events are durably sent
-                    if (_useDeduplication)
+                    if (_useDeduplication && partitionId != null)
                     {
-                        foreach (var entry in targetGroup)
-                        {
-                            if (entry.PartitionId != null)
-                            {
-                                TrackWalSeq(entry.PartitionId, entry.Position);
-                            }
-                        }
+                        TrackWalSeq(partitionId, group[^1].Position);
                     }
                 }
 
@@ -139,6 +129,46 @@ namespace PgOutput2Json.AzureEventHubs
                 _logger?.LogError(ex, "Failed to send events to Event Hub");
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Splits the buffer into groups that are sent one after another. The deduplication reads the last
+        /// event of each partition on startup, so every partition must receive its events in WAL order.
+        /// </summary>
+        internal static IEnumerable<List<BufferEntry>> GetSendGroups(List<BufferEntry> buffer)
+        {
+            // all the events have a client-resolved partition - one group per partition keeps the order
+            if (buffer.TrueForAll(x => x.PartitionId != null))
+            {
+                return buffer.GroupBy(x => x.PartitionId).Select(x => x.ToList());
+            }
+
+            // events routed by the table-name partition key land in a partition chosen by the service, and several
+            // tables can share one - the order is kept only by sending in buffer order, with a new group
+            // whenever the target changes
+            var groups = new List<List<BufferEntry>>();
+
+            foreach (var entry in buffer)
+            {
+                var last = groups.Count > 0 ? groups[^1] : null;
+
+                if (last == null || !HasSameTarget(last[0], entry))
+                {
+                    groups.Add(last = []);
+                }
+
+                last.Add(entry);
+            }
+
+            return groups;
+        }
+
+        private static bool HasSameTarget(BufferEntry a, BufferEntry b)
+        {
+            // the table-name partition key is used only without a client-resolved partition
+            return a.PartitionId != null || b.PartitionId != null
+                ? a.PartitionId == b.PartitionId
+                : a.PartitionKey == b.PartitionKey;
         }
 
         public async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
@@ -376,5 +406,7 @@ namespace PgOutput2Json.AzureEventHubs
 
             return propValue;
         }
+
+        internal readonly record struct BufferEntry(EventData EventData, string? PartitionId, string PartitionKey, WalPosition Position);
     }
 }

@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PgOutput2Json\PgOutput2Json.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.AzureEventHubs\PgOutput2Json.AzureEventHubs.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Sqlite\PgOutput2Json.Sqlite.csproj" />
   </ItemGroup>
