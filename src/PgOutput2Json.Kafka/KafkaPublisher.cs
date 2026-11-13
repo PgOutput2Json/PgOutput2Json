@@ -416,7 +416,7 @@ namespace PgOutput2Json.Kafka
 
             _logger?.LogInformation("Creating Kafka producer");
 
-            var config = CreateProducerConfig();
+            var config = CreateProducerConfig(_options, _useDeduplication, _logger);
 
             _producer = new ProducerBuilder<string, string>(config)
                 .SetErrorHandler((_, e) => _logger?.LogError("Kafka producer error: IsFatal={IsFatal}, Code={Code}, Reason={Reason}", e.IsFatal, e.Code, e.Reason))
@@ -437,9 +437,9 @@ namespace PgOutput2Json.Kafka
         /// Explicit user settings are kept - librdkafka refuses to start with ones incompatible with idempotence.
         /// The user's config object is copied, not modified.
         /// </summary>
-        private ProducerConfig CreateProducerConfig()
+        internal static ProducerConfig CreateProducerConfig(KafkaPublisherOptions options, bool useDeduplication, ILogger? logger)
         {
-            var settings = _options.ProducerConfig.ToDictionary(kv => kv.Key, kv => kv.Value);
+            var settings = options.ProducerConfig.ToDictionary(kv => kv.Key, kv => kv.Value);
             var config = new ProducerConfig(settings);
 
             config.EnableIdempotence ??= true;
@@ -459,11 +459,11 @@ namespace PgOutput2Json.Kafka
 
             var messageTimeout = config.MessageTimeoutMs?.ToString() ?? deliveryTimeout;
 
-            if (_useDeduplication && (config.EnableIdempotence != true || config.EnableGaplessGuarantee != true || messageTimeout != "0"))
+            if (useDeduplication && (config.EnableIdempotence != true || config.EnableGaplessGuarantee != true || messageTimeout != "0"))
             {
-                _logger?.LogWarning("Kafka producer for topic {Topic} runs with EnableIdempotence={EnableIdempotence}, EnableGaplessGuarantee={EnableGaplessGuarantee}, MessageTimeoutMs={MessageTimeoutMs}. " +
+                logger?.LogWarning("Kafka producer for topic {Topic} runs with EnableIdempotence={EnableIdempotence}, EnableGaplessGuarantee={EnableGaplessGuarantee}, MessageTimeoutMs={MessageTimeoutMs}. " +
                     "A failed delivery can leave a gap in a partition, and deduplication may then skip messages that were never published.",
-                    _options.Topic, config.EnableIdempotence, config.EnableGaplessGuarantee, messageTimeout);
+                    options.Topic, config.EnableIdempotence, config.EnableGaplessGuarantee, messageTimeout);
             }
 
             return config;

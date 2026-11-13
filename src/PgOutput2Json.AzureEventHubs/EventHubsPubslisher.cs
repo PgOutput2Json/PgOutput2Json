@@ -102,7 +102,7 @@ namespace PgOutput2Json.AzureEventHubs
 
             try
             {
-                foreach (var group in GetSendGroups())
+                foreach (var group in GetSendGroups(_buffer))
                 {
                     var partitionId = group[0].PartitionId;
 
@@ -135,12 +135,12 @@ namespace PgOutput2Json.AzureEventHubs
         /// Splits the buffer into groups that are sent one after another. The deduplication reads the last
         /// event of each partition on startup, so every partition must receive its events in WAL order.
         /// </summary>
-        private IEnumerable<List<BufferEntry>> GetSendGroups()
+        internal static IEnumerable<List<BufferEntry>> GetSendGroups(List<BufferEntry> buffer)
         {
             // all the events have a client-resolved partition - one group per partition keeps the order
-            if (_buffer.TrueForAll(x => x.PartitionId != null))
+            if (buffer.TrueForAll(x => x.PartitionId != null))
             {
-                return _buffer.GroupBy(x => x.PartitionId).Select(x => x.ToList());
+                return buffer.GroupBy(x => x.PartitionId).Select(x => x.ToList());
             }
 
             // events routed by the table-name partition key land in a partition chosen by the service, and several
@@ -148,11 +148,11 @@ namespace PgOutput2Json.AzureEventHubs
             // whenever the target changes
             var groups = new List<List<BufferEntry>>();
 
-            foreach (var entry in _buffer)
+            foreach (var entry in buffer)
             {
                 var last = groups.Count > 0 ? groups[^1] : null;
 
-                if (last == null || last[0].PartitionId != entry.PartitionId || last[0].PartitionKey != entry.PartitionKey)
+                if (last == null || !HasSameTarget(last[0], entry))
                 {
                     groups.Add(last = []);
                 }
@@ -161,6 +161,14 @@ namespace PgOutput2Json.AzureEventHubs
             }
 
             return groups;
+        }
+
+        private static bool HasSameTarget(BufferEntry a, BufferEntry b)
+        {
+            // the table-name partition key is used only without a client-resolved partition
+            return a.PartitionId != null || b.PartitionId != null
+                ? a.PartitionId == b.PartitionId
+                : a.PartitionKey == b.PartitionKey;
         }
 
         public async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
@@ -399,6 +407,6 @@ namespace PgOutput2Json.AzureEventHubs
             return propValue;
         }
 
-        private readonly record struct BufferEntry(EventData EventData, string? PartitionId, string PartitionKey, WalPosition Position);
+        internal readonly record struct BufferEntry(EventData EventData, string? PartitionId, string PartitionKey, WalPosition Position);
     }
 }
