@@ -14,6 +14,9 @@ dotnet test src/PgOutput2Json.Tests/PgOutput2Json.Tests.csproj
 # Run a single test by name
 dotnet test src/PgOutput2Json.Tests/PgOutput2Json.Tests.csproj --filter "FullyQualifiedName~WriteText_should_add_quotes"
 
+# Run the integration tests (need Docker - they start PostgreSQL and Kafka with Testcontainers)
+dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj
+
 # Run the manual integration test worker
 dotnet run --project src/PgOutput2Json.TestWorker/PgOutput2Json.TestWorker.csproj
 ```
