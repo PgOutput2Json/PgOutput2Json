@@ -49,8 +49,22 @@ Table names are schema-qualified, for example `public.my_table`.
 
 | Method | What it does |
 |---|---|
-| `WithInitialDataCopy(copyData, maxParallelJobs = 1, copyDataBatchSize = 0)` | Publishes the existing rows before streaming starts. The output must be able to report its last published position: the copy starts only when nothing was published yet. |
+| `WithInitialDataCopy(copyData, maxParallelJobs = 1, copyDataBatchSize = 0)` | Publishes the existing rows of the published tables before streaming starts. Each table is copied once per replication slot. |
 | `WithPgOrderedKeyColumns(table, columns)` | The columns the copy of a table is ordered by. They are needed to copy in batches (`copyDataBatchSize`) and to resume an interrupted copy. |
+
+### Table states
+
+With a permanent replication slot, the library keeps one row per published table and slot in the source database, in `pgoutput2json.table_sync_state`. A table is either `init` (it still needs its copy) or `ready`.
+
+- The states are written even when the copy is off: every published table is registered as `ready`. If you enable the copy later, only the tables published since then are copied.
+- A table added to a publication is copied on the next start.
+- A table removed from the publications is forgotten on the next start, and so is a table that was dropped and created again. Either is copied again if it comes back.
+- A table in several publications is copied once. A row is copied if the row filter of any of those publications accepts it.
+- To copy a table again, delete its row and restart.
+
+The schema and the table are created on first use, which needs the `CREATE` privilege on the database. Alternatively, create the `pgoutput2json` schema yourself and grant the replication user `CREATE` and `USAGE` on it. If the states cannot be stored and the copy is off, the library logs a warning and streams as usual. With the copy on, it is an error.
+
+With a temporary slot nothing is stored, and the copy runs on every start.
 
 ## JSON options
 

@@ -47,7 +47,8 @@ PostgreSQL WAL
 - **`JsonMessage`** — Reused single instance per `JsonWriter`. Holds `StringBuilder`s for: JSON body, table name, key column value(s), and partition key value(s).
 - **`IMessagePublisher` / `MessagePublisher`** — Interface for all output backends. Must implement `PublishAsync` and `ConfirmAsync`. `GetLastPublishedWalSeqAsync` is optional (default `(0,0)`): only the outputs that save their position with the data implement it, and the listener then skips replayed messages at or below that position.
 - **`IMessagePublisherFactory`** — Creates a new `IMessagePublisher` per connection/slot. All adapter packages implement this.
-- **`DataExporter`** — Handles optional initial data copy via PostgreSQL `COPY ... TO STDOUT HEADER`. Tracks progress in a `__pg2j_data_copy_progress` table. Runs before replication starts.
+- **`TableSyncState`** — Keeps one row per published table and replication slot in the source database (`pgoutput2json.table_sync_state`): `init` (needs the initial copy) or `ready`. Written on every connect, even with the copy off, so enabling the copy later copies only new tables. Nothing is stored for a temporary slot.
+- **`DataExporter`** — Copies the tables in state `init` via PostgreSQL `COPY ... TO STDOUT HEADER`, before replication starts, and marks each one `ready`. Batch progress for resumable copies is kept in `pgoutput2json.data_copy_progress`.
 
 ### Publisher Adapter Packages
 

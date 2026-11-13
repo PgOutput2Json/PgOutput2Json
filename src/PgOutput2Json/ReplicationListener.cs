@@ -128,8 +128,10 @@ namespace PgOutput2Json
                             .ConfigureAwait(false);
                     }
 
+                    var tablesToCopy = await TableSyncState.RegisterTablesAsync(_options, _logger, cancellationToken).ConfigureAwait(false);
+
                     // start data export after creating the temporary replication slot
-                    await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken).ConfigureAwait(false);
+                    await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, tablesToCopy, _loggerFactory, cancellationToken).ConfigureAwait(false);
 
                     state.MessagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
@@ -230,15 +232,19 @@ namespace PgOutput2Json
 
                                 startingUp = false;
 
-                                var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
-                                    .ConfigureAwait(false);
+                                // our own bookkeeping tables are part of a FOR ALL TABLES publication
+                                if (!IsInternalTable(message))
+                                {
+                                    var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
+                                        .ConfigureAwait(false);
 
-                                replicationMessage.HasRelationChanged = false;
+                                    replicationMessage.HasRelationChanged = false;
 
-                                await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
-                                    .ConfigureAwait(false);
-                            
-                                MetricsHelper.IncrementPublishCounter();
+                                    await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
+                                        .ConfigureAwait(false);
+
+                                    MetricsHelper.IncrementPublishCounter();
+                                }
                             }
 
                             // set the lastWalEnd to be sent in status update only after the message was published
@@ -292,6 +298,19 @@ namespace PgOutput2Json
             }
 
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
+        }
+
+        private static bool IsInternalTable(PgOutputReplicationMessage message)
+        {
+            var relation = message switch
+            {
+                InsertMessage insert => insert.Relation,
+                UpdateMessage update => update.Relation,
+                DeleteMessage delete => delete.Relation,
+                _ => null,
+            };
+
+            return relation?.Namespace == TableSyncState.Schema;
         }
 
         /// <summary>

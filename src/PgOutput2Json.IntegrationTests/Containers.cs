@@ -21,7 +21,7 @@ namespace PgOutput2Json.IntegrationTests
         public static async Task StartAsync(TestContext _)
         {
             _postgres = new PostgreSqlBuilder("postgres:16")
-                .WithCommand("-c", "wal_level=logical")
+                .WithCommand("-c", "wal_level=logical", "-c", "max_replication_slots=100", "-c", "max_wal_senders=100")
                 .Build();
 
             await _postgres.StartAsync();
