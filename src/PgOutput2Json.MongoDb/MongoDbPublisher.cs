@@ -44,8 +44,12 @@ namespace PgOutput2Json.MongoDb
 
             await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
 
-            _lastWal = msg.TxFinalLsn;
-            _lastMessageNo = msg.MessageNo;
+            // the messages of a table sync are behind the main stream - they must not move the saved position
+            if (!msg.IsTableSync)
+            {
+                _lastWal = msg.TxFinalLsn;
+                _lastMessageNo = msg.MessageNo;
+            }
         }
 
         public override async Task ConfirmAsync(CancellationToken token)

@@ -349,7 +349,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return whereBuilder.ToString();
         }
 
-        public static async Task InsertAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
+        public static async Task<int> InsertAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
         {
             var cmd = ignoreConflicts ? commands.InsertIgnoreCommand : commands.InsertCommand;
 
@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 BindValue(cmd.Parameters[i], rowElement[i], commands.Columns[i]);
             }
 
-            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            return await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
         /// <summary>

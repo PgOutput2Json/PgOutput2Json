@@ -15,4 +15,6 @@ Every message carries a deduplication key: the transaction final LSN (`"w"`) plu
 - **Apply changes idempotently.** Upsert and delete by key. Replayed changes arrive in order, so the result is the same.
 - **Keep a watermark.** Remember the highest `(w, n)` pair processed and skip anything at or below it. Keep one watermark per table, in each partition or stream you read: the order is guaranteed only there. On Kafka, a message the broker rejects can arrive late and out of order; see the Kafka output for how to prevent that.
 
+The rows of the [initial data copy](../configuration/#initial-data-copy) have change type `"C"` and no position: `"w"` and `"n"` are 0. Upsert them by key and leave them out of the watermark. A copy that failed and started again publishes its rows again. While a table is being copied and synced, its changes are published behind the changes of the other tables, which is one more reason to keep the watermark per table.
+
 The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off; it has no effect on the other outputs.

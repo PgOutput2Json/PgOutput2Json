@@ -49,22 +49,54 @@ Table names are schema-qualified, for example `public.my_table`.
 
 | Method | What it does |
 |---|---|
-| `WithInitialDataCopy(copyData, maxParallelJobs = 1, copyDataBatchSize = 0)` | Publishes the existing rows of the published tables before streaming starts. Each table is copied once per replication slot. |
-| `WithPgOrderedKeyColumns(table, columns)` | The columns the copy of a table is ordered by. They are needed to copy in batches (`copyDataBatchSize`) and to resume an interrupted copy. |
+| `WithInitialDataCopy(copyData, maxParallelJobs = 2)` | Publishes the existing rows of the published tables. Each table is copied once per replication slot. `maxParallelJobs` is the number of tables synced at the same time. |
+
+The copy works like the table synchronization of PostgreSQL's own logical replication:
+
+1. Streaming starts right away. The changes of a table that is not yet synced are left to its sync worker.
+2. A sync worker creates a replication slot for the table and copies the rows from that slot's snapshot. The rows are published with change type `"C"`.
+3. The worker then publishes the changes made to the table since the snapshot, until it has caught up with the main stream.
+4. The main stream stops between two transactions, the worker publishes the table's changes up to that point, and from there the table belongs to the main stream. The stop is short, because the worker has caught up before.
+
+So nothing is lost and nothing is published twice between the copy and the stream, and a table is always published in order: copied rows, then its changes.
+
+What to know:
+
+- **Copied rows.** They have `"c":"C"` and no position (`"w"` and `"n"` are 0). Upsert them by key, and leave them out of [deduplication](../deduplication/).
+- **Other tables are ahead.** While a table is synced, its changes are published later than the changes of the tables that are already streamed. Consumers that keep a deduplication watermark must keep it per table.
+- **A failed copy starts again from zero**, and its rows are published again. The copy only adds and replaces rows: a row published by the failed attempt and deleted before the second one stays at the output.
+- **A table published while the listener runs** is synced without a restart. The listener learns about it from its first change.
+- **Row filters and column lists** of the publications apply to the copy. A table in several publications is copied once; a row is copied if the row filter of any of those publications accepts it.
+- **Resources.** Each table being synced uses one replication slot and two connections, on top of the main stream. Size `max_replication_slots` and `max_wal_senders` for that. A long copy keeps its snapshot open, which holds back vacuum.
+- **Sync slots.** They are named `<slot>_sync_<table oid>` and are dropped when the table is synced. Slots left behind by a crash are dropped on the next start. If you drop the main slot for good, drop its sync slots too.
 
 ### Table states
 
-With a permanent replication slot, the library keeps one row per published table and slot in the source database, in `pgoutput2json.table_sync_state`. A table is either `init` (it still needs its copy) or `ready`.
+With a permanent replication slot, the library keeps one row per published table and slot in the source database, in `pgoutput2json.table_sync_state`:
+
+| State | Meaning |
+|---|---|
+| `init` | The table needs its copy. |
+| `copying` | The copy is running. After a restart it starts again from zero. |
+| `copied` | The copy is done and the sync slot holds the position. After a restart the sync continues from there, without a new copy. |
+| `ready` | The table is streamed by the main stream. |
 
 - The states are written even when the copy is off: every published table is registered as `ready`. If you enable the copy later, only the tables published since then are copied.
-- A table added to a publication is copied on the next start.
+- If you turn the copy off while tables are not yet `ready`, they are streamed without a copy, and copied if you turn it on again.
 - A table removed from the publications is forgotten on the next start, and so is a table that was dropped and created again. Either is copied again if it comes back.
-- A table in several publications is copied once. A row is copied if the row filter of any of those publications accepts it.
 - To copy a table again, delete its row and restart.
+- The states know nothing about the output. If you empty the output, or drop the slot and create it again under the same name, delete the slot's rows too.
 
 The schema and the table are created on first use, which needs the `CREATE` privilege on the database. Alternatively, create the `pgoutput2json` schema yourself and grant the replication user `CREATE` and `USAGE` on it. If the states cannot be stored and the copy is off, the library logs a warning and streams as usual. With the copy on, it is an error.
 
-With a temporary slot nothing is stored, and the copy runs on every start.
+With a temporary slot nothing is stored, the sync slots are temporary too, and every table is copied on every start and every reconnect.
+
+### Changes from earlier versions
+
+- `WithPgOrderedKeyColumns` and the `copyDataBatchSize` parameter are gone: a copy can no longer be resumed part-way.
+- Copied rows have change type `"C"` instead of `"I"`.
+- Streaming no longer waits for the copy to finish.
+- Tables that the old version had copied are not copied again. The old table `pgoutput2json.data_copy_progress` is read once per slot and can be dropped when all your listeners have been upgraded and started.
 
 ## JSON options
 

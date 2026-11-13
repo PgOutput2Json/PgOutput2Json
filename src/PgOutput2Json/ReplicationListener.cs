@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +21,7 @@ namespace PgOutput2Json
 
             public LogicalReplicationConnection? Connection { get; set; }
             public IMessagePublisher? MessagePublisher { get; set; }
+            public TableSync? TableSync { get; set; }
             public CancellationTokenSource LinkedCts { get; } = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             public CancellationToken CancellationToken { get; } = cancellationToken;
             public int UnconfirmedCount { get; set; }
@@ -42,6 +44,9 @@ namespace PgOutput2Json
 
                 await IdleWalMessageTimer.TryDisposeAsync(_logger).ConfigureAwait(false);
                 IdleWalMessageTimer = null;
+
+                await TableSync.TryDisposeAsync(_logger).ConfigureAwait(false);
+                TableSync = null;
 
                 await MessagePublisher.TryDisposeAsync(_logger).ConfigureAwait(false);
                 MessagePublisher = null;
@@ -120,6 +125,9 @@ namespace PgOutput2Json
 
                     if (!_options.UseTemporarySlot)
                     {
+                        // the table sync must not start if this listener cannot get the slot
+                        await EnsureSlotIsFreeAsync(slotName, cancellationToken).ConfigureAwait(false);
+
                         slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                     }
                     else
@@ -128,17 +136,33 @@ namespace PgOutput2Json
                             .ConfigureAwait(false);
                     }
 
-                    var tablesToCopy = await TableSyncState.RegisterTablesAsync(_options, _logger, cancellationToken).ConfigureAwait(false);
-
-                    // start data export after creating the temporary replication slot
-                    await DataExporter.MaybeExportDataAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, tablesToCopy, _loggerFactory, cancellationToken).ConfigureAwait(false);
+                    // registers the published tables and, with the initial copy on, syncs the new ones in the background
+                    var tableSync = state.TableSync = await TableSync.StartAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken)
+                        .ConfigureAwait(false);
 
                     state.MessagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
 
                     // (0, 0) unless the publisher saves its position with the data
                     var lastPublished = await state.MessagePublisher.GetLastPublishedWalSeqAsync(cancellationToken).ConfigureAwait(false);
 
-                    var replicationMessage = new ReplicationMessage { HasRelationChanged = true };
+                    var replicationMessage = new ReplicationMessage();
+
+                    // the relations whose schema goes out with their next published row
+                    var changedRelations = new HashSet<uint>();
+
+                    // Between transactions: a sync worker that has caught up gets its table handed over here.
+                    // This listener's own batch is confirmed first, so that the worker's messages follow it at
+                    // the output, and a store's open transaction does not block the worker.
+                    async Task AtBoundaryAsync(ulong lsn)
+                    {
+                        if (!tableSync.AtBoundary(lsn)) return;
+
+                        state.IdleConfirmTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+                        await ConfirmAsync(state).ConfigureAwait(false);
+
+                        await tableSync.HandOverAsync(lsn, state.LinkedCts.Token).ConfigureAwait(false);
+                    }
 
                     var replicationOptions = new PgOutputReplicationOptions(_options.PublicationNames, PgOutputProtocolVersion.V1, messages: true);
 
@@ -162,7 +186,7 @@ namespace PgOutput2Json
 
                             if (message is RelationMessage rel)
                             {
-                                replicationMessage.HasRelationChanged = true;
+                                changedRelations.Add(rel.RelationId);
 
                                 ValidatePartitionKeyColumns(rel);
 
@@ -184,12 +208,16 @@ namespace PgOutput2Json
                                 // This is checked multiple times, we must confirm this WalEnd too,
                                 // since the whole transaction will repeat otherwise.
                                 state.LastWalEnd = message.WalEnd;
+
+                                await AtBoundaryAsync((ulong)commitMsg.TransactionEndLsn).ConfigureAwait(false);
                                 continue;
                             }
 
                             if (message is LogicalDecodingMessage logicalMsg && logicalMsg.Prefix == "pg2j_keepalive")
                             {
                                 state.LastWalEnd = message.WalEnd;
+
+                                await AtBoundaryAsync((ulong)logicalMsg.MessageLsn).ConfigureAwait(false);
                                 continue;
                             }
 
@@ -232,13 +260,18 @@ namespace PgOutput2Json
 
                                 startingUp = false;
 
-                                // our own bookkeeping tables are part of a FOR ALL TABLES publication
-                                if (!IsInternalTable(message))
+                                var relation = TableSync.GetRelation(message);
+
+                                // Our own bookkeeping tables are part of a FOR ALL TABLES publication.
+                                // A table that is being synced is published by its sync worker.
+                                if (relation == null
+                                    || (relation.Namespace != TableSyncState.Schema
+                                        && tableSync.ShouldPublish(relation.RelationId, replicationMessage.TransactionFinalLsn)))
                                 {
+                                    replicationMessage.HasRelationChanged = relation != null && changedRelations.Remove(relation.RelationId);
+
                                     var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
                                         .ConfigureAwait(false);
-
-                                    replicationMessage.HasRelationChanged = false;
 
                                     await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
                                         .ConfigureAwait(false);
@@ -249,6 +282,11 @@ namespace PgOutput2Json
 
                             // set the lastWalEnd to be sent in status update only after the message was published
                             state.LastWalEnd = message.WalEnd;
+
+                            if (message is LogicalDecodingMessage outsideTransaction && (outsideTransaction.Flags & 1) == 0)
+                            {
+                                await AtBoundaryAsync((ulong)outsideTransaction.MessageLsn).ConfigureAwait(false);
+                            }
 
                             if (++state.UnconfirmedCount < _options.BatchSize)
                             {
@@ -274,7 +312,7 @@ namespace PgOutput2Json
                 }
                 catch (Exception ex)
                 {
-                    if (ex is PostgresException pgEx && pgEx.SqlState == "55006")
+                    if (ex is SlotTakenException || (ex is PostgresException pgEx && pgEx.SqlState == "55006"))
                     {
                         _logger.SafeLogWarn("Slot taken - waiting for 10 seconds...");
                     }
@@ -300,17 +338,23 @@ namespace PgOutput2Json
             _logger.SafeLogInfo("Disconnected from PostgreSQL");
         }
 
-        private static bool IsInternalTable(PgOutputReplicationMessage message)
-        {
-            var relation = message switch
-            {
-                InsertMessage insert => insert.Relation,
-                UpdateMessage update => update.Relation,
-                DeleteMessage delete => delete.Relation,
-                _ => null,
-            };
+        private sealed class SlotTakenException(string message) : Exception(message);
 
-            return relation?.Namespace == TableSyncState.Schema;
+        private async Task EnsureSlotIsFreeAsync(string slotName, CancellationToken token)
+        {
+            using var cn = new NpgsqlConnection(_options.ConnectionString);
+
+            await cn.OpenAsync(token).ConfigureAwait(false);
+
+            using var cmd = new NpgsqlCommand("SELECT active FROM pg_replication_slots WHERE slot_name = @slot_name", cn);
+
+            cmd.Parameters.AddWithValue("slot_name", slotName);
+
+            var active = await cmd.ExecuteScalarAsync(token).ConfigureAwait(false);
+
+            if (active == null) throw new InvalidOperationException($"Replication slot {slotName} does not exist");
+
+            if ((bool)active) throw new SlotTakenException($"Replication slot {slotName} is in use");
         }
 
         /// <summary>

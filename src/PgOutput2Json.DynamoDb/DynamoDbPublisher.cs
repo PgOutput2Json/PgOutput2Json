@@ -48,8 +48,12 @@ namespace PgOutput2Json.DynamoDb
 
             await ParseRowAsync(client, tableName, doc, token).ConfigureAwait(false);
 
-            _lastWal = msg.TxFinalLsn;
-            _lastMessageNo = msg.MessageNo;
+            // the messages of a table sync are behind the main stream - they must not move the saved position
+            if (!msg.IsTableSync)
+            {
+                _lastWal = msg.TxFinalLsn;
+                _lastMessageNo = msg.MessageNo;
+            }
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
@@ -161,7 +165,7 @@ namespace PgOutput2Json.DynamoDb
                     .ConfigureAwait(false);
             }
 
-            if (changeType != "d") // delete is andled above with keyElement handling
+            if (changeType != "D") // a delete has no row, it is handled above with the key
             {
                 var itemAttributes = ComposeItemAttributes(columns, rowElement, out var hasToastedValues);
 
