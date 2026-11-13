@@ -38,7 +38,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithLoggerFactory(logs)
                 .WithPgConnectionString(Containers.PgConnectionString)
                 .WithPgPublications($"{name}_pub")
-                .WithPgReplicationSlot($"{name}_slot"));
+                .WithPgReplicationSlot($"{name}_slot")
+                // the slot moves past the last change only with the next message, which on an idle database is this one
+                .WithIdleWalMessageInterval(TimeSpan.FromMilliseconds(200)));
 
             var messages = new List<string>();
 
