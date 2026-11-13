@@ -60,7 +60,8 @@ namespace PgOutput2Json.RabbitMq
                 partitionKey = msg.KeyKolValue.ToString();
             }
 
-            return partitionKey != string.Empty ? Math.Abs(partitionKey.GetHashCode()) % partitionCount : 0;
+            // murmur2 - stable across restarts, unlike string.GetHashCode()
+            return partitionKey != string.Empty ? (MurmurHash2.Hash(partitionKey) & 0x7fffffff) % partitionCount : 0;
         }
 
         public override async Task ConfirmAsync(CancellationToken token)
