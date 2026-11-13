@@ -165,7 +165,7 @@ namespace PgOutput2Json.DynamoDb
                     .ConfigureAwait(false);
             }
 
-            if (changeType != "d") // delete is andled above with keyElement handling
+            if (changeType != "D") // a delete has no row, it is handled above with the key
             {
                 var itemAttributes = ComposeItemAttributes(columns, rowElement, out var hasToastedValues);
 
