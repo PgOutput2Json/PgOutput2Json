@@ -157,6 +157,28 @@ Once the service is running, any changes made to the tables listed in `my_public
 
 > **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.
 
+## Delivery Guarantees
+
+Messages are confirmed to PostgreSQL in batches, and only after Kafka has acknowledged every message in the batch. If the batch fails, it is not confirmed: the publisher reconnects and PostgreSQL replays the unconfirmed changes.
+
+With deduplication enabled (the default), each message is published to Kafka exactly once. On reconnect, the publisher reads the last message of every partition and skips everything up to it. That is correct only if every partition holds an unbroken, ordered prefix of the published messages: if a message is in the topic, all earlier messages for that partition are too. So, unless you set them yourself, the publisher configures the producer with:
+
+| Setting | Value | Why |
+|---|---|---|
+| `EnableIdempotence` | `true` | The broker rejects out-of-sequence writes, so retries cannot reorder or duplicate messages. |
+| `MessageTimeoutMs` | `0` (infinite) | librdkafka times out each message separately. A timed-out message is skipped while later ones are still delivered, which leaves a gap. |
+| `EnableGaplessGuarantee` | `true` | Any other error that could leave a gap stops the producer with a fatal error instead. |
+
+The time limit applies to the whole batch instead, through `KafkaPublisherOptions.ConfirmTimeout` (5 minutes by default). While Kafka is unavailable, the confirm waits and logs a warning every 30 seconds. When the timeout expires, the producer is discarded and the listener reconnects. The whole producer is discarded, never single messages, so no gap can form.
+
+Things to be aware of:
+
+- Idempotence requires `acks=all`, at most 5 in-flight requests and retries above 0. If you set an incompatible value explicitly (for example `Acks = Acks.Leader`), the producer fails to start.
+- If you change any of the three settings above, a failed delivery can leave a gap, and the publisher logs a warning on start.
+- If a message is permanently rejected (for example, it is larger than the topic's `max.message.bytes`), the publisher keeps failing on that message until the problem is fixed. Skipping it would break the guarantee.
+- While the confirm waits, no further changes are read, and PostgreSQL retains the WAL for the replication slot until the batch is confirmed. A long Kafka outage therefore grows `pg_wal` on the database server.
+- Rare duplicates are still possible. A request the discarded producer already handed to the operating system can reach the broker after a network outage ends. Consumers that need strict exactly-once can filter duplicates on the `w`/`n` fields.
+
 ## Working with Permanent Replication Slots
 
 If you want to capture changes made while the worker is stopped, you need a permanent replication slot. 

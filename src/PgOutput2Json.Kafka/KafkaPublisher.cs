@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -162,12 +163,57 @@ namespace PgOutput2Json.Kafka
 
         public override Task ConfirmAsync(CancellationToken token)
         {
-            _producer?.Flush(token);
+            if (_producer != null)
+            {
+                WaitForDelivery(_producer, token);
+            }
 
             // Flush returns normally even if some deliveries failed - they are reported only to the handler
             ThrowIfDeliveryFailed();
 
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Waits until Kafka acknowledged every message published since the last confirm. The per-message timeout
+        /// is disabled by default, so the deadline applies to the batch as a whole: when it expires the confirm fails
+        /// and the producer is discarded - never single messages, which would leave a gap in a partition.
+        /// </summary>
+        private void WaitForDelivery(IProducer<string, string> producer, CancellationToken token)
+        {
+            var timeout = _options.ConfirmTimeout;
+            var waitForever = timeout <= TimeSpan.Zero || timeout == Timeout.InfiniteTimeSpan;
+
+            var stopwatch = Stopwatch.StartNew();
+            var nextWarning = _confirmWarningInterval;
+
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+
+                // short slices keep the wait cancellable and let the progress be logged
+                var outstanding = producer.Flush(_flushSlice);
+
+                if (outstanding == 0) return;
+
+                // a failed delivery fails the confirm anyway, no point waiting for the rest of the batch
+                ThrowIfDeliveryFailed();
+
+                var elapsed = stopwatch.Elapsed;
+
+                if (!waitForever && elapsed >= timeout)
+                {
+                    throw new TimeoutException($"Kafka did not acknowledge {outstanding} messages for topic {_options.Topic} within {timeout}");
+                }
+
+                if (elapsed >= nextWarning)
+                {
+                    _logger?.LogWarning("Waiting for Kafka to acknowledge {Outstanding} messages for topic {Topic} for {Elapsed}",
+                        outstanding, _options.Topic, elapsed);
+
+                    nextWarning += _confirmWarningInterval;
+                }
+            }
         }
 
         private void ThrowIfDeliveryFailed()
@@ -368,7 +414,9 @@ namespace PgOutput2Json.Kafka
 
             _logger?.LogInformation("Creating Kafka producer");
 
-            _producer = new ProducerBuilder<string, string>(_options.ProducerConfig)
+            var config = CreateProducerConfig();
+
+            _producer = new ProducerBuilder<string, string>(config)
                 .SetErrorHandler((_, e) => _logger?.LogError("Kafka producer error: IsFatal={IsFatal}, Code={Code}, Reason={Reason}", e.IsFatal, e.Code, e.Reason))
                 .SetLogHandler((_, e) => _logger?.LogInformation("Kafka producer log: Level={Level}, Message={Message}", e.Level, e.Message))
                 .Build();
@@ -377,6 +425,50 @@ namespace PgOutput2Json.Kafka
 
             return _producer;
         }
+
+        /// <summary>
+        /// Deduplication reads the last message of every partition and treats everything before it as published.
+        /// That holds only if each partition receives an unbroken, ordered prefix of the published messages:
+        /// - idempotence: the broker rejects out-of-sequence writes, so retries cannot reorder or duplicate
+        /// - no per-message timeout: a timed-out message is skipped while later ones are still delivered (a gap)
+        /// - gap-less guarantee: any other error that could leave a gap stops the producer with a fatal error
+        /// Explicit user settings are kept - librdkafka refuses to start with ones incompatible with idempotence.
+        /// The user's config object is copied, not modified.
+        /// </summary>
+        private ProducerConfig CreateProducerConfig()
+        {
+            var settings = _options.ProducerConfig.ToDictionary(kv => kv.Key, kv => kv.Value);
+            var config = new ProducerConfig(settings);
+
+            config.EnableIdempotence ??= true;
+
+            if (config.EnableIdempotence == true)
+            {
+                config.EnableGaplessGuarantee ??= true;
+            }
+
+            // delivery.timeout.ms is an alias of message.timeout.ms, without a typed property
+            settings.TryGetValue("delivery.timeout.ms", out var deliveryTimeout);
+
+            if (config.MessageTimeoutMs == null && deliveryTimeout == null)
+            {
+                config.MessageTimeoutMs = 0;
+            }
+
+            var messageTimeout = config.MessageTimeoutMs?.ToString() ?? deliveryTimeout;
+
+            if (_useDeduplication && (config.EnableIdempotence != true || config.EnableGaplessGuarantee != true || messageTimeout != "0"))
+            {
+                _logger?.LogWarning("Kafka producer for topic {Topic} runs with EnableIdempotence={EnableIdempotence}, EnableGaplessGuarantee={EnableGaplessGuarantee}, MessageTimeoutMs={MessageTimeoutMs}. " +
+                    "A failed delivery can leave a gap in a partition, and deduplication may then skip messages that were never published.",
+                    _options.Topic, config.EnableIdempotence, config.EnableGaplessGuarantee, messageTimeout);
+            }
+
+            return config;
+        }
+
+        private static readonly TimeSpan _flushSlice = TimeSpan.FromMilliseconds(500);
+        private static readonly TimeSpan _confirmWarningInterval = TimeSpan.FromSeconds(30);
 
         private IProducer<string, string>? _producer;
 
