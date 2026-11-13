@@ -11,7 +11,7 @@ using Npgsql;
 
 namespace PgOutput2Json.IntegrationTests
 {
-    internal sealed record PublishedMessage(string Json, string Table, string Key, string PartitionKey, ulong TxFinalLsn, ulong MessageNo);
+    internal sealed record PublishedMessage(string Json, string Table, string Key, string PartitionKey, ulong TxFinalLsn, ulong MessageNo, bool IsTableSync = false);
 
     internal static class Db
     {
@@ -131,6 +131,11 @@ namespace PgOutput2Json.IntegrationTests
 
         public List<PublishedMessage> Messages => _messages.ToList();
 
+        /// <summary>
+        /// Slows down a table sync, so that the main stream gets ahead of it.
+        /// </summary>
+        public TimeSpan SyncConfirmDelay { get; set; }
+
         public (ulong TxFinalLsn, ulong MessageNo) LastConfirmed
         {
             get { lock (_messages) return _lastConfirmed; }
@@ -144,6 +149,7 @@ namespace PgOutput2Json.IntegrationTests
         private sealed class Publisher(CollectingPublisherFactory owner) : MessagePublisher
         {
             private (ulong, ulong) _lastPublished;
+            private bool _hasSyncMessages;
 
             public override Task PublishAsync(JsonMessage message, CancellationToken token)
             {
@@ -153,21 +159,34 @@ namespace PgOutput2Json.IntegrationTests
                     message.KeyKolValue.ToString(),
                     message.PartitionKolValue.ToString(),
                     message.TxFinalLsn,
-                    message.MessageNo));
+                    message.MessageNo,
+                    message.IsTableSync));
 
-                _lastPublished = (message.TxFinalLsn, message.MessageNo);
+                // the messages of a table sync must not move the position
+                if (message.IsTableSync)
+                {
+                    _hasSyncMessages = true;
+                }
+                else
+                {
+                    _lastPublished = (message.TxFinalLsn, message.MessageNo);
+                }
 
                 return Task.CompletedTask;
             }
 
-            public override Task ConfirmAsync(CancellationToken token)
+            public override async Task ConfirmAsync(CancellationToken token)
             {
-                // copy rows carry no position (0, 0) and must not move the confirmed one back
-                if (_lastPublished == default) return Task.CompletedTask;
+                if (_hasSyncMessages && owner.SyncConfirmDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(owner.SyncConfirmDelay, token);
+                }
+
+                _hasSyncMessages = false;
+
+                if (_lastPublished == default) return;
 
                 lock (owner._messages) owner._lastConfirmed = _lastPublished;
-
-                return Task.CompletedTask;
             }
 
             public override Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
@@ -192,6 +211,8 @@ namespace PgOutput2Json.IntegrationTests
         {
             return _entries.Any(x => x.Level == level && x.Text.Contains(text, StringComparison.Ordinal));
         }
+
+        public override string ToString() => string.Join(Environment.NewLine, _entries.Select(x => $"{x.Level}: {x.Text}"));
 
         public void AddProvider(ILoggerProvider provider)
         {

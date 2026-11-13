@@ -63,19 +63,6 @@ namespace PgOutput2Json
             return this;
         }
 
-        /// <summary>
-        /// Specifies which table columns to are to be used for ordering during the initial data copy, AND for resuming an interrupted initial data copy.
-        /// If a table is not specified at all, then no ordering will be used during the initial data copy, and resuming will not be supported.
-        /// </summary>
-        /// <param name="tableName"></param>
-        /// <param name="orderedKeyColumns"></param>
-        /// <returns></returns>
-        public PgOutput2JsonBuilder WithPgOrderedKeyColumns(string tableName, params string[] orderedKeyColumns)
-        {
-            _listenerOptions.OrderedKeys[tableName] = orderedKeyColumns;
-            return this;
-        }
-
         public PgOutput2JsonBuilder WithMessagePublisherFactory(IMessagePublisherFactory messagePublisherFactory)
         {
             _messagePublisherFactory = messagePublisherFactory;
@@ -107,11 +94,15 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 1, int copyDataBatchSize = 0)
+        /// <summary>
+        /// Copies the existing rows of the published tables, each table once per replication slot.
+        /// </summary>
+        /// <param name="copyData">Turns the copy on or off.</param>
+        /// <param name="maxParallelJobs">The number of tables synced at the same time. Each one uses a replication slot and two connections.</param>
+        public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 2)
         {
             _listenerOptions.CopyData = copyData;
             _listenerOptions.MaxParallelCopyJobs = maxParallelJobs;
-            _listenerOptions.CopyDataBatchSize = copyDataBatchSize;
             return this;
         }
 

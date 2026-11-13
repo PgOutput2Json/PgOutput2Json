@@ -37,8 +37,12 @@ namespace PgOutput2Json.Sqlite
 
             await ApplyChangeAsync(connection, msg.TableName.ToString(), doc, token).ConfigureAwait(false);
 
-            _lastWalEnd = msg.TxFinalLsn;
-            _lastMessageNo = msg.MessageNo;
+            // the messages of a table sync are behind the main stream - they must not move the saved position
+            if (!msg.IsTableSync)
+            {
+                _lastWalEnd = msg.TxFinalLsn;
+                _lastMessageNo = msg.MessageNo;
+            }
         }
 
         private async Task ApplyChangeAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
@@ -60,6 +64,14 @@ namespace PgOutput2Json.Sqlite
             {
                 await connection.InsertAsync(table.Commands, rowElement, ignoreConflicts: true, token).ConfigureAwait(false);
             }
+            else if (changeType == "C")
+            {
+                // a copied row replaces what an earlier, failed copy may have left
+                if (await connection.InsertAsync(table.Commands, rowElement, ignoreConflicts: true, token).ConfigureAwait(false) == 0)
+                {
+                    await connection.UpdateAsync(table.Commands, rowElement, token).ConfigureAwait(false);
+                }
+            }
             else if (changeType == "U")
             {
                 await UpdateRowAsync(connection, table, rowElement, token).ConfigureAwait(false);
@@ -76,7 +88,7 @@ namespace PgOutput2Json.Sqlite
 
             try
             {
-                // data exporter messages have no LSN info - they must not overwrite the replication position
+                // nothing to save if the batch had only table sync messages
                 if (_connection != null && (_lastWalEnd != 0 || _lastMessageNo != 0))
                 {
                     await _connection.SetWalEndAsync(_lastWalEnd, _lastMessageNo, token).ConfigureAwait(false);

@@ -41,21 +41,18 @@ namespace PgOutput2Json
         public Dictionary<string, IReadOnlyList<string>> PartitionKeyColumns { get; internal set; } = [];
 
         public Dictionary<string, IReadOnlyList<string>> IncludedColumns { get; internal set; } = [];
-        public Dictionary<string, IReadOnlyList<string>> OrderedKeys { get; internal set; } = [];
 
         /// <summary>
-        /// Push the existing data to the publisher. Default is false.
-        /// The publisher must support storing the last WAL LSN, because it is used to decide weather to initiate the copy or not.
-        /// The copy is initiated only if the last published WAL LSN == 0.
+        /// Copy the existing rows of the published tables to the publisher. Default is false.
+        /// Each table is copied once per replication slot, from a snapshot, while the other tables are streamed;
+        /// the table's own changes are published after its copy. The progress is kept in the source database.
         /// </summary>
         public bool CopyData { get; internal set; }
 
         /// <summary>
-        /// This is only used if initial data copy is enabled AND ordered key columns are provided
+        /// The number of tables synced at the same time. Each one uses a replication slot and two connections.
         /// </summary>
-        public int CopyDataBatchSize { get; internal set; }
-
-        public int MaxParallelCopyJobs { get; internal set; } = 1;
+        public int MaxParallelCopyJobs { get; internal set; } = 2;
 
         /// <summary>
         /// Interval at which pg_logical_emit_message is called to prevent restart_lsn from lagging

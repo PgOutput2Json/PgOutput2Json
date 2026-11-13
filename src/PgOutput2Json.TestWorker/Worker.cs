@@ -41,8 +41,7 @@ namespace PgOutput2Json.TestWorker
                 .WithPgReplicationSlot("test_slot")
                 .WithBatchSize(10_000) // default is 100
                 //.WithPgColumns("public.test_table", "id", "first_name") // optional, use it to filter the columns written to JSON
-                //.WithPgOrderedKeyColumns("public.test_table", "id") // used for initial data copy, to support ordering and resuming an interrupted initial data copy process
-                .WithInitialDataCopy(true) // pushes the existing data to the publisher - a separate schema named pgoutput2json must be created in the source db (to track the progress)
+                .WithInitialDataCopy(true) // pushes the existing data to the publisher - the progress is tracked in the pgoutput2json schema of the source db
                 //.WithPartitionKeyFields("public.test_table", "last_name")
                 .WithJsonOptions(options =>
                 {

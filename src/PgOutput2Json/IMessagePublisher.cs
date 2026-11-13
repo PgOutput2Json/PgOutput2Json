@@ -13,7 +13,8 @@ namespace PgOutput2Json
         /// Returns the position ("w", "n") of the last change the publisher stored, so the listener can skip
         /// the changes PostgreSQL replays after a reconnect. Only publishers that save the position together
         /// with the data implement this. The default (0, 0) means nothing is skipped: delivery is at-least-once
-        /// and consumers deduplicate.
+        /// and consumers deduplicate. A publisher that implements this must not save the position of the
+        /// messages marked with <see cref="JsonMessage.IsTableSync"/>.
         /// </summary>
         Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {

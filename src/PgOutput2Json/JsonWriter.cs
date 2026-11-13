@@ -15,6 +15,14 @@ namespace PgOutput2Json
         public ulong TxFinalLsn { get; internal set; }
         public ulong MessageNo { get; internal set; }
 
+        /// <summary>
+        /// True for the messages of a table's initial sync: the copied rows, and the changes a sync worker
+        /// publishes until the table is handed over to the main stream. They are behind the main stream, so
+        /// a publisher that saves its position (see <see cref="IMessagePublisher.GetLastPublishedWalSeqAsync"/>)
+        /// must not save the position of these messages.
+        /// </summary>
+        public bool IsTableSync { get; internal set; }
+
         public StringBuilder Json { get; internal set; } = new(256);
         public StringBuilder TableName { get; internal set; } = new(256); 
         public StringBuilder KeyKolValue { get; internal set; } = new(256);
@@ -24,6 +32,7 @@ namespace PgOutput2Json
         {
             TxFinalLsn = 0;
             MessageNo = 0;
+            IsTableSync = false;
 
             Json.Clear(); 
             TableName.Clear(); 
