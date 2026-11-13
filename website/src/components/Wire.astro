@@ -1,0 +1,90 @@
+---
+// The hero's illustration: a statement committed in PostgreSQL, and the JSON message it becomes.
+// The tabs switch between the three change types; without JavaScript the insert is shown.
+const changes = [
+  {
+    id: 'insert',
+    label: 'INSERT',
+    sql: "INSERT INTO orders (id, status, total)\nVALUES (42, 'new', 19.90);",
+    json: [
+      ['c', '"I"', 'change type'],
+      ['w', '2485645760', 'transaction final LSN'],
+      ['n', '1', 'message number'],
+      ['r', '{ "id": 42, "status": "new", "total": 19.90 }', ''],
+    ],
+  },
+  {
+    id: 'update',
+    label: 'UPDATE',
+    sql: "UPDATE orders SET status = 'paid'\nWHERE id = 42;",
+    json: [
+      ['c', '"U"', 'change type'],
+      ['w', '2485645912', 'transaction final LSN'],
+      ['n', '1', 'message number'],
+      ['r', '{ "id": 42, "status": "paid", "total": 19.90 }', ''],
+    ],
+  },
+  {
+    id: 'delete',
+    label: 'DELETE',
+    sql: 'DELETE FROM orders\nWHERE id = 42;',
+    json: [
+      ['c', '"D"', 'change type'],
+      ['w', '2485646048', 'transaction final LSN'],
+      ['n', '1', 'message number'],
+      ['k', '{ "id": 42 }', ''],
+    ],
+  },
+];
+---
+
+<div class="wire" data-wire>
+  <div class="wire-tabs" role="tablist" aria-label="Change type">
+    {changes.map((change, i) => (
+      <button type="button" role="tab" id={`wire-tab-${change.id}`} aria-controls={`wire-panel-${change.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+        {change.label}
+      </button>
+    ))}
+  </div>
+
+  {changes.map((change, i) => (
+    <div class="wire-panel" role="tabpanel" id={`wire-panel-${change.id}`} aria-labelledby={`wire-tab-${change.id}`} hidden={i !== 0}>
+      <div class="wire-box">
+        <p class="wire-cap"><span class="dot dot-in"></span>PostgreSQL, committed</p>
+        <pre class="wire-sql"><code>{change.sql}</code></pre>
+      </div>
+      <div class="wire-link" aria-hidden="true"><span>pgoutput</span></div>
+      <div class="wire-box wire-out">
+        <p class="wire-cap"><span class="dot dot-out"></span>Your handler, or a broker</p>
+        <pre class="wire-json"><code>{'{'}
+{change.json.map(([key, value, note], j) => (
+  <span class="wire-line">  <span class="j-key">"{key}"</span>: <span class="j-val">{value}</span>{j < change.json.length - 1 ? ',' : ''}{note && <span class="j-note">{note}</span>}{'\n'}</span>
+))}{'}'}</code></pre>
+      </div>
+    </div>
+  ))}
+</div>
+
+<script is:inline>
+  (() => {
+    const root = document.querySelector('[data-wire]');
+    if (!root) return;
+    const tabs = [...root.querySelectorAll('[role="tab"]')];
+    const panels = [...root.querySelectorAll('[role="tabpanel"]')];
+    const select = (index, focus) => {
+      tabs.forEach((tab, i) => {
+        tab.setAttribute('aria-selected', i === index ? 'true' : 'false');
+        tab.tabIndex = i === index ? 0 : -1;
+        panels[i].hidden = i !== index;
+      });
+      if (focus) tabs[index].focus();
+    };
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => select(i, false));
+      tab.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowRight') select((i + 1) % tabs.length, true);
+        if (event.key === 'ArrowLeft') select((i + tabs.length - 1) % tabs.length, true);
+      });
+    });
+  })();
+</script>

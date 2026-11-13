@@ -21,6 +21,8 @@ dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.cs
 dotnet run --project src/PgOutput2Json.TestWorker/PgOutput2Json.TestWorker.csproj
 ```
 
+The website (landing page and docs, Astro + Starlight) is in `website/` and is deployed to GitHub Pages by `.github/workflows/website.yml`. Its docs pages were split from `README.md`: when the README or an adapter README changes, update the matching page in `website/src/content/docs/docs/`. See `website/README.md`.
+
 The core library targets `net8.0`, `net9.0`, and `net10.0`. `TreatWarningsAsErrors=True` is set — all warnings must be resolved.
 
 ## Architecture

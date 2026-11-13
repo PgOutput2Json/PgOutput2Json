@@ -1,0 +1,74 @@
+/*
+ * The colors and fonts shared by the docs (Starlight's variables) and the landing page: the logo's blue as the accent, an amber
+ * for the changed values in the illustrations, and neutral grays.
+ * Starlight's dark theme is the default, :root[data-theme='light'] the light one.
+ */
+:root {
+  /* 500 is the logo's blue */
+  --pg-blue-100: #dff2fc;
+  --pg-blue-200: #b5e2f8;
+  --pg-blue-300: #7dcbf2;
+  --pg-blue-400: #45b4ea;
+  --pg-blue-500: #1ba1e2;
+  --pg-blue-600: #0f82bd;
+  --pg-blue-700: #0c6694;
+  --pg-blue-800: #0c4f72;
+  --pg-blue-900: #0b3a54;
+  --pg-amber: #f2a93b;
+  --pg-amber-ink: #9a5b00;
+
+  /* the font variables come from the fonts in astro.config.mjs, with their fallbacks */
+  --pg-font-sans: var(--font-inter);
+  --pg-font-display: var(--font-display);
+  --pg-font-mono: var(--font-mono);
+
+  --sl-font: var(--pg-font-sans);
+  --sl-font-mono: var(--pg-font-mono);
+
+  /* dark */
+  --sl-color-accent-low: #0b2a3d;
+  --sl-color-accent: var(--pg-blue-500);
+  --sl-color-accent-high: var(--pg-blue-200);
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e6e8eb;
+  --sl-color-gray-2: #c5c9cf;
+  --sl-color-gray-3: #969ca6;
+  --sl-color-gray-4: #6b727d;
+  --sl-color-gray-5: #2c323b;
+  --sl-color-gray-6: #1a1e25;
+  --sl-color-black: #0d1014;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: var(--pg-blue-100);
+  --sl-color-accent: var(--pg-blue-700);
+  --sl-color-accent-high: var(--pg-blue-900);
+  --sl-color-white: #11151a;
+  --sl-color-gray-1: #1f252d;
+  --sl-color-gray-2: #353c46;
+  --sl-color-gray-3: #4d5560;
+  --sl-color-gray-4: #6b727d;
+  --sl-color-gray-5: #cdd1d6;
+  --sl-color-gray-6: #eceef0;
+  --sl-color-gray-7: #f6f7f8;
+  --sl-color-black: #ffffff;
+}
+
+/* no ligatures in code: => and != stay as typed */
+code, pre, kbd, .expressive-code {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+}
+
+.sl-markdown-content :is(h1, h2, h3),
+h1#_top,
+.site-title {
+  font-family: var(--pg-font-display);
+  letter-spacing: -0.01em;
+}
+
+/* wide tables (the configuration reference) scroll inside their own box */
+.sl-markdown-content table {
+  display: block;
+  overflow-x: auto;
+}

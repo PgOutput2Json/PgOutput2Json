@@ -1,0 +1,196 @@
+---
+import Landing from '../layouts/Landing.astro';
+import Wire from '../components/Wire.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+import { DESCRIPTION, GITHUB_URL } from '../../site.config.mjs';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const doc = (slug: string) => `${base}docs/${slug}/`;
+
+const outputs = [
+  { name: 'Your .NET code', pkg: 'PgOutput2Json', note: 'A delegate per change', href: doc('getting-started') },
+  { name: 'Kafka', pkg: 'PgOutput2Json.Kafka', note: 'Topics, idempotent producer', href: doc('outputs/kafka') },
+  { name: 'RabbitMQ', pkg: 'PgOutput2Json.RabbitMq', note: 'Topic exchange', href: doc('outputs/rabbitmq') },
+  { name: 'RabbitMQ Streams', pkg: 'PgOutput2Json.RabbitMqStreams', note: 'Streams and super streams', href: doc('outputs/rabbitmq-streams') },
+  { name: 'Redis', pkg: 'PgOutput2Json.Redis', note: 'Streams or Pub/Sub', href: doc('outputs/redis') },
+  { name: 'SQLite', pkg: 'PgOutput2Json.Sqlite', note: 'Tables kept in sync', href: doc('outputs/sqlite') },
+  { name: 'MongoDB', pkg: 'PgOutput2Json.MongoDb', note: 'Collections kept in sync', href: doc('outputs/mongodb') },
+  { name: 'Amazon Kinesis', pkg: 'PgOutput2Json.Kinesis', note: 'Data streams', href: doc('outputs/kinesis') },
+  { name: 'Amazon DynamoDB', pkg: 'PgOutput2Json.DynamoDb', note: 'Tables kept in sync', href: doc('outputs/dynamodb') },
+  { name: 'Azure Event Hubs', pkg: 'PgOutput2Json.AzureEventHubs', note: 'Partitioned events', href: doc('outputs/event-hubs') },
+  { name: 'Webhooks', pkg: 'PgOutput2Json.Webhooks', note: 'Batched HTTP requests', href: doc('outputs/webhooks') },
+  { name: 'Something else', pkg: 'IMessagePublisherFactory', note: 'Write your own output', href: doc('configuration') },
+];
+
+const facts = [
+  {
+    title: 'Nothing to install in PostgreSQL',
+    text: 'It reads pgoutput, the logical decoding plugin that ships with PostgreSQL 10 and later. You need wal_level = logical, a publication and a replication user.',
+    href: doc('getting-started'),
+    link: 'Getting started',
+  },
+  {
+    title: 'Replayed changes are skipped',
+    text: 'A slot can replay changes after a crash or a reconnect. Every message carries a key, the transaction LSN and a counter, and the library skips what the output already has.',
+    href: doc('deduplication'),
+    link: 'Deduplication',
+  },
+  {
+    title: 'Confirmed only after the output has it',
+    text: 'Changes are published in batches. A batch is confirmed to PostgreSQL after the output acknowledged it, so a failure replays the batch.',
+    href: doc('configuration'),
+    link: 'Configuration',
+  },
+  {
+    title: 'Changes survive a restart',
+    text: 'With a permanent replication slot, PostgreSQL keeps the changes made while your worker is stopped and sends them when it connects again.',
+    href: doc('replication-slots'),
+    link: 'Replication slots',
+  },
+  {
+    title: 'Stable routing for partitioned outputs',
+    text: 'Choose the columns to partition by. Inserts, updates and deletes of a row go to the same Kafka partition, super stream partition or Event Hubs partition.',
+    href: doc('change-events'),
+    link: 'Message key',
+  },
+  {
+    title: 'Compact mode',
+    text: 'Rows as arrays of values, with the column names sent once per table. The SQLite, MongoDB and DynamoDB outputs use it to keep a copy of your tables.',
+    href: doc('change-events'),
+    link: 'Change events',
+  },
+];
+
+const uses = [
+  'Background tasks triggered by inserts and updates',
+  'Application caches updated with low latency',
+  'Asynchronous logging to a file or another database',
+  'Real-time aggregation',
+  'Lightweight ETL into a data warehouse',
+];
+
+const sqlSetup = `
+CREATE USER pgoutput2json WITH
+    PASSWORD '_your_password_here_'
+    REPLICATION;
+
+CREATE PUBLICATION my_publication
+    FOR TABLE my_table1, my_table2
+    WITH (publish = 'insert, update, delete');
+`;
+
+const worker = `
+using var pgOutput2Json = PgOutput2JsonBuilder.Create()
+    .WithLoggerFactory(_loggerFactory)
+    .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
+    .WithPgPublications("my_publication")
+    .WithMessageHandler((json, table, key, partition) =>
+    {
+        Console.WriteLine($"{table}: {json}");
+        return Task.FromResult(true);
+    })
+    .Build();
+
+await pgOutput2Json.StartAsync(stoppingToken);
+`;
+---
+
+<Landing title="PgOutput2Json: PostgreSQL changes as JSON, for .NET" description={DESCRIPTION}>
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="label">.NET library · PostgreSQL logical replication</p>
+        <h1>Every committed row change, <em>as JSON</em>.</h1>
+        <p class="lead">
+          PgOutput2Json reads PostgreSQL's replication stream and hands each insert, update and delete to your .NET code, or publishes
+          it to Kafka, RabbitMQ, Redis and other outputs, shortly after the transaction commits.
+        </p>
+        <div class="actions">
+          <a class="btn btn-solid" href={doc('getting-started')}>Get started</a>
+          <a class="btn btn-line" href={GITHUB_URL}>Source on GitHub</a>
+        </div>
+        <p class="install"><span aria-hidden="true">$</span> dotnet add package PgOutput2Json</p>
+      </div>
+      <Wire />
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="outputs-title">
+    <div class="wrap">
+      <p class="label">Outputs</p>
+      <h2 class="h-section" id="outputs-title">One stream in, eleven places to send it</h2>
+      <p class="lead">Handle the messages in your own code, or add a package and let it publish them. Each output has its own page in the docs.</p>
+      <ul class="outputs">
+        {outputs.map((output) => (
+          <li>
+            <a href={output.href}>
+              <strong>{output.name}</strong>
+              <span class="out-note">{output.note}</span>
+              <code>{output.pkg}</code>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  <section class="band band-tint" aria-labelledby="facts-title">
+    <div class="wrap">
+      <p class="label">How it behaves</p>
+      <h2 class="h-section" id="facts-title">Built for the cases where a change must not be lost</h2>
+      <ol class="facts">
+        {facts.map((fact, i) => (
+          <li>
+            <span class="fact-no" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+            <h3>{fact.title}</h3>
+            <p>{fact.text}</p>
+            <a href={fact.href}>{fact.link}<span aria-hidden="true"> →</span></a>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="start-title">
+    <div class="wrap start">
+      <div class="start-copy">
+        <p class="label">Quick start</p>
+        <h2 class="h-section" id="start-title">A publication, a package, a handler</h2>
+        <p class="lead">Set <code>wal_level = logical</code> in <code>postgresql.conf</code>, then:</p>
+        <ol class="steps">
+          <li>Create a replication user and a publication for the tables you want.</li>
+          <li>Add the <code>PgOutput2Json</code> package to a .NET worker service.</li>
+          <li>Build the listener with a handler, or with one of the outputs, and start it.</li>
+        </ol>
+        <a class="btn btn-line" href={doc('getting-started')}>The full walkthrough</a>
+      </div>
+      <div class="start-code">
+        <CodeBlock code={sqlSetup} lang="sql" label="SQL: the replication user and the publication" />
+        <CodeBlock code={worker} lang="csharp" label="C#: the listener with a message handler" />
+      </div>
+    </div>
+  </section>
+
+  <section class="band band-tint" aria-labelledby="uses-title">
+    <div class="wrap uses">
+      <div>
+        <p class="label">Use it for</p>
+        <h2 class="h-section" id="uses-title">Reacting to data, not polling for it</h2>
+      </div>
+      <ul>
+        {uses.map((use) => <li>{use}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <section class="band closing">
+    <div class="wrap">
+      <h2 class="h-section">Start with one table</h2>
+      <p class="lead">The library is under active development and usable for testing and early integration. It targets .NET 8, 9 and 10.</p>
+      <div class="actions">
+        <a class="btn btn-solid" href={doc('getting-started')}>Read the docs</a>
+        <a class="btn btn-line" href={GITHUB_URL}>Star it on GitHub</a>
+      </div>
+    </div>
+  </section>
+</Landing>
