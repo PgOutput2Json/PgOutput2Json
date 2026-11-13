@@ -54,6 +54,19 @@ The change events JSON format:
 }
 ```
 
+### Message Key
+
+Besides the JSON, every message has a key: the values of the table's key columns, e.g. `[1]`. Depending on the output, it is the message key (Kafka), the routing or partition key (RabbitMQ, Redis, Kinesis, and Kafka without partition-key columns), or the message id (Azure Event Hubs, RabbitMQ Streams).
+
+The key columns are the **replica identity** columns PostgreSQL sends with the change. The replication protocol does not carry the primary key, and the library does not query the database while streaming, so:
+
+- `REPLICA IDENTITY DEFAULT`: the primary key, stable for all changes to a row.
+- `REPLICA IDENTITY USING INDEX`: the index columns.
+- `REPLICA IDENTITY FULL`: **all columns**, so the key changes with every update. Kafka log compaction, and routing by key, then treat each version of a row as a different row. Partition-key columns (`WithPartitionKeyFields`) keep the routing stable, but the Kafka message key still changes.
+- `REPLICA IDENTITY NOTHING`: empty.
+
+If the message key matters, use `DEFAULT`, or `USING INDEX` on a stable unique key. The initial data copy reads the primary key from the catalog, so for `FULL`, `NOTHING` and `USING INDEX` tables its keys differ from those of the streamed changes.
+
 ## 🔁 Deduplication
 
 The current position of a replication slot is persisted only at checkpoints, so after a crash or a reconnect the slot may replay changes that were already consumed. To make replays harmless, every published message carries a deduplication key — the transaction final LSN (`"w"`) plus the message number within that transaction (`"n"`).
