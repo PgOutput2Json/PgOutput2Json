@@ -100,9 +100,51 @@ namespace PgOutput2Json
             return WriteSimpleArray(jsonBuilder, value, WriteNumber);
         }
 
+        /// <summary>
+        /// Writes a bytea array, e.g. {"\\x01",NULL,"\\xff"}: PostgreSQL quotes the elements, because of the backslash.
+        /// </summary>
         public static int WriteArrayOfByte(StringBuilder jsonBuilder, string value)
         {
-            return WriteSimpleArray(jsonBuilder, value, WriteByte);
+            var hash = 0;
+            var inString = false;
+
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+
+                if (c == '"')
+                {
+                    inString = !inString;
+                    jsonBuilder.Append('"');
+                }
+                else if (inString)
+                {
+                    // the element is \\x followed by the hex digits
+                    if (c == '\\' || c == 'x') continue;
+
+                    hash ^= c;
+                    jsonBuilder.Append(c);
+                }
+                else if (c == '{')
+                {
+                    jsonBuilder.Append('[');
+                }
+                else if (c == '}')
+                {
+                    jsonBuilder.Append(']');
+                }
+                else if (c == ',')
+                {
+                    jsonBuilder.Append(',');
+                }
+                else if (c == 'N')
+                {
+                    jsonBuilder.Append("null");
+                    i += 3; // NULL
+                }
+            }
+
+            return hash;
         }
 
         public static int WriteArrayOfBoolean(StringBuilder jsonBuilder, string value)
@@ -110,72 +152,74 @@ namespace PgOutput2Json
             return WriteSimpleArray(jsonBuilder, value, WriteBoolean);
         }
 
+        /// <summary>
+        /// Writes a text array, e.g. {a,"b,c",NULL,""}. PostgreSQL quotes an element that is empty, equals NULL,
+        /// or contains a special character, so an unquoted NULL is a null and everything else is a string.
+        /// </summary>
         public static int WriteArrayOfText(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
         {
             var hash = 0;
             var inString = false;
             var escaped = false;
-            var inValue = false;
+            var unquotedStart = -1;
 
             for (var i = 0; i < value.Length; i++)
             {
                 var c = value[i];
 
-                if (escaped)
+                if (inString)
                 {
-                    escaped = false;
+                    if (escaped)
+                    {
+                        escaped = false;
+                    }
+                    else if (c == '\\')
+                    {
+                        escaped = true;
+                        continue;
+                    }
+                    else if (c == '"')
+                    {
+                        inString = false;
+                        jsonBuilder.Append('"');
+                        continue;
+                    }
 
                     hash ^= c;
                     EscapeChar(jsonBuilder, c);
                     continue;
                 }
 
-                if (c == '\\')
-                {
-                    escaped = true;
-                    continue;
-                }
-
-                if (!inString && c == '\"')
+                if (c == '"')
                 {
                     inString = true;
+                    jsonBuilder.Append('"');
                     continue;
                 }
 
-                if (inString && c == '\"')
+                if (c == '{' || c == '}' || c == ',')
                 {
-                    inString = false;
-                    continue;
-                }
-
-                if (!inString)
-                {
-                    if (c == '{')
+                    if (unquotedStart >= 0)
                     {
-                        jsonBuilder.Append('[');
-                        continue;
-                    }
+                        var element = value[unquotedStart..i];
 
-                    if (c == '}' || c == ',')
-                    {
-                        if (inValue)
+                        if (element.SequenceEqual("NULL"))
                         {
-                            inValue = false;
-                            jsonBuilder.Append('\"');
+                            jsonBuilder.Append("null");
                         }
-                        jsonBuilder.Append(c == '}' ? ']' : c);
-                        continue;
+                        else
+                        {
+                            hash ^= WriteText(jsonBuilder, element);
+                        }
+
+                        unquotedStart = -1;
                     }
+
+                    jsonBuilder.Append(c == '{' ? '[' : c == '}' ? ']' : ',');
+                    continue;
                 }
 
-                if (!inValue)
-                {
-                    inValue = true;
-                    jsonBuilder.Append('\"');
-                }
-
-                hash ^= c;
-                EscapeChar(jsonBuilder, c);
+                if (unquotedStart < 0) unquotedStart = i;
             }
 
             return hash;
@@ -254,7 +298,16 @@ namespace PgOutput2Json
                     if (start >= 0)
                     {
                         var len = i - start;
-                        hash ^= writer(jsonBuilder, value, start, len);
+
+                        if (value.AsSpan(start, len).SequenceEqual("NULL"))
+                        {
+                            jsonBuilder.Append("null");
+                        }
+                        else
+                        {
+                            hash ^= writer(jsonBuilder, value, start, len);
+                        }
+
                         start = -1;
                     }
 

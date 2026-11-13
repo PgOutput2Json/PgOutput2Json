@@ -149,5 +149,41 @@ namespace PgOutput2Json.Tests
 
             Assert.AreEqual("[[true,false,true],[true,false,false]]", builder.ToString());
         }
+
+        private static string Write(System.Func<StringBuilder, string, int> writer, string value)
+        {
+            var builder = new StringBuilder(256);
+
+            writer(builder, value);
+
+            // whatever is written must be valid JSON
+            using var json = System.Text.Json.JsonDocument.Parse(builder.ToString());
+
+            return builder.ToString();
+        }
+
+        [TestMethod]
+        public void Arrays_should_write_a_null_element_as_null()
+        {
+            Assert.AreEqual("[1,null,3]", Write(JsonUtils.WriteArrayOfNumber, "{1,NULL,3}"));
+            Assert.AreEqual("[true,null,false]", Write(JsonUtils.WriteArrayOfBoolean, "{t,NULL,f}"));
+            Assert.AreEqual("[[null,1],[2,null]]", Write(JsonUtils.WriteArrayOfNumber, "{{NULL,1},{2,NULL}}"));
+        }
+
+        [TestMethod]
+        public void WriteArrayText_should_tell_a_null_from_the_text_NULL_and_keep_empty_strings()
+        {
+            Assert.AreEqual("[\"a\",null,\"NULL\",\"\",\"null\"]", Write((b, v) => JsonUtils.WriteArrayOfText(b, v), "{a,NULL,\"NULL\",\"\",null}"));
+            Assert.AreEqual("[\"\"]", Write((b, v) => JsonUtils.WriteArrayOfText(b, v), "{\"\"}"));
+            Assert.AreEqual("[]", Write((b, v) => JsonUtils.WriteArrayOfText(b, v), "{}"));
+        }
+
+        [TestMethod]
+        public void WriteArrayOfByte_should_write_the_hex_digits_of_every_element()
+        {
+            Assert.AreEqual("[\"01\",null,\"deadbeef\",\"\"]", Write(JsonUtils.WriteArrayOfByte, "{\"\\\\x01\",NULL,\"\\\\xdeadbeef\",\"\\\\x\"}"));
+            Assert.AreEqual("[[\"01\"],[\"02\"]]", Write(JsonUtils.WriteArrayOfByte, "{{\"\\\\x01\"},{\"\\\\x02\"}}"));
+            Assert.AreEqual("[]", Write(JsonUtils.WriteArrayOfByte, "{}"));
+        }
     }
 }
