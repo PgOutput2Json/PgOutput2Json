@@ -41,10 +41,37 @@ namespace PgOutput2Json.IntegrationTests
         {
             return ExecuteAsync($"SELECT pg_create_logical_replication_slot('{slotName}', 'pgoutput')");
         }
+
+        /// <summary>
+        /// The stored table states of a slot, as "table:state,table:state" ordered by table name.
+        /// </summary>
+        public static async Task<string> TableStatesAsync(string slotName)
+        {
+            if (!await ScalarAsync<bool>("SELECT to_regclass('pgoutput2json.table_sync_state') IS NOT NULL")) return "";
+
+            return await ScalarAsync<string>($@"
+                SELECT coalesce(string_agg(table_name || ':' || state, ',' ORDER BY table_name), '')
+                FROM pgoutput2json.table_sync_state WHERE slot_name = '{slotName}'");
+        }
     }
 
     internal static class Wait
     {
+        public static async Task UntilAsync(Func<Task<bool>> condition, string what, int timeoutSeconds = 30)
+        {
+            var stopwatch = Stopwatch.StartNew();
+
+            while (!await condition())
+            {
+                if (stopwatch.Elapsed > TimeSpan.FromSeconds(timeoutSeconds))
+                {
+                    throw new TimeoutException($"Timed out waiting for {what}");
+                }
+
+                await Task.Delay(50);
+            }
+        }
+
         public static async Task UntilAsync(Func<bool> condition, string what, int timeoutSeconds = 30)
         {
             var stopwatch = Stopwatch.StartNew();
@@ -135,6 +162,9 @@ namespace PgOutput2Json.IntegrationTests
 
             public override Task ConfirmAsync(CancellationToken token)
             {
+                // copy rows carry no position (0, 0) and must not move the confirmed one back
+                if (_lastPublished == default) return Task.CompletedTask;
+
                 lock (owner._messages) owner._lastConfirmed = _lastPublished;
 
                 return Task.CompletedTask;

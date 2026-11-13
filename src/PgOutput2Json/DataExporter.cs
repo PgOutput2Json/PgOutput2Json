@@ -11,24 +11,20 @@ namespace PgOutput2Json
 {
     internal static class DataExporter
     {
-        private const string _finalMarker = "__FINAL__";
-
         public static async Task MaybeExportDataAsync(IMessagePublisherFactory publisherFactory,
                                                       ReplicationListenerOptions listenerOptions,
                                                       JsonOptions jsonOptions,
                                                       string slotName,
+                                                      IReadOnlyList<PublishedTable> tablesToCopy,
                                                       ILoggerFactory? loggerFactory,
                                                       CancellationToken token)
         {
-            if (!listenerOptions.CopyData)
+            if (!listenerOptions.CopyData || tablesToCopy.Count == 0)
             {
                 return;
             }
 
             await DataCopyProgress.CreateDataCopyProgressTableAsync(listenerOptions, token).ConfigureAwait(false);
-
-            var finalCopyStatus = await DataCopyProgress.GetDataCopyStatusAsync(_finalMarker, listenerOptions, token).ConfigureAwait(false);
-            if (finalCopyStatus.IsCompleted) return;
 
             List<PublicationInfo> publications;
 
@@ -36,7 +32,7 @@ namespace PgOutput2Json
             {
                 await connection.OpenAsync(token).ConfigureAwait(false);
 
-                publications = await GetPublicationInfoAsync(connection, listenerOptions, token).ConfigureAwait(false);
+                publications = await GetPublicationInfoAsync(connection, tablesToCopy, listenerOptions, token).ConfigureAwait(false);
             }
 
             bool hasErrors = false;
@@ -65,7 +61,10 @@ namespace PgOutput2Json
 
                     if (dataCopyStatus.IsCompleted)
                     {
-                        return;
+                        // the table state says the table needs a copy, so this is the progress of an earlier one
+                        await DataCopyProgress.SetDataCopyProgressAsync(publication.TableName, listenerOptions, false, null, null, linkedToken).ConfigureAwait(false);
+
+                        dataCopyStatus = await DataCopyProgress.GetDataCopyStatusAsync(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
                     }
 
                     logger.SafeLogInfo("Exporting data from Table: {TableName}, RowFilter: {RowFilter}", publication.TableName, publication.RowFilter);
@@ -73,7 +72,12 @@ namespace PgOutput2Json
                     while (!linkedToken.IsCancellationRequested)
                     {
                         var completed = await ExportDataAsync(connection, publisher, listenerOptions, jsonOptions, publication, dataCopyStatus, logger, linkedToken).ConfigureAwait(false);
-                        if (completed) break;
+
+                        if (completed)
+                        {
+                            await TableSyncState.SetReadyAsync(listenerOptions, publication.Table, linkedToken).ConfigureAwait(false);
+                            break;
+                        }
 
                         // needed for continuation of the next batch
                         dataCopyStatus = await DataCopyProgress.GetDataCopyStatusAsync(publication.TableName, listenerOptions, linkedToken).ConfigureAwait(false);
@@ -97,8 +101,6 @@ namespace PgOutput2Json
             {
                 throw new OperationCanceledException(); // cancel further processing (errors already logged)
             }
-
-            await DataCopyProgress.SetDataCopyProgressAsync(_finalMarker, listenerOptions, true, null, null, token).ConfigureAwait(false);
         }
 
         private static async Task<bool> ExportDataAsync(NpgsqlConnection connection,
@@ -504,28 +506,11 @@ namespace PgOutput2Json
             return false;
         }
 
-        private static async Task<List<PublicationInfo>> GetPublicationInfoAsync(NpgsqlConnection connection, ReplicationListenerOptions listenerOptions, CancellationToken token)
+        private static async Task<List<PublicationInfo>> GetPublicationInfoAsync(NpgsqlConnection connection, IReadOnlyList<PublishedTable> tables, ReplicationListenerOptions listenerOptions, CancellationToken token)
         {
-            var result = new List<PublicationInfo>();
-
-            using (var cmd = connection.CreateCommand())
-            {
-                var pubNames = string.Join(',', listenerOptions.PublicationNames.Select(x => $"'{x}'"));
-
-                cmd.CommandText = $"SELECT schemaname, tablename, rowfilter FROM pg_catalog.pg_publication_tables WHERE pubname in ({pubNames})";
-
-                using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
-
-                while (await reader.ReadAsync(token).ConfigureAwait(false))
-                {
-                    result.Add(new PublicationInfo
-                    {
-                        TableName = $"{reader.GetString(0)}.{reader.GetString(1)}",
-                        QuotedTableName = $"\"{reader.GetString(0)}\".\"{reader.GetString(1)}\"",
-                        RowFilter = await reader.IsDBNullAsync(2, token).ConfigureAwait(false) ? null : reader.GetString(2),
-                    });
-                }
-            }
+            var result = tables
+                .Select(t => new PublicationInfo { Table = t, TableName = t.TableName, QuotedTableName = t.QuotedTableName, RowFilter = t.RowFilter })
+                .ToList();
 
             foreach (var publication in result)
             {
@@ -554,7 +539,7 @@ FROM pg_attribute a
 LEFT JOIN
     pg_index i ON i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)
 WHERE
-    a.attrelid = '{publication.QuotedTableName}'::regclass
+    a.attrelid = {publication.Table.Oid}
     AND a.attnum > 0
     AND NOT a.attisdropped
     AND a.attgenerated = ''
@@ -678,6 +663,7 @@ ORDER BY
 
         private class PublicationInfo
         {
+            public required PublishedTable Table { get; set; }
             public required string TableName { get; set; }
             public required string QuotedTableName { get; set; }
             public string? RowFilter { get; set; }
