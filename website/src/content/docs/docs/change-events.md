@@ -40,6 +40,19 @@ The key columns are the **replica identity** columns PostgreSQL sends with the c
 
 If the message key matters, use `DEFAULT`, or `USING INDEX` on a stable unique key. The initial data copy reads the primary key from the catalog, so for `FULL`, `NOTHING` and `USING INDEX` tables its keys differ from those of the streamed changes.
 
+## Values
+
+| PostgreSQL type | JSON |
+|---|---|
+| `smallint`, `integer`, `bigint`, `oid`, `numeric`, `real`, `double precision` | A number, with every digit PostgreSQL sent. `NaN`, `Infinity` and `-Infinity` are `null`, because JSON has no such numbers. |
+| `boolean` | `true` or `false` |
+| `bytea` | A string of hex digits, e.g. `"deadbeef"` |
+| Everything else, including `json`, `jsonb`, `uuid`, dates and timestamps | A string, in PostgreSQL's text format. `timestamptz` is in UTC. |
+| Arrays of the types above | A JSON array, nested for more dimensions. A `NULL` element is `null`. |
+| Arrays of other types (enums, user-defined types) | A string with the PostgreSQL array literal, e.g. `"{sad,happy}"` |
+
+A large value that an update did not change is not sent by PostgreSQL. It is written as `"__TOAST__"`.
+
 ## Compact mode
 
 With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names. The SQLite, MongoDB and DynamoDB adapters always use compact mode. The column names come in a schema property:

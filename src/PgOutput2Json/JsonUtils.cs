@@ -23,7 +23,7 @@ namespace PgOutput2Json
 
         public static int WriteNumber(StringBuilder jsonBuilder, string value, int start, int len)
         {
-            // we may have to return to the original length in case of NaN, Infinity, -Infinity...
+            // JSON has no NaN, Infinity or -Infinity: they are written as null, so we may have to return to the original length
             var originalLength = jsonBuilder.Length;
 
             int hash = 0;
@@ -46,7 +46,7 @@ namespace PgOutput2Json
                 else
                 {
                     jsonBuilder.Length = originalLength;
-                    jsonBuilder.Append("0");
+                    jsonBuilder.Append("null");
                     return 0;
                 }
             }

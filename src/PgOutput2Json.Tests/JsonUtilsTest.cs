@@ -67,7 +67,7 @@ namespace PgOutput2Json.Tests
         }
 
         [TestMethod]
-        public void WriteNumber_should_handle_infinity_and_nan_as_zero()
+        public void WriteNumber_should_write_infinity_and_nan_as_null()
         {
             var builder = new StringBuilder(256);
 
@@ -79,19 +79,19 @@ namespace PgOutput2Json.Tests
 
             JsonUtils.WriteNumber(builder, "Infinity");
 
-            Assert.AreEqual("0", builder.ToString());
+            Assert.AreEqual("null", builder.ToString());
 
             builder.Clear();
 
             JsonUtils.WriteNumber(builder, "-Infinity");
 
-            Assert.AreEqual("0", builder.ToString());
+            Assert.AreEqual("null", builder.ToString());
 
             builder.Clear();
 
             JsonUtils.WriteNumber(builder, "NaN");
 
-            Assert.AreEqual("0", builder.ToString());
+            Assert.AreEqual("null", builder.ToString());
         }
 
         [TestMethod]
@@ -101,7 +101,7 @@ namespace PgOutput2Json.Tests
 
             JsonUtils.WriteArrayOfNumber(builder, "{123.45,Infinity,1,2,3}");
 
-            Assert.AreEqual("[123.45,0,1,2,3]", builder.ToString());
+            Assert.AreEqual("[123.45,null,1,2,3]", builder.ToString());
         }
 
         [TestMethod]
@@ -111,7 +111,7 @@ namespace PgOutput2Json.Tests
 
             JsonUtils.WriteArrayOfNumber(builder, "{{123.45,Infinity},{1,2,3}}");
 
-            Assert.AreEqual("[[123.45,0],[1,2,3]]", builder.ToString());
+            Assert.AreEqual("[[123.45,null],[1,2,3]]", builder.ToString());
         }
 
         [TestMethod]

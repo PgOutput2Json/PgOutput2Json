@@ -248,13 +248,14 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
-        public async Task Numbers_that_json_cannot_hold_should_be_written_as_zero()
+        public async Task Numbers_that_json_cannot_hold_should_be_written_as_null()
         {
             var messages = await CaptureAsync("jo_nan",
                 "CREATE TABLE jo_nan (id int PRIMARY KEY, num numeric, f4 real, f8 double precision, a float8[])",
-                "INSERT INTO jo_nan VALUES (1, 'NaN', 'Infinity', '-Infinity', '{1.5,NaN,Infinity}')", 1);
+                "INSERT INTO jo_nan VALUES (1, 'NaN', 'Infinity', '-Infinity', '{1.5,NaN,Infinity}')", 1,
+                b => b.WithJsonOptions(o => o.WriteNulls = true));
 
-            Assert.AreEqual("""{"id":1,"num":0,"f4":0,"f8":0,"a":[1.5,0,0]}""", Row(messages[0]));
+            Assert.AreEqual("""{"id":1,"num":null,"f4":null,"f8":null,"a":[1.5,null,null]}""", Row(messages[0]));
         }
 
         [TestMethod]
@@ -279,13 +280,30 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
-        public async Task Array_types_without_a_converter_should_be_written_as_the_postgres_literal()
+        public async Task Arrays_of_types_written_as_text_should_be_arrays_of_strings()
+        {
+            var messages = await CaptureAsync("jo_txt",
+                @"CREATE TABLE jo_txt (id int PRIMARY KEY, at text[], ach ""char""[], anm name[], ad date[], atm time[], atz timetz[],
+                    ats timestamp[], atstz timestamptz[], aiv interval[], apt point[], aip inet[], acd cidr[], amn money[], abt bit(2)[], avb varbit[])",
+                @"INSERT INTO jo_txt VALUES (1, ARRAY['a', 'b c', NULL, ''], ARRAY['x']::""char""[], ARRAY['n']::name[], ARRAY['2024-02-29']::date[],
+                    ARRAY['12:34:56']::time[], ARRAY['12:34:56+02']::timetz[], ARRAY['2024-02-29 12:34:56', NULL]::timestamp[],
+                    ARRAY['2024-02-29 12:34:56+02']::timestamptz[], ARRAY['1 day']::interval[], ARRAY['(1,2)']::point[], ARRAY['10.0.0.1']::inet[],
+                    ARRAY['10.0.0.0/8']::cidr[], ARRAY[12.34]::money[], ARRAY['10']::bit(2)[], ARRAY['101']::varbit[])", 1);
+
+            Assert.AreEqual(
+                """{"id":1,"at":["a","b c",null,""],"ach":["x"],"anm":["n"],"ad":["2024-02-29"],"atm":["12:34:56"],"atz":["12:34:56+02"],"ats":["2024-02-29 12:34:56",null],"atstz":["2024-02-29 10:34:56+00"],"aiv":["1 day"],"apt":["(1,2)"],"aip":["10.0.0.1"],"acd":["10.0.0.0/8"],"amn":["$12.34"],"abt":["10"],"avb":["101"]}""",
+                Row(messages[0]));
+        }
+
+        [TestMethod]
+        public async Task Array_of_a_type_the_library_does_not_know_should_be_written_as_the_postgres_literal()
         {
             var messages = await CaptureAsync("jo_lit",
-                "CREATE TABLE jo_lit (id int PRIMARY KEY, at text[], ats timestamp[], ad date[])",
-                "INSERT INTO jo_lit VALUES (1, ARRAY['a', 'b c'], ARRAY['2024-02-29 12:34:56'::timestamp], ARRAY['2024-02-29'::date])", 1);
+                "CREATE TYPE jo_lit_mood AS ENUM ('sad', 'happy'); CREATE TABLE jo_lit (id int PRIMARY KEY, moods jo_lit_mood[], mood jo_lit_mood)",
+                "INSERT INTO jo_lit VALUES (1, ARRAY['sad', 'happy']::jo_lit_mood[], 'happy')", 1);
 
-            Assert.AreEqual("""{"id":1,"at":"{a,\"b c\"}","ats":"{\"2024-02-29 12:34:56\"}","ad":"{2024-02-29}"}""", Row(messages[0]));
+            // the stream carries only the type oid, and the oid of a user type says nothing about it
+            Assert.AreEqual("""{"id":1,"moods":"{sad,happy}","mood":"happy"}""", Row(messages[0]));
         }
 
         [TestMethod]

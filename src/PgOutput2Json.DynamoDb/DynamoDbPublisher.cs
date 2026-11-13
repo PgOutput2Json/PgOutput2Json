@@ -333,6 +333,9 @@ namespace PgOutput2Json.DynamoDb
                 case JsonValueKind.Null:
                 case JsonValueKind.Undefined:
                     return new AttributeValue { NULL = true };
+                case JsonValueKind.Array:
+                    // an array column is stored as its JSON text
+                    return new AttributeValue { S = element.GetRawText() };
             }
 
             return new AttributeValue { NULL = true };
