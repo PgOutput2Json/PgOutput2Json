@@ -1,0 +1,46 @@
+# Builds the solution and runs the unit and the integration tests.
+# The integration tests start PostgreSQL and Kafka with Testcontainers, on the runner's Docker.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  pull_request:
+    paths-ignore:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a newer push to the same branch or pull request replaces the run in progress
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # the libraries target .NET 8, 9 and 10 and are built with the newest SDK; the tests run on .NET 8
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Build
+        run: dotnet build src/PgOutput2Json.sln --configuration Release
+
+      - name: Unit tests
+        run: dotnet test src/PgOutput2Json.Tests/PgOutput2Json.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Integration tests
+        run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --logger "console;verbosity=normal"

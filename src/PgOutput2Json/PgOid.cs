@@ -58,8 +58,23 @@
         A_FLOAT8OID = 1022,
         A_NUMERICOID = 1231,
 
+        A_CHAROID = 1002,
+        A_NAMEOID = 1003,
+        A_TEXTOID = 1009,
         A_BPCHAROID = 1014,
         A_VARCHAROID = 1015,
+
+        A_DATEOID = 1182,
+        A_TIMEOID = 1183,
+        A_TIMETZOID = 1270,
+        A_INTERVALOID = 1187,
+
+        A_POINTOID = 1017,
+        A_INETOID = 1041,
+        A_CIDROID = 651,
+        A_CASHOID = 791,
+        A_ZPBITOID = 1561,
+        A_VARBITOID = 1563,
 
         A_TIMESTAMPOID = 1115,
         A_TIMESTAMPTZOID = 1185,
@@ -118,8 +133,23 @@
 
         public static bool IsArrayOfText(this PgOid pgOid)
         {
-            return pgOid == PgOid.A_BPCHAROID
+            return pgOid == PgOid.A_TEXTOID
+                || pgOid == PgOid.A_BPCHAROID
                 || pgOid == PgOid.A_VARCHAROID
+                || pgOid == PgOid.A_CHAROID
+                || pgOid == PgOid.A_NAMEOID
+                || pgOid == PgOid.A_DATEOID
+                || pgOid == PgOid.A_TIMEOID
+                || pgOid == PgOid.A_TIMETZOID
+                || pgOid == PgOid.A_TIMESTAMPOID
+                || pgOid == PgOid.A_TIMESTAMPTZOID
+                || pgOid == PgOid.A_INTERVALOID
+                || pgOid == PgOid.A_POINTOID
+                || pgOid == PgOid.A_INETOID
+                || pgOid == PgOid.A_CIDROID
+                || pgOid == PgOid.A_CASHOID
+                || pgOid == PgOid.A_ZPBITOID
+                || pgOid == PgOid.A_VARBITOID
                 || pgOid == PgOid.A_JSONOID
                 || pgOid == PgOid.A_JSONBOID
                 || pgOid == PgOid.A_XMLOID
