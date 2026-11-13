@@ -1,0 +1,15 @@
+---
+import { Code } from 'astro:components';
+
+interface Props {
+  code: string;
+  lang: 'csharp' | 'bash' | 'sql' | 'ini';
+  label: string;
+}
+
+const { code, lang, label } = Astro.props;
+---
+
+<figure class="code" aria-label={label}>
+  <Code code={code.trim()} lang={lang} themes={{ light: 'github-light', dark: 'github-dark-default' }} defaultColor={false} />
+</figure>
