@@ -13,7 +13,7 @@ using NpgsqlTypes;
 
 using PgOutput2Json.Kafka;
 
-namespace PgOutput2Json.IntegrationTests
+namespace PgOutput2Json.IntegrationTests.Outputs
 {
     [TestClass]
     public class KafkaPublisherTest

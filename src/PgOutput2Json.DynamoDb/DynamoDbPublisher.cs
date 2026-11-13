@@ -26,6 +26,14 @@ namespace PgOutput2Json.DynamoDb
         // Batch write items buffer
         private readonly List<(string TableName, WriteRequest WriteRequest)> _batch = new(25); // DynamoDB batch write limit
 
+        // the items in the batch: a batch write must not contain the same item twice
+        private readonly HashSet<string> _batchKeys = [];
+
+        /// <summary>
+        /// The sort key attribute of a table with more than one key column: the other key values, joined with "|".
+        /// </summary>
+        private const string SortKeyName = "SK";
+
         private ulong? _lastWal;
         private ulong _lastMessageNo;
 
@@ -84,6 +92,7 @@ namespace PgOutput2Json.DynamoDb
                 }
 
                 _batch.Clear();
+                _batchKeys.Clear();
             }
 
             // _lastWal has no value only if nothing has been published since the last confirm (or ever);
@@ -154,14 +163,14 @@ namespace PgOutput2Json.DynamoDb
                 // Key element is present only for deletes or if the PK has changed (or if replica identity is all).
                 // Changing PK is not supported - we must delete the old, and create a new item.
 
-                var keyAttributes = ComposeKeyAttributes(columns, keyElement);
+                var keyAttributes = ComposeKeyAttributes(columns, keyElement, isKeyRow: true);
 
                 var request = new WriteRequest
                 {
                     DeleteRequest = new DeleteRequest { Key = keyAttributes }
                 };
 
-                await AddToBatchAsync(tableName, request, token)
+                await AddToBatchAsync(tableName, request, keyAttributes, token)
                     .ConfigureAwait(false);
             }
 
@@ -176,9 +185,16 @@ namespace PgOutput2Json.DynamoDb
                     await ConfirmAsync(token)
                         .ConfigureAwait(false);
 
-                    var keyAttributes = ComposeKeyAttributes(columns, rowElement);
+                    var keyAttributes = ComposeKeyAttributes(columns, rowElement, isKeyRow: false);
 
-                    // then update the item
+                    // then update the item - the key attributes identify it and cannot be set
+                    foreach (var keyAttribute in keyAttributes.Keys)
+                    {
+                        itemAttributes.Remove(keyAttribute);
+                    }
+
+                    if (itemAttributes.Count == 0) return;
+
                     var request = BuildUpdateItemRequest(tableName, keyAttributes, itemAttributes);
 
                     await client.UpdateItemAsync(request, token)
@@ -186,20 +202,38 @@ namespace PgOutput2Json.DynamoDb
                 }
                 else
                 {
+                    // the sort key is not a column, so it has to be added to the item
+                    var keyAttributes = ComposeKeyAttributes(columns, rowElement, isKeyRow: false);
+
+                    foreach (var keyAttribute in keyAttributes)
+                    {
+                        itemAttributes[keyAttribute.Key] = keyAttribute.Value;
+                    }
+
                     var request = new WriteRequest
                     {
                         PutRequest = new PutRequest { Item = itemAttributes },
                     };
 
-                    await AddToBatchAsync(tableName, request, token)
+                    await AddToBatchAsync(tableName, request, keyAttributes, token)
                         .ConfigureAwait(false);
                 }
             }
         }
 
-        private async Task AddToBatchAsync(string tableName, WriteRequest request, CancellationToken token)
+        private async Task AddToBatchAsync(string tableName, WriteRequest request, Dictionary<string, AttributeValue> key, CancellationToken token)
         {
+            var batchKey = tableName + "|" + string.Join("|", key.OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => $"{a.Key}={a.Value.S ?? a.Value.N ?? a.Value.BOOL?.ToString()}"));
+
+            // a second change of the same item goes into the next batch, after this one is written
+            if (_batchKeys.Contains(batchKey))
+            {
+                await ConfirmAsync(token)
+                    .ConfigureAwait(false);
+            }
+
             _batch.Add((tableName, request));
+            _batchKeys.Add(batchKey);
 
             // DynamoDB batch write max 25 items, flush if exceeded
 
@@ -238,7 +272,11 @@ namespace PgOutput2Json.DynamoDb
             };
         }
 
-        private static Dictionary<string, AttributeValue> ComposeKeyAttributes(List<ColumnInfo> columns, JsonElement element)
+        /// <summary>
+        /// The key of an item: the first key column is the partition key, the other key columns are joined
+        /// into the sort key. A key row ("k") has the key columns only, a row ("r") has all the columns.
+        /// </summary>
+        private static Dictionary<string, AttributeValue> ComposeKeyAttributes(List<ColumnInfo> columns, JsonElement element, bool isKeyRow)
         {
             var keyAttributes = new Dictionary<string, AttributeValue>();
 
@@ -257,7 +295,7 @@ namespace PgOutput2Json.DynamoDb
             {
                 if (!col.IsKey)
                 {
-                    i++;
+                    if (!isKeyRow) i++;
                     continue;
                 }
 
@@ -271,7 +309,7 @@ namespace PgOutput2Json.DynamoDb
                 }
                 else
                 {
-                    if (string.IsNullOrEmpty(sortKeyName)) sortKeyName = "SK";
+                    if (string.IsNullOrEmpty(sortKeyName)) sortKeyName = SortKeyName;
 
                     sortKeyValue += (sortKeyValue.Length > 0 ? "|" : "") + GetStringFromJsonElement(element[i]);
                 }
@@ -445,8 +483,8 @@ namespace PgOutput2Json.DynamoDb
 
             if (keyColumns.Count > 1)
             {
-                keySchema.Add(new() { AttributeName = "SC", KeyType = KeyType.RANGE });
-                attributeDefinitions.Add(new() { AttributeName = "SC", AttributeType = ScalarAttributeType.S });
+                keySchema.Add(new() { AttributeName = SortKeyName, KeyType = KeyType.RANGE });
+                attributeDefinitions.Add(new() { AttributeName = SortKeyName, AttributeType = ScalarAttributeType.S });
             }
 
             var request = new CreateTableRequest

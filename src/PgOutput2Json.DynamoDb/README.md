@@ -113,7 +113,7 @@ Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` wh
 The PgOutput2Json library will create DynamoDB tables for each table included in logical replication. 
 
 Tables are created the first time a row belonging to the respective table is changed. 
-The first PK column is used as partition key, and the rest of PK columns are joined in a string, for the sort key.
+The first PK column is used as partition key. The other PK columns are joined with `|` into a string, stored in the sort key attribute `SK`. An array column is stored as a string with its JSON text.
 
 ### Create a .NET Worker Service
 

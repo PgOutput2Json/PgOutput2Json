@@ -74,6 +74,9 @@ namespace PgOutput2Json.Sqlite
             }
             else if (changeType == "U")
             {
+                // an update of the key comes with the old key: the row is moved first, or the old one would stay
+                await connection.UpdateKeyAsync(table.Commands, table.FullTableName, keyElement, rowElement, token).ConfigureAwait(false);
+
                 await UpdateRowAsync(connection, table, rowElement, token).ConfigureAwait(false);
             }
             else if (changeType == "D")
