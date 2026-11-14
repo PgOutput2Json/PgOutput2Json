@@ -56,7 +56,7 @@ Changes are delivered in batches to your webhook. The POST request body is an ar
 
 ```jsonc
 {
-  "c": "U",             // Change type: I (insert), U (update), D (delete)
+  "c": "U",             // Change type: I (insert), U (update), D (delete), C (row of the initial data copy)
   "w": 2485645760,      // Transaction final LSN — part of the deduplication key
   "n": 1,               // Message number within the transaction — part of the deduplication key
   "t": "schema.table",  // Table name (if enabled in JSON options)
