@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Npgsql;
 using NpgsqlTypes;
 
 namespace PgOutput2Json.IntegrationTests
@@ -348,6 +351,49 @@ namespace PgOutput2Json.IntegrationTests
             await task.WaitAsync(TimeSpan.FromSeconds(5));
 
             await Wait.UntilAsync(async () => !await Db.ScalarAsync<bool>("SELECT active FROM pg_replication_slots WHERE slot_name = 'ls_cancel_slot'"), "the slot to be released");
+        }
+
+        private sealed class CategoryProvider : ILoggerProvider
+        {
+            public ConcurrentQueue<string> Categories { get; } = new();
+
+            public ILogger CreateLogger(string categoryName)
+            {
+                Categories.Enqueue(categoryName);
+                return NullLogger.Instance;
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+
+        [TestMethod]
+        public async Task Npgsql_should_log_through_the_logger_factory_of_the_builder_and_keep_working_after_it_is_disposed()
+        {
+            await CreateAsync("ls_npgsql_log");
+
+            var provider = new CategoryProvider();
+            var publisher = new CollectingPublisherFactory();
+
+            // like the logger factory of a host that is disposed with the host
+            using (var loggerFactory = LoggerFactory.Create(b => b.AddProvider(provider).SetMinimumLevel(LogLevel.Trace)))
+            {
+                await using (new RunningListener(CreateBuilder("ls_npgsql_log", publisher).WithLoggerFactory(loggerFactory)))
+                {
+                    await Db.ExecuteAsync("INSERT INTO ls_npgsql_log VALUES (1, 'a')");
+
+                    await Wait.UntilAsync(() => publisher.ConfirmedBatches.Sum() == 1, "the confirm");
+                }
+            }
+
+            Assert.IsTrue(provider.Categories.Any(c => c.StartsWith("Npgsql.", StringComparison.Ordinal)), string.Join(", ", provider.Categories));
+
+            // a connection string no earlier connection used, so Npgsql creates its pool and logging for it now
+            var connectionString = new NpgsqlConnectionStringBuilder(Containers.PgConnectionString) { ApplicationName = "ls_npgsql_log" }.ConnectionString;
+
+            await using var connection = new NpgsqlConnection(connectionString);
+            await connection.OpenAsync();
         }
     }
 }

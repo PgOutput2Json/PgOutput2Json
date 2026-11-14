@@ -60,6 +60,7 @@ namespace PgOutput2Json
 
         private readonly IMessagePublisherFactory _publisherFactory;
         private readonly ReplicationListenerOptions _options;
+        private readonly NpgsqlDataSource _dataSource;
         private readonly JsonOptions _jsonOptions;
         private readonly string _mainSlotName;
         private readonly ILoggerFactory? _loggerFactory;
@@ -75,6 +76,7 @@ namespace PgOutput2Json
 
         private TableSync(IMessagePublisherFactory publisherFactory,
                           ReplicationListenerOptions options,
+                          NpgsqlDataSource dataSource,
                           JsonOptions jsonOptions,
                           string mainSlotName,
                           ILoggerFactory? loggerFactory,
@@ -82,6 +84,7 @@ namespace PgOutput2Json
         {
             _publisherFactory = publisherFactory;
             _options = options;
+            _dataSource = dataSource;
             _jsonOptions = jsonOptions;
             _mainSlotName = mainSlotName;
             _loggerFactory = loggerFactory;
@@ -94,16 +97,17 @@ namespace PgOutput2Json
         /// </summary>
         public static async Task<TableSync> StartAsync(IMessagePublisherFactory publisherFactory,
                                                        ReplicationListenerOptions options,
+                                                       NpgsqlDataSource dataSource,
                                                        JsonOptions jsonOptions,
                                                        string mainSlotName,
                                                        ILoggerFactory? loggerFactory,
                                                        CancellationToken token)
         {
-            var sync = new TableSync(publisherFactory, options, jsonOptions, mainSlotName, loggerFactory, token);
+            var sync = new TableSync(publisherFactory, options, dataSource, jsonOptions, mainSlotName, loggerFactory, token);
 
             try
             {
-                var states = await TableSyncState.RegisterTablesAsync(options, sync._logger, token).ConfigureAwait(false);
+                var states = await TableSyncState.RegisterTablesAsync(options, dataSource, sync._logger, token).ConfigureAwait(false);
 
                 foreach (var state in states)
                 {
@@ -274,7 +278,7 @@ namespace PgOutput2Json
         {
             var entry = _entries[oid];
 
-            var table = entry.Table ??= await TableSyncState.FindPublishedTableAsync(_options, oid, token).ConfigureAwait(false);
+            var table = entry.Table ??= await TableSyncState.FindPublishedTableAsync(_options, _dataSource, oid, token).ConfigureAwait(false);
 
             if (table == null)
             {
@@ -330,7 +334,7 @@ namespace PgOutput2Json
 
                     _logger?.LogInformation("Copying table {Table}, RowFilter: {RowFilter}", table.TableName, table.RowFilter);
 
-                    var rows = await TableCopy.CopyAsync(publisher, _options, _jsonOptions, table, created.SnapshotName!, _logger, token)
+                    var rows = await TableCopy.CopyAsync(publisher, _options, _dataSource, _jsonOptions, table, created.SnapshotName!, _logger, token)
                         .ConfigureAwait(false);
 
                     _logger?.LogInformation("Copied {Rows} rows of table {Table}", rows, table.TableName);
@@ -527,7 +531,7 @@ namespace PgOutput2Json
 
         private async Task SetStateAsync(Entry entry, PublishedTable table, string state, ulong lsn, CancellationToken token)
         {
-            await TableSyncState.SetStateAsync(_options, table, state, lsn, token).ConfigureAwait(false);
+            await TableSyncState.SetStateAsync(_options, _dataSource, table, state, lsn, token).ConfigureAwait(false);
 
             entry.Set(state, lsn);
         }
@@ -543,7 +547,7 @@ namespace PgOutput2Json
             {
                 var slotNames = new List<string>();
 
-                using (var cn = new NpgsqlConnection(_options.ConnectionString))
+                using (var cn = _dataSource.CreateConnection())
                 {
                     await cn.OpenAsync(token).ConfigureAwait(false);
 
@@ -579,7 +583,7 @@ namespace PgOutput2Json
 
         private async Task<ulong?> GetSlotPositionAsync(string slotName, CancellationToken token)
         {
-            using var cn = new NpgsqlConnection(_options.ConnectionString);
+            using var cn = _dataSource.CreateConnection();
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
@@ -599,7 +603,7 @@ namespace PgOutput2Json
 
         private async Task ExecuteAsync(string sql, string? slotName, CancellationToken token)
         {
-            using var cn = new NpgsqlConnection(_options.ConnectionString);
+            using var cn = _dataSource.CreateConnection();
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
