@@ -118,6 +118,16 @@ namespace PgOutput2Json
             return this;
         }
 
+        /// <summary>
+        /// How long the listener waits after an error (the output is down, the slot is in use, PostgreSQL is
+        /// not reachable) before it connects again. Default is 10 seconds.
+        /// </summary>
+        public PgOutput2JsonBuilder WithReconnectDelay(TimeSpan delay)
+        {
+            _listenerOptions.ReconnectDelay = delay;
+            return this;
+        }
+
         public IPgOutput2Json Build()
         {
             if (_listenerOptions.DataSourceBuilder.ConnectionString == string.Empty)
@@ -152,6 +162,11 @@ namespace PgOutput2Json
             if (_listenerOptions.MaxParallelCopyJobs <= 0)
             {
                 _listenerOptions.MaxParallelCopyJobs = 1;
+            }
+
+            if (_listenerOptions.ReconnectDelay < TimeSpan.Zero)
+            {
+                throw new InvalidOperationException("Reconnect delay must not be negative");
             }
 
             if (_listenerOptions.BatchWaitTime < TimeSpan.FromMilliseconds(10))

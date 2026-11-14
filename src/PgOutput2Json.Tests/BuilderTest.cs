@@ -68,5 +68,11 @@ namespace PgOutput2Json.Tests
         {
             AssertBuildFails(Valid().WithPgReplicationSlot("", useTemporarySlot: false), "Replication slot name must be provided for permanent slots");
         }
+
+        [TestMethod]
+        public void Build_should_fail_with_a_negative_reconnect_delay()
+        {
+            AssertBuildFails(Valid().WithReconnectDelay(TimeSpan.FromSeconds(-1)), "Reconnect delay must not be negative");
+        }
     }
 }

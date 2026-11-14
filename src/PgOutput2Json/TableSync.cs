@@ -31,8 +31,6 @@ namespace PgOutput2Json
     {
         private const string KeepaliveSql = "SELECT pg_logical_emit_message(false, 'pg2j_keepalive', '')";
 
-        private static readonly TimeSpan _retryDelay = TimeSpan.FromSeconds(10);
-
         // the main stream waits for about as long as the worker's last catch-up round took,
         // so the handover is requested only after a short round
         private static readonly TimeSpan _shortCatchUpRound = TimeSpan.FromSeconds(1);
@@ -257,10 +255,10 @@ namespace PgOutput2Json
                     {
                         MetricsHelper.IncrementErrorCounter();
 
-                        _logger.SafeLogError(ex, "Error in the initial sync of table {Table}. Trying again in 10 seconds...",
-                            _entries[oid].Table?.TableName ?? oid.ToString());
+                        _logger.SafeLogError(ex, "Error in the initial sync of table {Table}. Trying again in {Seconds} seconds...",
+                            _entries[oid].Table?.TableName ?? oid.ToString(), _options.ReconnectDelay.TotalSeconds);
 
-                        await Task.Delay(_retryDelay, token).ConfigureAwait(false);
+                        await Task.Delay(_options.ReconnectDelay, token).ConfigureAwait(false);
 
                         _queue.Writer.TryWrite(oid);
                     }
