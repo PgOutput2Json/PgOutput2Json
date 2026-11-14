@@ -52,7 +52,7 @@ namespace PgOutput2Json.IntegrationTests
                 // one transaction, so the rows arrive together
                 await Db.ExecuteAsync("INSERT INTO ls_batch SELECT i, 'v' FROM generate_series(1, 7) i");
 
-                var afterInsert = await Db.ScalarAsync<NpgsqlLogSequenceNumber>("SELECT pg_current_wal_lsn()");
+                var afterInsert = await Db.ScalarAsync<NpgsqlLogSequenceNumber>("SELECT pg_current_wal_insert_lsn()");
 
                 await Wait.UntilAsync(() => publisher.ConfirmedBatches.Sum() == 7, "7 confirmed messages");
 
@@ -250,7 +250,7 @@ namespace PgOutput2Json.IntegrationTests
 
                 await Db.ExecuteAsync("INSERT INTO ls_idle_other SELECT generate_series(1, 1000)");
 
-                var afterInsert = await Db.ScalarAsync<NpgsqlLogSequenceNumber>("SELECT pg_current_wal_lsn()");
+                var afterInsert = await Db.ScalarAsync<NpgsqlLogSequenceNumber>("SELECT pg_current_wal_insert_lsn()");
 
                 await Wait.UntilAsync(async () => await ConfirmedLsnAsync("ls_idle") >= afterInsert, "the slot to move");
             }
