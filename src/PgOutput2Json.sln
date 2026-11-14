@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.AzureEventHub
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.Webhooks", "PgOutput2Json.Webhooks\PgOutput2Json.Webhooks.csproj", "{A041AA79-C0F6-3B37-1FF1-B3B5C42CBB29}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PgOutput2Json.ClickHouse", "PgOutput2Json.ClickHouse\PgOutput2Json.ClickHouse.csproj", "{EFD89872-6B1A-4446-99D8-09DE7FD91C5B}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PgOutput2Json.IntegrationTests", "PgOutput2Json.IntegrationTests\PgOutput2Json.IntegrationTests.csproj", "{31AC5774-FAD1-4ABB-86FA-DAC4FC45ABFD}"
 EndProject
 Global
@@ -89,6 +91,10 @@ Global
 		{A041AA79-C0F6-3B37-1FF1-B3B5C42CBB29}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A041AA79-C0F6-3B37-1FF1-B3B5C42CBB29}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A041AA79-C0F6-3B37-1FF1-B3B5C42CBB29}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EFD89872-6B1A-4446-99D8-09DE7FD91C5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EFD89872-6B1A-4446-99D8-09DE7FD91C5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EFD89872-6B1A-4446-99D8-09DE7FD91C5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EFD89872-6B1A-4446-99D8-09DE7FD91C5B}.Release|Any CPU.Build.0 = Release|Any CPU
 		{31AC5774-FAD1-4ABB-86FA-DAC4FC45ABFD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{31AC5774-FAD1-4ABB-86FA-DAC4FC45ABFD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{31AC5774-FAD1-4ABB-86FA-DAC4FC45ABFD}.Release|Any CPU.ActiveCfg = Release|Any CPU

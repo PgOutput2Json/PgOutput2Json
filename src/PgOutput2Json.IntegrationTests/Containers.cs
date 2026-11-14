@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Testcontainers.ClickHouse;
 using Testcontainers.DynamoDb;
 using Testcontainers.EventHubs;
 using Testcontainers.Kafka;
@@ -27,6 +28,7 @@ namespace PgOutput2Json.IntegrationTests
         private static RedisContainer? _redis;
         private static LocalStackContainer? _localStack;
         private static EventHubsContainer? _eventHubs;
+        private static ClickHouseContainer? _clickHouse;
 
         public static string PgConnectionString => _postgres!.GetConnectionString();
 
@@ -152,6 +154,32 @@ namespace PgOutput2Json.IntegrationTests
             return _localStack.GetConnectionString();
         }
 
+        public const string ClickHouseDatabase = "test";
+        public const string ClickHouseUsername = "test";
+        public const string ClickHousePassword = "test";
+
+        /// <summary>
+        /// The HTTP endpoint of ClickHouse. The database and the user are in the constants above.
+        /// </summary>
+        public static async Task<string> GetClickHouseEndpointAsync()
+        {
+            if (_clickHouse == null)
+            {
+                var container = new ClickHouseBuilder("clickhouse/clickhouse-server:latest")
+                    .WithDatabase(ClickHouseDatabase)
+                    .WithUsername(ClickHouseUsername)
+                    .WithPassword(ClickHousePassword)
+                    .WithPortBinding(FreePort(), 8123)
+                    .Build();
+
+                await StartWithRetryAsync(container);
+
+                _clickHouse = container;
+            }
+
+            return $"http://{_clickHouse.Hostname}:{_clickHouse.GetMappedPublicPort(8123)}";
+        }
+
         /// <summary>
         /// The event hubs of the emulator and their partition counts. The emulator cannot create an event hub
         /// while it runs, so every test that needs one adds it here.
@@ -218,6 +246,7 @@ namespace PgOutput2Json.IntegrationTests
         public static DotNet.Testcontainers.Containers.IContainer DynamoDb => _dynamoDb!;
         public static DotNet.Testcontainers.Containers.IContainer Redis => _redis!;
         public static DotNet.Testcontainers.Containers.IContainer EventHubsEmulator => _eventHubs!;
+        public static DotNet.Testcontainers.Containers.IContainer ClickHouse => _clickHouse!;
 
         /// <summary>
         /// Starting a container pulls its image, and a pull fails now and then, mostly on a CI runner.
@@ -250,6 +279,7 @@ namespace PgOutput2Json.IntegrationTests
             if (_redis != null) await _redis.DisposeAsync();
             if (_localStack != null) await _localStack.DisposeAsync();
             if (_eventHubs != null) await _eventHubs.DisposeAsync();
+            if (_clickHouse != null) await _clickHouse.DisposeAsync();
             if (_postgres != null) await _postgres.DisposeAsync();
         }
     }

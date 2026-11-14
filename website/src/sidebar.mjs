@@ -20,6 +20,7 @@ export const sidebar = [
       { label: 'MongoDB', slug: 'docs/outputs/mongodb' },
       { label: 'Amazon Kinesis', slug: 'docs/outputs/kinesis' },
       { label: 'Amazon DynamoDB', slug: 'docs/outputs/dynamodb' },
+      { label: 'ClickHouse', slug: 'docs/outputs/clickhouse' },
       { label: 'Azure Event Hubs', slug: 'docs/outputs/event-hubs' },
       { label: 'Webhooks', slug: 'docs/outputs/webhooks' },
     ],

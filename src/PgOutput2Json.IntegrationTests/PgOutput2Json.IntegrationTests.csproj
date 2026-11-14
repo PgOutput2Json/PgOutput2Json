@@ -11,6 +11,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="MSTest.TestAdapter" Version="4.3.3" />
     <PackageReference Include="MSTest.TestFramework" Version="4.3.3" />
+    <PackageReference Include="Testcontainers.ClickHouse" Version="4.16.0" />
     <PackageReference Include="Testcontainers.DynamoDb" Version="4.16.0" />
     <PackageReference Include="Testcontainers.EventHubs" Version="4.16.0" />
     <PackageReference Include="Testcontainers.Kafka" Version="4.16.0" />
@@ -33,6 +34,7 @@
     <ProjectReference Include="..\PgOutput2Json.Sqlite\PgOutput2Json.Sqlite.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Webhooks\PgOutput2Json.Webhooks.csproj" />
     <ProjectReference Include="..\PgOutput2Json.AzureEventHubs\PgOutput2Json.AzureEventHubs.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.ClickHouse\PgOutput2Json.ClickHouse.csproj" />
   </ItemGroup>
 
 </Project>

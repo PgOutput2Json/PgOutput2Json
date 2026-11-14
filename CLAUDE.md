@@ -21,7 +21,7 @@ dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.cs
 dotnet run --project src/PgOutput2Json.TestWorker/PgOutput2Json.TestWorker.csproj
 ```
 
-Both test projects run on every pull request and on `main` (`.github/workflows/tests.yml`). The integration tests use PostgreSQL 16 unless `PG_IMAGE` is set (e.g. `PG_IMAGE=postgres:14`); the CI repeats them on versions 14 to 18. A test that needs a newer version calls `Containers.RequirePg`. The tests of the outputs are in the `Outputs` namespace and start their own containers (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB Local, LocalStack, the Event Hubs emulator) on first use; they share `MessageScenario` (message outputs) and `StoreScenario` (SQLite, MongoDB, DynamoDB). The Event Hubs emulator cannot create an event hub while it runs: a test that needs one adds it to `Containers.EventHubs`. Run only them with `--filter "FullyQualifiedName~.Outputs."`, or leave them out with `!~`.
+Both test projects run on every pull request and on `main` (`.github/workflows/tests.yml`). The integration tests use PostgreSQL 16 unless `PG_IMAGE` is set (e.g. `PG_IMAGE=postgres:14`); the CI repeats them on versions 14 to 18. A test that needs a newer version calls `Containers.RequirePg`. The tests of the outputs are in the `Outputs` namespace and start their own containers (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB Local, LocalStack, the Event Hubs emulator, ClickHouse) on first use; they share `MessageScenario` (message outputs) and `StoreScenario` (SQLite, MongoDB, DynamoDB, ClickHouse). The Event Hubs emulator cannot create an event hub while it runs: a test that needs one adds it to `Containers.EventHubs`. Run only them with `--filter "FullyQualifiedName~.Outputs."`, or leave them out with `!~`.
 
 The website (landing page and docs, Astro + Starlight) is in `website/` and is deployed to GitHub Pages by `.github/workflows/website.yml`. Its docs pages were split from `README.md`: when the README or an adapter README changes, update the matching page in `website/src/content/docs/docs/`. See `website/README.md`.
 
@@ -59,7 +59,7 @@ Each adapter in `src/PgOutput2Json.<Name>/` provides:
 - An `IMessagePublisherFactory` implementation
 - An extension method on `PgOutput2JsonBuilder` (e.g., `UseRabbitMq(...)`, `UseKafka(...)`)
 
-Available adapters: `RabbitMq`, `RabbitMqStreams`, `Kafka`, `Redis`, `Sqlite`, `MongoDb`, `Kinesis`, `DynamoDb`, `AzureEventHubs`, `Webhooks`.
+Available adapters: `RabbitMq`, `RabbitMqStreams`, `Kafka`, `Redis`, `Sqlite`, `MongoDb`, `Kinesis`, `DynamoDb`, `ClickHouse`, `AzureEventHubs`, `Webhooks`.
 
 ### Delivery and Deduplication
 
@@ -68,6 +68,8 @@ Delivery is at-least-once: a batch is confirmed to PostgreSQL only after the out
 The message outputs (Kafka, RabbitMQ, RabbitMQ Streams, Redis, Kinesis, Event Hubs, Webhooks) publish replayed changes again. They must keep the messages of a partition in WAL order and never skip a failed message, so a consumer can keep a "highest position seen" watermark per table and partition. Known exception: Kafka can accept messages sent after a rejected one, and the replay then fills the gap out of order; `EnableGaplessGuarantee` (experimental in librdkafka, off by default) prevents it.
 
 The stores (SQLite, MongoDB, DynamoDB) save the last position with the data and return it from `GetLastPublishedWalSeqAsync`; the listener skips replayed messages at or below it (`ReplicationListenerOptions.UseDeduplication`, on by default).
+
+ClickHouse is a store that saves no position. It only inserts: every change is a new row with `_version` (`w * 2^64 + n`) and `_deleted`, in a `ReplacingMergeTree` ordered by the key, so a replayed change is the same row again. It uses the HTTP interface with `JSONCompactEachRow` (no client library), reads an unchanged TOAST value back from ClickHouse, and `UseClickHouse` raises the batch size to 10,000.
 
 Routing: Kafka routes by message key with librdkafka's `Murmur2Random` partitioner; with partition-key columns the publisher picks the partition itself with the same hash (`MurmurHash2` in the core project, also used by Event Hubs and Redis). RabbitMQ super streams are routed by the client library.
 
