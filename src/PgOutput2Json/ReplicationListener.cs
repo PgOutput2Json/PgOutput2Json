@@ -15,9 +15,11 @@ namespace PgOutput2Json
 {
     internal sealed class ReplicationListener
     {
-        private class ConnectionState(CancellationToken cancellationToken, ILogger? logger) : IAsyncDisposable
+        private class ConnectionState(NpgsqlDataSource dataSource, CancellationToken cancellationToken, ILogger? logger) : IAsyncDisposable
         {
             private readonly ILogger? _logger = logger;
+
+            public NpgsqlDataSource DataSource { get; } = dataSource;
 
             public LogicalReplicationConnection? Connection { get; set; }
             public IMessagePublisher? MessagePublisher { get; set; }
@@ -80,19 +82,21 @@ namespace PgOutput2Json
 
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
-
-            // TODO: see if DataSourceBuilder can be used
-            if (_loggerFactory != null)
-            {
-                NpgsqlLoggingConfiguration.InitializeLogging(_loggerFactory);
-            }
         }
 
         public async Task ListenForChangesAsync(CancellationToken cancellationToken)
         {
+            // The regular connections come from this data source, so they log through the logger factory given to
+            // the builder. Npgsql's global logging (NpgsqlLoggingConfiguration) belongs to the application and is not
+            // touched. The replication connections can only be created from a connection string, so they log through
+            // the global logging.
+            var dataSource = _options.DataSourceBuilder.Build();
+
+            await using var dataSourceScope = dataSource.ConfigureAwait(false);
+
             while (!cancellationToken.IsCancellationRequested)
             {
-                var state = new ConnectionState(cancellationToken, _logger);
+                var state = new ConnectionState(dataSource, cancellationToken, _logger);
 
                 using (ExecutionContext.SuppressFlow())
                 {
@@ -126,7 +130,7 @@ namespace PgOutput2Json
                     if (!_options.UseTemporarySlot)
                     {
                         // the table sync must not start if this listener cannot get the slot
-                        await EnsureSlotIsFreeAsync(slotName, cancellationToken).ConfigureAwait(false);
+                        await EnsureSlotIsFreeAsync(dataSource, slotName, cancellationToken).ConfigureAwait(false);
 
                         slot = new PgOutputReplicationSlot(_options.ReplicationSlotName);
                     }
@@ -137,7 +141,7 @@ namespace PgOutput2Json
                     }
 
                     // registers the published tables and, with the initial copy on, syncs the new ones in the background
-                    var tableSync = state.TableSync = await TableSync.StartAsync(_messagePublisherFactory, _options, _jsonOptions, slotName, _loggerFactory, cancellationToken)
+                    var tableSync = state.TableSync = await TableSync.StartAsync(_messagePublisherFactory, _options, dataSource, _jsonOptions, slotName, _loggerFactory, cancellationToken)
                         .ConfigureAwait(false);
 
                     state.MessagePublisher = _messagePublisherFactory.CreateMessagePublisher(_options, slotName, _loggerFactory);
@@ -340,9 +344,9 @@ namespace PgOutput2Json
 
         private sealed class SlotTakenException(string message) : Exception(message);
 
-        private async Task EnsureSlotIsFreeAsync(string slotName, CancellationToken token)
+        private static async Task EnsureSlotIsFreeAsync(NpgsqlDataSource dataSource, string slotName, CancellationToken token)
         {
-            using var cn = new NpgsqlConnection(_options.ConnectionString);
+            using var cn = dataSource.CreateConnection();
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
@@ -486,7 +490,7 @@ namespace PgOutput2Json
 
             try
             {
-                await using var conn = new NpgsqlConnection(_options.ConnectionString);
+                await using var conn = cs.DataSource.CreateConnection();
                 await conn.OpenAsync(cs.CancellationToken).ConfigureAwait(false);
 
                 await using var cmd = new NpgsqlCommand(

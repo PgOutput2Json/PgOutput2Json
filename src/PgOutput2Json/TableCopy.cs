@@ -17,13 +17,14 @@ namespace PgOutput2Json
     {
         public static async Task<long> CopyAsync(IMessagePublisher publisher,
                                                  ReplicationListenerOptions listenerOptions,
+                                                 NpgsqlDataSource dataSource,
                                                  JsonOptions jsonOptions,
                                                  PublishedTable table,
                                                  string snapshotName,
                                                  ILogger? logger,
                                                  CancellationToken token)
         {
-            using var connection = new NpgsqlConnection(listenerOptions.ConnectionString);
+            using var connection = dataSource.CreateConnection();
 
             await connection.OpenAsync(token).ConfigureAwait(false);
 

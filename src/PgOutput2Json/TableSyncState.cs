@@ -43,9 +43,9 @@ namespace PgOutput2Json
         /// Brings the stored states in line with the publications and returns the state of every published table.
         /// With the initial copy off, every table is returned as ready, whatever is stored.
         /// </summary>
-        public static async Task<List<TableState>> RegisterTablesAsync(ReplicationListenerOptions options, ILogger? logger, CancellationToken token)
+        public static async Task<List<TableState>> RegisterTablesAsync(ReplicationListenerOptions options, NpgsqlDataSource dataSource, ILogger? logger, CancellationToken token)
         {
-            using var cn = new NpgsqlConnection(options.ConnectionString);
+            using var cn = dataSource.CreateConnection();
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
@@ -74,20 +74,20 @@ namespace PgOutput2Json
         /// <summary>
         /// A table of the publications by its oid, or null if the publications do not contain it.
         /// </summary>
-        public static async Task<PublishedTable?> FindPublishedTableAsync(ReplicationListenerOptions options, uint oid, CancellationToken token)
+        public static async Task<PublishedTable?> FindPublishedTableAsync(ReplicationListenerOptions options, NpgsqlDataSource dataSource, uint oid, CancellationToken token)
         {
-            using var cn = new NpgsqlConnection(options.ConnectionString);
+            using var cn = dataSource.CreateConnection();
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 
             return (await GetPublishedTablesAsync(cn, options, oid, token).ConfigureAwait(false)).FirstOrDefault();
         }
 
-        public static async Task SetStateAsync(ReplicationListenerOptions options, PublishedTable table, string state, ulong lsn, CancellationToken token)
+        public static async Task SetStateAsync(ReplicationListenerOptions options, NpgsqlDataSource dataSource, PublishedTable table, string state, ulong lsn, CancellationToken token)
         {
             if (!IsTracked(options)) return;
 
-            using var cn = new NpgsqlConnection(options.ConnectionString);
+            using var cn = dataSource.CreateConnection();
 
             await cn.OpenAsync(token).ConfigureAwait(false);
 

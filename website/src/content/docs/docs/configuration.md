@@ -22,7 +22,7 @@ using var pgOutput2Json = PgOutput2JsonBuilder.Create()
 | Method | What it does |
 |---|---|
 | `WithPgConnectionString(connectionString)` | The connection string. The user needs the `REPLICATION` attribute. Required, unless `WithPgDataSource` sets it. |
-| `WithPgDataSource(builder => ...)` | Configures the `NpgsqlDataSourceBuilder` directly. |
+| `WithPgDataSource(builder => ...)` | Configures the `NpgsqlDataSourceBuilder` directly. The replication connections use only its connection string (see [Logging](#logging)). |
 | `WithPgPublications(names)` | The publications to read. At least one is required. |
 | `WithPgReplicationSlot(name, useTemporarySlot = false)` | The replication slot. Without this call a temporary slot is used, and the changes made while the worker is stopped are lost. See [Permanent replication slots](../replication-slots/). |
 | `WithPgColumns(table, columns)` | The columns of a table to include in the JSON. All columns are included for a table that is not listed. |
@@ -113,4 +113,4 @@ Set with `WithJsonOptions(options => ...)`.
 
 ## Logging
 
-`WithLoggerFactory(loggerFactory)` sets the logger for the library and for Npgsql.
+`WithLoggerFactory(loggerFactory)` sets the logger for the library and for the Npgsql connections it opens. Npgsql creates replication connections from the connection string only, so the replication connections (the stream, and the sync slots of the initial copy) log through Npgsql's global logging. The library does not change the global logging: set it with `NpgsqlLoggingConfiguration.InitializeLogging` if you want those logs.
