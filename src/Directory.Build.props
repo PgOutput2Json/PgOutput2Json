@@ -16,11 +16,11 @@
                                   missing icon.png.
           Description             differs per package, and it is what readers
                                   of the NuGet page see.
-          icon.png / README.md    those item groups only belong to the 11
+          icon.png / README.md    those item groups only belong to the 12
                                   packable projects where the files exist.
     -->
     <PropertyGroup>
-        <Version>2.0.0-rc.1</Version>
+        <Version>2.0.0</Version>
         <Nullable>enable</Nullable>
         <ImplicitUsings>disable</ImplicitUsings>
         <Authors>PgOutput2Json</Authors>

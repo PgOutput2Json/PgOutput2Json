@@ -118,9 +118,9 @@ The rows of the initial data copy have change type `"C"` and no position: `"w"` 
 
 The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off; it has no effect on the other outputs. The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
 
-## ⚠️ Development Status
+## 🧪 Testing
 
-**Still early days** — the library is under active development, but it's **fully usable for testing and early integration**.
+Every output is covered by integration tests, which run on each change against PostgreSQL 14 to 18.
 
 ## 🤖 AI-assisted Development
 

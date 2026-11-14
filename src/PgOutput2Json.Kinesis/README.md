@@ -65,9 +65,9 @@ Consumers of the Kinesis stream must therefore be prepared for duplicated messag
 
 A `(w, n)` pair uniquely identifies a change event. A consumer that remembers the highest pair it processed, per table and shard, can skip anything at or below it.
 
-## ⚠️ Development Status
+## 🧪 Testing
 
-**Still early days** — the library is under active development, but it's **fully usable for testing and early integration**.
+Every output is covered by integration tests, which run on each change against PostgreSQL 14 to 18.
 
 ## Quick Start
 
