@@ -25,6 +25,12 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                                           string expectedKeyLast,
                                           string expectedCompositeKey)
         {
+            // the expected rows are multi-line literals in the tests, and a Windows checkout gives them CRLF line ends
+            expectedAfterCopy = expectedAfterCopy.ReplaceLineEndings("\n");
+            expected = expected.ReplaceLineEndings("\n");
+            expectedKeyLast = expectedKeyLast.ReplaceLineEndings("\n");
+            expectedCompositeKey = expectedCompositeKey.ReplaceLineEndings("\n");
+
             await Db.ExecuteAsync($@"
                 CREATE TABLE {name} (id int PRIMARY KEY, v text, n numeric(10,2), b bool, tags text[], d bytea, big text);
                 ALTER TABLE {name} ALTER COLUMN big SET STORAGE EXTERNAL;
