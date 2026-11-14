@@ -41,7 +41,8 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithPgConnectionString(Containers.PgConnectionString)
                 .WithPgPublications($"{name}_pub")
                 .WithPgReplicationSlot($"{name}_slot")
-                .WithIdleWalMessageInterval(TimeSpan.FromMilliseconds(200)));
+                .WithIdleWalMessageInterval(TimeSpan.FromMilliseconds(200))
+                .WithReconnectDelay(TimeSpan.FromMilliseconds(500)));
 
             Task<NpgsqlLogSequenceNumber> ConfirmedAsync() => Db.ScalarAsync<NpgsqlLogSequenceNumber>(
                 $"SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = '{name}_slot'");
@@ -74,7 +75,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     // the failure must reach the listener...
                     await Wait.UntilAsync(() => logs.Contains(LogLevel.Error, ""), "the failure to be logged", 90);
 
-                    // ...and the row must not be confirmed: the listener reconnects and tries it again, so give it time to get that wrong
+                    // ...and the row must not be confirmed: the listener reconnects and tries it again several times now
                     await Task.Delay(TimeSpan.FromSeconds(3));
 
                     var confirmed = await ConfirmedAsync();

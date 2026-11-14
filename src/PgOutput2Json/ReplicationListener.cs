@@ -314,12 +314,12 @@ namespace PgOutput2Json
                 {
                     if (ex is SlotTakenException || (ex is PostgresException pgEx && pgEx.SqlState == "55006"))
                     {
-                        _logger.SafeLogWarn("Slot taken - waiting for 10 seconds...");
+                        _logger.SafeLogWarn("Slot taken - waiting for {Seconds} seconds...", _options.ReconnectDelay.TotalSeconds);
                     }
                     else
                     {
                         MetricsHelper.IncrementErrorCounter();
-                        _logger.SafeLogError(ex, "Error in replication listener. Waiting for 10 seconds...");
+                        _logger.SafeLogError(ex, "Error in replication listener. Waiting for {Seconds} seconds...", _options.ReconnectDelay.TotalSeconds);
                     }
                 }
                 finally
@@ -331,7 +331,7 @@ namespace PgOutput2Json
                     }
                 }
 
-                await DelayAsync(10_000, cancellationToken)
+                await DelayAsync(_options.ReconnectDelay, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -455,7 +455,7 @@ namespace PgOutput2Json
                 try
                 {
                     MetricsHelper.IncrementErrorCounter();
-                    _logger.SafeLogError(ex, "Error confirming published messages. Waiting for 10 seconds...");
+                    _logger.SafeLogError(ex, "Error confirming published messages. Waiting for {Seconds} seconds...", _options.ReconnectDelay.TotalSeconds);
 
                     using (await _lock.LockAsync(cs.CancellationToken).ConfigureAwait(false))
                     {
@@ -530,7 +530,7 @@ namespace PgOutput2Json
         }
 #pragma warning restore VSTHRD100 // Avoid async void methods
 
-        private async Task DelayAsync(int time, CancellationToken cancellationToken)
+        private async Task DelayAsync(TimeSpan time, CancellationToken cancellationToken)
         {
             try
             {

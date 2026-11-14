@@ -135,11 +135,10 @@ namespace PgOutput2Json.IntegrationTests
                 }
             };
 
-            await using (new RunningListener(CreateBuilder("ls_fail", publisher).WithLoggerFactory(logs)))
+            await using (new RunningListener(CreateBuilder("ls_fail", publisher).WithLoggerFactory(logs).WithReconnectDelay(TimeSpan.FromMilliseconds(500))))
             {
                 await Db.ExecuteAsync("INSERT INTO ls_fail SELECT i, 'v' FROM generate_series(1, 4) i");
 
-                // the listener waits 10 seconds before it reconnects
                 await Wait.UntilAsync(() => publisher.Messages.Count >= 6, "the replay", 60);
                 await Wait.UntilAsync(() => publisher.ConfirmedBatches.Sum() >= 4, "the confirm");
             }
@@ -177,7 +176,7 @@ namespace PgOutput2Json.IntegrationTests
                 throw new InvalidOperationException("The output did not acknowledge");
             };
 
-            await using (new RunningListener(CreateBuilder("ls_cfail", publisher).WithLoggerFactory(logs)))
+            await using (new RunningListener(CreateBuilder("ls_cfail", publisher).WithLoggerFactory(logs).WithReconnectDelay(TimeSpan.FromMilliseconds(500))))
             {
                 await Db.ExecuteAsync("INSERT INTO ls_cfail VALUES (1, 'a'), (2, 'b')");
 
@@ -297,7 +296,7 @@ namespace PgOutput2Json.IntegrationTests
 
             var publisher = new CollectingPublisherFactory();
 
-            await using (new RunningListener(CreateBuilder("ls_missing", publisher).WithLoggerFactory(logs)))
+            await using (new RunningListener(CreateBuilder("ls_missing", publisher).WithLoggerFactory(logs).WithReconnectDelay(TimeSpan.FromMilliseconds(500))))
             {
                 await Wait.UntilAsync(() => logs.Contains(LogLevel.Error, "Replication slot ls_missing_slot does not exist"), "the error");
 
@@ -306,6 +305,30 @@ namespace PgOutput2Json.IntegrationTests
 
                 await Wait.UntilAsync(() => publisher.Messages.Count >= 1, "the row after the slot was created", 60);
             }
+        }
+
+        [TestMethod]
+        public async Task Reconnect_delay_should_set_the_time_between_attempts()
+        {
+            await CreateAsync("ls_delay", createSlot: false);
+
+            using var logs = new CollectingLoggerFactory();
+
+            var builder = CreateBuilder("ls_delay", new CollectingPublisherFactory())
+                .WithLoggerFactory(logs)
+                .WithReconnectDelay(TimeSpan.FromSeconds(2));
+
+            await using (new RunningListener(builder))
+            {
+                // the slot does not exist, so every attempt fails
+                await Task.Delay(TimeSpan.FromSeconds(5));
+            }
+
+            var attempts = logs.ToString().Split("Replication slot ls_delay_slot does not exist").Length - 1;
+
+            // at 0, 2 and 4 seconds, give or take one
+            Assert.IsTrue(attempts is >= 2 and <= 4, $"{attempts} attempts in 5 seconds");
+            Assert.IsTrue(logs.Contains(LogLevel.Error, "Waiting for 2 seconds"));
         }
 
         [TestMethod]

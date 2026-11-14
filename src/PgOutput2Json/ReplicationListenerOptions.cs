@@ -61,5 +61,12 @@ namespace PgOutput2Json
         /// Default is 10 seconds.
         /// </summary>
         public TimeSpan IdleWalMessageInterval { get; internal set; } = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// How long the listener waits after an error before it connects again and publishes the unconfirmed
+        /// changes again. A failed initial sync of a table waits the same time before it is tried again.
+        /// Default is 10 seconds.
+        /// </summary>
+        public TimeSpan ReconnectDelay { get; internal set; } = TimeSpan.FromSeconds(10);
     }
 }
