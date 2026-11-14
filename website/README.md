@@ -29,7 +29,7 @@ workflow, and on demand (Actions > Website > Run workflow). The repository's Set
 
 ## The domain
 
-The site is at `https://pgoutput2json.net/`. The address is set in three places, which must agree:
+The site is at `https://pg2json.com/`. The address is set in three places, which must agree:
 
 1. `SITE_URL` in `site.config.mjs`. The links, the canonical URLs, the sitemap, `/robots.txt` and `/llms.txt` are built from it.
 2. `public/CNAME`, the host name.

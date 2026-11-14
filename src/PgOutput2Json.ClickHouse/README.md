@@ -7,7 +7,7 @@ Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` wh
 
 The output uses the HTTP interface of ClickHouse and needs no ClickHouse client library. It is tested with ClickHouse 26.10.
 
-> **Important:** First set up PostgreSQL as described in [Getting started](https://pgoutput2json.net/docs/getting-started/).
+> **Important:** First set up PostgreSQL as described in [Getting started](https://pg2json.com/docs/getting-started/).
 
 ## How the rows are stored
 
@@ -15,7 +15,7 @@ A table is created the first time one of its rows arrives, as a `ReplacingMergeT
 
 ClickHouse is slow at updating and deleting rows, so the output never does either. Every change is inserted as a new row, with two extra columns:
 
-- `_version`: the position of the change in the PostgreSQL WAL (`w * 2^64 + n` of the [deduplication key](https://pgoutput2json.net/docs/deduplication/)). A copied row has version 0.
+- `_version`: the position of the change in the PostgreSQL WAL (`w * 2^64 + n` of the [deduplication key](https://pg2json.com/docs/deduplication/)). A copied row has version 0.
 - `_deleted`: 1 if the change is a delete.
 
 ClickHouse keeps the row with the highest version per key when it merges the parts of a table, which happens in the background at a time you cannot predict. Until then the older versions are still there, so **read the tables with `FINAL`**:
