@@ -50,7 +50,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithPgConnectionString(Containers.PgConnectionString)
                 .WithPgPublications($"{name}_pub")
                 .WithPgReplicationSlot($"{name}_slot")
-                .WithInitialDataCopy(true));
+                .WithInitialDataCopy(true))
+                // a store reads compact rows, wherever and however the write mode is set
+                .WithJsonOptions(options => options.WriteMode = JsonWriteMode.Default);
 
             async Task WaitForAsync(string table, string expectedRows, string what)
             {

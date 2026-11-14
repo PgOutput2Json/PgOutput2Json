@@ -105,7 +105,7 @@ Set with `WithJsonOptions(options => ...)`.
 
 | Option | Default | What it does |
 |---|---|---|
-| `WriteMode` | `Default` | `Compact` writes rows as arrays without column names. See [Compact mode](../change-events/#compact-mode). |
+| `WriteMode` | `Default` | `Compact` writes rows as arrays without column names. See [Compact mode](../change-events/#compact-mode). The outputs that store the rows (SQLite, MongoDB, DynamoDB, ClickHouse) ignore it. |
 | `WriteTableNames` | `false` | Adds the schema-qualified table name as `"t"`. |
 | `WriteNulls` | `false` | Writes columns with a `null` value. They are left out otherwise. |
 | `WriteTimestamps` | `false` | Adds the commit timestamp as `"cts"` and the message timestamp as `"mts"`. |

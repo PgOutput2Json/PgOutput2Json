@@ -3,7 +3,7 @@ title: ClickHouse
 description: Keep a copy of your PostgreSQL tables in ClickHouse with PgOutput2Json.ClickHouse.
 ---
 
-PgOutput2Json can keep a copy of your PostgreSQL tables in ClickHouse. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json can keep a copy of your PostgreSQL tables in ClickHouse. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The output uses the HTTP interface of ClickHouse and needs no ClickHouse client library. It is tested with ClickHouse 26.10.

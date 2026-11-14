@@ -9,10 +9,6 @@ namespace PgOutput2Json
         public static PgOutput2JsonBuilder UseSqlite(this PgOutput2JsonBuilder builder,
                                                      Action<SqlitePublisherOptions>? configureAction = null)
         {
-            // Sqlite only supports compact write mode (we have schema there)
-
-            builder.WithJsonOptions(options => options.WriteMode = JsonWriteMode.Compact);
-
             var options = new SqlitePublisherOptions 
             { 
                 ConnectionStringBuilder = new SqliteConnectionStringBuilder() 

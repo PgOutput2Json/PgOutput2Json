@@ -9,9 +9,6 @@ namespace PgOutput2Json
         public static PgOutput2JsonBuilder UseClickHouse(this PgOutput2JsonBuilder builder,
                                                          Action<ClickHousePublisherOptions>? configureAction = null)
         {
-            // the compact write mode has the column types, which the tables are created from
-            builder.WithJsonOptions(options => options.WriteMode = JsonWriteMode.Compact);
-
             // ClickHouse wants few, large inserts - WithBatchSize after UseClickHouse changes it
             builder.WithBatchSize(10_000);
 

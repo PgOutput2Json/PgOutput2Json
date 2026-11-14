@@ -8,8 +8,6 @@ namespace PgOutput2Json
     {
         public static PgOutput2JsonBuilder UseDynamoDb(this PgOutput2JsonBuilder builder, Action<DynamoDbPublisherOptions>? configureAction = null)
         {
-            // Mongo publisher only supports compact mode (for now)
-            builder.WithJsonOptions(options => options.WriteMode = JsonWriteMode.Compact);
             builder.WithBatchSize(25); // max for DynamoDB
 
             var options = new DynamoDbPublisherOptions

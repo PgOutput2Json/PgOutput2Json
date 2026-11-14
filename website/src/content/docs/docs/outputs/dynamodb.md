@@ -3,7 +3,7 @@ title: Amazon DynamoDB
 description: Copy changed PostgreSQL rows to Amazon DynamoDB tables with PgOutput2Json.DynamoDb.
 ---
 
-PgOutput2Json supports copying modified PostgreSQL rows to Amazon DynamoDB tables. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json supports copying modified PostgreSQL rows to Amazon DynamoDB tables. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create DynamoDB tables for each table included in logical replication.

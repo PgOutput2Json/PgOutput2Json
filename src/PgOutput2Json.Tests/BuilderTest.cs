@@ -74,5 +74,41 @@ namespace PgOutput2Json.Tests
         {
             AssertBuildFails(Valid().WithReconnectDelay(TimeSpan.FromSeconds(-1)), "Reconnect delay must not be negative");
         }
+
+        private sealed class Factory(JsonWriteMode? requiredWriteMode) : IMessagePublisherFactory
+        {
+            public JsonWriteMode? RequiredWriteMode => requiredWriteMode;
+
+            public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory)
+            {
+                throw new NotSupportedException();
+            }
+        }
+
+        [TestMethod]
+        public void Build_should_set_the_write_mode_an_output_requires_wherever_the_json_options_are_set()
+        {
+            var before = Valid().WithJsonOptions(o => o.WriteMode = JsonWriteMode.Default).WithMessagePublisherFactory(new Factory(JsonWriteMode.Compact));
+            var after = Valid().WithMessagePublisherFactory(new Factory(JsonWriteMode.Compact)).WithJsonOptions(o => o.WriteMode = JsonWriteMode.Default);
+
+            using var first = before.Build();
+            using var second = after.Build();
+
+            Assert.AreEqual(JsonWriteMode.Compact, before.JsonOptions.WriteMode);
+            Assert.AreEqual(JsonWriteMode.Compact, after.JsonOptions.WriteMode);
+        }
+
+        [TestMethod]
+        public void Build_should_keep_the_write_mode_for_an_output_that_requires_none()
+        {
+            var named = Valid().WithMessagePublisherFactory(new Factory(null));
+            var compact = Valid().WithMessagePublisherFactory(new Factory(null)).WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact);
+
+            using var first = named.Build();
+            using var second = compact.Build();
+
+            Assert.AreEqual(JsonWriteMode.Default, named.JsonOptions.WriteMode);
+            Assert.AreEqual(JsonWriteMode.Compact, compact.JsonOptions.WriteMode);
+        }
     }
 }

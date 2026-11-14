@@ -85,7 +85,9 @@ A large value that an update did not change is not sent by PostgreSQL. It is wri
 
 ### Compact Mode
 
-With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names. The SQLite, MongoDB, DynamoDB and ClickHouse adapters always use compact mode. The column names come in a schema property:
+Compact mode is off by default. Your message handler, the message brokers and the webhooks get `"k"` and `"r"` as objects with the column names, as shown above, unless you turn compact mode on.
+
+With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names, which makes the messages smaller. The column names come in a schema property:
 
 ```
 "s": ["schema.table", ["id", 1, 23], ["name", 0, 1043, 104], ...]
@@ -95,6 +97,8 @@ With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r
 The schema is not repeated in every message. It comes with the first row of a table after the listener connects, and again after the table changes. After a reconnect it is not always repeated for every table. **Consumers must remember the last schema per table** and decode rows with it, as the SQLite, MongoDB and DynamoDB adapters do. A consumer that starts reading in the middle of a stream must already know the schema, for example from its own store.
 
 Partitioned outputs (Kafka topics with more than one partition, RabbitMQ super streams, and Azure Event Hubs with partition-key columns) spread the rows of a table across partitions, so the schema lands only in the partition of the row it comes with. Consumers must therefore share the last schema per table across all partitions, for example in a common store.
+
+The outputs that store the rows (SQLite, MongoDB, DynamoDB, ClickHouse) work with compact rows internally, whatever `WriteMode` is set to. You never see that JSON, and there is nothing to configure for them.
 
 ## 🔁 Delivery and Deduplication
 
@@ -498,7 +502,7 @@ JSON messages will be published to the specified Redis stream. If a stream name 
 
 ## 7. Using SQLite
 
-PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication and compact JSON messages. 
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication. 
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.
@@ -548,7 +552,7 @@ public class Worker : BackgroundService
 
 ## 8. Using MongoDB
 
-PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. Collections are created the first time a row belonging to the respective table is changed. Additionally, one unique index is created for each collection, covering the fields that are a part of the primary key.
@@ -658,7 +662,7 @@ public class Worker : BackgroundService
 
 ## 10. Using Amazon DynamoDB
 
-PgOutput2Json supports copying modified PostgreSQL rows to Amazon DynamoDB tables. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json supports copying modified PostgreSQL rows to Amazon DynamoDB tables. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create DynamoDB tables for each table included in logical replication. 
@@ -878,7 +882,7 @@ In both cases, the request includes:
 
 ## 13. Using ClickHouse
 
-PgOutput2Json can keep a copy of your PostgreSQL tables in ClickHouse. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json can keep a copy of your PostgreSQL tables in ClickHouse. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The output uses the HTTP interface of ClickHouse and needs no ClickHouse client library. It is tested with ClickHouse 26.10.
