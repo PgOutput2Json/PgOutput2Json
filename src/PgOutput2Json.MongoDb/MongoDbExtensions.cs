@@ -221,7 +221,7 @@ namespace PgOutput2Json.MongoDb
                     else if (column.PgOid.IsJson())
                     {
                         var data = valElement.GetString();
-                        return data != null ? BsonDocument.Parse(data) : BsonNull.Value;
+                        return data != null ? ParseJson(data) : BsonNull.Value;
                     }
                     else
                     {
@@ -242,7 +242,7 @@ namespace PgOutput2Json.MongoDb
                     }
                     else if (column.PgOid.IsArrayOfJson())
                     {
-                        return ConvertArray(valElement, BsonDocument.Parse);
+                        return ConvertArray(valElement, ParseJson);
                     }
                     else
                     {
@@ -251,6 +251,17 @@ namespace PgOutput2Json.MongoDb
                 default:
                     return ConvertJsonElementToBsonValue(valElement);
             }
+        }
+
+        /// <summary>
+        /// The value of a json column: an object, but also an array, a number, a string, a boolean or null.
+        /// A key that is twice in an object keeps its last value, as in jsonb.
+        /// </summary>
+        private static BsonValue ParseJson(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+
+            return ConvertJsonElementToBsonValue(doc.RootElement);
         }
 
         private static BsonArray ConvertArray(JsonElement element, Func<string, BsonValue> converter, string? nullResult = null) 
@@ -308,18 +319,18 @@ namespace PgOutput2Json.MongoDb
 
                         return longValue;
                     }
-                    else if (element.TryGetSingle(out var floatValue))
-                    {
-                        return floatValue;
-                    }
-                    else if (element.TryGetDouble(out var doubleValue))
+                    else if (element.TryGetDouble(out var doubleValue) && !double.IsInfinity(doubleValue))
                     {
                         return doubleValue;
                     }
+                    else if (element.TryGetDecimal(out var decimalValue))
+                    {
+                        return decimalValue;
+                    }
                     else
                     {
-                        element.TryGetDecimal(out var decimalValue);
-                        return decimalValue;
+                        // too large for any number type of MongoDB
+                        return element.GetRawText();
                     }
                 case JsonValueKind.True:
                 case JsonValueKind.False:
