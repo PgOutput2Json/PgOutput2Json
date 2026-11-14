@@ -2,6 +2,8 @@
 
 **PgOutput2Json** is a .NET library that uses **PostgreSQL logical replication** to stream changes from your database to a .NET application, a message broker or another database. This package is its ClickHouse output.
 
+📖 **Documentation:** [pg2json.com](https://pg2json.com/)
+
 PgOutput2Json can keep a copy of your PostgreSQL tables in ClickHouse. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 

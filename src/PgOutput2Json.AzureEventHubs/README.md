@@ -2,6 +2,8 @@
 
 **PgOutput2Json** is a .NET library that uses **PostgreSQL logical replication** to stream **JSON-encoded change events** from your database to a .NET application or a message broker like **RabbitMQ**, **Kafka**, **Redis**, or **Azure Event Hubs**.
 
+📖 **Documentation:** [pg2json.com](https://pg2json.com/)
+
 ## 🚀 Use Cases
 
 Use `PgOutput2Json` when you need to react to DB changes in near real-time:
