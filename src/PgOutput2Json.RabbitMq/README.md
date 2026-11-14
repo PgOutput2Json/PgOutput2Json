@@ -2,6 +2,8 @@
 
 **PgOutput2Json** is a .NET library that uses **PostgreSQL logical replication** to stream **JSON-encoded change events** from your database to a .NET application or a message broker like **RabbitMQ**, **Kafka**, or **Redis**.
 
+📖 **Documentation:** [pg2json.com](https://pg2json.com/)
+
 ## 🚀 Use Cases
 
 Use `PgOutput2Json` when you need to react to DB changes in near real-time:
@@ -24,6 +26,7 @@ All with **minimal latency** — events are dispatched shortly after a transacti
 - ✅ **MongoDB**
 - ✅ **Amazon Kinesis**
 - ✅ **Amazon DynamoDB**
+- ✅ **ClickHouse**
 - ✅ **Azure Event Hubs**
 - ✅ **Webhooks** (used by [PgHook](https://github.com/PgHookCom/PgHook))
 
@@ -41,10 +44,12 @@ PostgreSQL 10+ ships with a built-in logical decoding plugin called `pgoutput`, 
 
 No extra plugins needed — `pgoutput` comes with PostgreSQL by default.
 
+PgOutput2Json needs **PostgreSQL 14 or newer**, and is tested with versions 14 to 18. Row filters and column lists in publications need PostgreSQL 15.
+
 The change events JSON format:
 ```
 {
-  "c": "U",             // Change type: I (insert), U (update), D (delete)
+  "c": "U",             // Change type: I (insert), U (update), D (delete), C (row of the initial data copy)
   "w": 2485645760,      // Transaction final LSN — part of the deduplication key
   "n": 1,               // Message number within the transaction — part of the deduplication key
   "t": "schema.table",  // Table name (if enabled in JSON options)
@@ -54,13 +59,78 @@ The change events JSON format:
 }
 ```
 
+### Message Key
+
+Besides the JSON, every message has a key: the values of the table's key columns, e.g. `[1]`. Depending on the output, it is the message key (Kafka), the routing or partition key (RabbitMQ, Redis, Kinesis, and Kafka without partition-key columns), or the message id (Azure Event Hubs, RabbitMQ Streams).
+
+The key columns are the **replica identity** columns PostgreSQL sends with the change. The replication protocol does not carry the primary key, and the library does not query the database while streaming, so:
+
+- `REPLICA IDENTITY DEFAULT`: the primary key, stable for all changes to a row.
+- `REPLICA IDENTITY USING INDEX`: the index columns.
+- `REPLICA IDENTITY FULL`: **all columns**, so the key changes with every update. Kafka log compaction, and routing by key, then treat each version of a row as a different row. Partition-key columns (`WithPartitionKeyFields`) keep the routing stable, but the Kafka message key still changes.
+- `REPLICA IDENTITY NOTHING`: empty.
+
+If the message key matters, use `DEFAULT`, or `USING INDEX` on a stable unique key. The initial data copy reads the primary key from the catalog, so for `FULL`, `NOTHING` and `USING INDEX` tables its keys differ from those of the streamed changes.
+
+### Values
+
+| PostgreSQL type | JSON |
+|---|---|
+| `smallint`, `integer`, `bigint`, `oid`, `numeric`, `real`, `double precision` | A number, with every digit PostgreSQL sent. `NaN`, `Infinity` and `-Infinity` are `null`, because JSON has no such numbers. |
+| `boolean` | `true` or `false` |
+| `bytea` | A string of hex digits, e.g. `"deadbeef"` |
+| Everything else, including `json`, `jsonb`, `uuid`, dates and timestamps | A string, in PostgreSQL's text format. `timestamptz` is in UTC. |
+| Arrays of the types above | A JSON array, nested for more dimensions. A `NULL` element is `null`. |
+| Arrays of other types (enums, user-defined types) | A string with the PostgreSQL array literal, e.g. `"{sad,happy}"` |
+
+A large value that an update did not change is not sent by PostgreSQL. It is written as `"__TOAST__"`.
+
+### Compact Mode
+
+Compact mode is off by default. Your message handler, the message brokers and the webhooks get `"k"` and `"r"` as objects with the column names, as shown above, unless you turn compact mode on.
+
+With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names, which makes the messages smaller. The column names come in a schema property:
+
+```
+"s": ["schema.table", ["id", 1, 23], ["name", 0, 1043, 104], ...]
+                       // column name, part of the key (1/0), type OID, type modifier (only if present)
+```
+
+The schema is not repeated in every message. It comes with the first row of a table after the listener connects, and again after the table changes. After a reconnect it is not always repeated for every table. **Consumers must remember the last schema per table** and decode rows with it, as the SQLite, MongoDB and DynamoDB adapters do. A consumer that starts reading in the middle of a stream must already know the schema, for example from its own store.
+
+Partitioned outputs (Kafka topics with more than one partition, RabbitMQ super streams, and Azure Event Hubs with partition-key columns) spread the rows of a table across partitions, so the schema lands only in the partition of the row it comes with. Consumers must therefore share the last schema per table across all partitions, for example in a common store.
+
+The outputs that store the rows (SQLite, MongoDB, DynamoDB, ClickHouse) work with compact rows internally, whatever `WriteMode` is set to. You never see that JSON, and there is nothing to configure for them.
+
+## 🔁 Delivery and Deduplication
+
+Delivery is **at-least-once**. A batch of changes is confirmed to PostgreSQL only after the output has acknowledged it. After a failure or a restart, PostgreSQL replays everything that was not confirmed, and those changes are published again, in their original order.
+
+A replay is usually one batch, but it can be more:
+
+- A transaction that was interrupted part-way is replayed from its start.
+- The position of a replication slot is persisted only at checkpoints, so after a PostgreSQL crash the slot can go back further.
+
+Every message carries a deduplication key: the transaction final LSN (`"w"`) plus the message number within that transaction (`"n"`). Consumers use it in one of two ways:
+
+- **Apply changes idempotently.** Upsert and delete by key. Replayed changes arrive in order, so the result is the same.
+- **Keep a watermark.** Remember the highest `(w, n)` pair processed and skip anything at or below it. Keep one watermark per table, in each partition or stream you read: the order is guaranteed only there. On Kafka, a message the broker rejects can arrive late and out of order; see the Kafka output for how to prevent that.
+
+The rows of the initial data copy have change type `"C"` and no position: `"w"` and `"n"` are 0. Upsert them by key and leave them out of the watermark. A copy that failed and started again publishes its rows again. While a table is being copied and synced, its changes are published behind the changes of the other tables, which is one more reason to keep the watermark per table.
+
+The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off; it has no effect on the other outputs. The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
+
 ## 🧪 Testing
 
 Every output is covered by integration tests, which run on each change against PostgreSQL 14 to 18.
 
-## 1. Quick Start
+## 🤖 AI-assisted Development
 
-### 1.1 Configure `postgresql.conf`
+For transparency: as of recently, we use AI tools (e.g. Claude Code) for some development tasks — writing and reviewing code, tests, and documentation, and analyzing issues. AI-assisted changes go through the same review and testing as everything else before they are merged into a release.
+
+## Quick Start
+
+### Configure `postgresql.conf`
 
 To enable logical replication, add the following setting in your `postgresql.conf`:
 
@@ -77,7 +147,7 @@ Other necessary settings usually have appropriate default values for a basic set
 
 > **Note:** PostgreSQL must be **restarted** after modifying this setting.
 
-### 1.2 Create a Replication User
+### Create a Replication User
 
 Next, create a user in PostgreSQL that will be used for replication. Run the following SQL command:
 
@@ -93,7 +163,7 @@ If you are connecting from a remote machine, don't forget to modify `pg_hba.conf
 - Running `pg_ctl reload`  
 - Or executing: `SELECT pg_reload_conf();`
 
-### 1.3 Create a Publication
+### Create a Publication
 
 Now, connect to the target database and create a publication to specify which tables and actions should be replicated:
 
@@ -105,9 +175,11 @@ CREATE PUBLICATION my_publication
 
 In the example code below, we'll assume the database name is `my_database`.
 
-### Create Topic Exchange
+## Using RabbitMQ
 
 This document assumes you have a running RabbitMQ instance working on the default port, with the default `guest`/`guest` user allowed from the localhost.
+
+### Create Topic Exchange
 
 In RabbitMQ, create a `durable` `topic` type `exchange` where PgOutput2Json will be pushing JSON messages. We will assume the name of the exchange is `my_exchange` in the `/` virtual host.
 
@@ -131,41 +203,41 @@ In your `Worker.cs`, add the following code:
 using PgOutput2Json;
 using PgOutput2Json.RabbitMq;
 
-public class Worker : BackgroundService  
-{  
-    private readonly ILoggerFactory _loggerFactory;  
+public class Worker : BackgroundService
+{
+    private readonly ILoggerFactory _loggerFactory;
 
-    public Worker(ILoggerFactory loggerFactory)  
-    {  
-        _loggerFactory = loggerFactory;  
-    }  
+    public Worker(ILoggerFactory loggerFactory)
+    {
+        _loggerFactory = loggerFactory;
+    }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)  
-    {  
-        // This code assumes PostgreSQL and RabbitMQ are on localhost  
-        using var pgOutput2Json = PgOutput2JsonBuilder.Create()  
-            .WithLoggerFactory(_loggerFactory)  
-            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")  
-            .WithPgPublications("my_publication")  
-            .UseRabbitMq(options =>  
-            {  
-                options.HostNames = [ "localhost" ];  
-                options.Username = "guest";  
-                options.Password = "guest";  
-                options.VirtualHost = "/";  
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // This code assumes PostgreSQL and RabbitMQ are on localhost
+        using var pgOutput2Json = PgOutput2JsonBuilder.Create()
+            .WithLoggerFactory(_loggerFactory)
+            .WithPgConnectionString("server=localhost;database=my_database;username=pgoutput2json;password=_your_password_here_")
+            .WithPgPublications("my_publication")
+            .UseRabbitMq(options =>
+            {
+                options.HostNames = [ "localhost" ];
+                options.Username = "guest";
+                options.Password = "guest";
+                options.VirtualHost = "/";
                 options.ExchangeName = "my_exchange";
 
                 // set to true for persistent messages
-                options.UsePersistentMessagesByDefault = false; 
-            })  
-            .Build();  
+                options.UsePersistentMessagesByDefault = false;
+            })
+            .Build();
 
-        await pgOutput2Json.StartAsync(stoppingToken);  
-    }  
+        await pgOutput2Json.StartAsync(stoppingToken);
+    }
 }
 ```
 
-Run the code, and with a little luck, you should see JSON messages being pushed into the `my_queue` in RabbitMQ when you make a change in the tables specified in `my_publication`. 
+Run the code, and with a little luck, you should see JSON messages being pushed into the `my_queue` in RabbitMQ when you make a change in the tables specified in `my_publication`.
 The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
 
 > **Note:** This example uses a **temporary replication slot**, meaning it won’t capture changes made while the worker was stopped.
@@ -210,4 +282,3 @@ using var pgOutput2Json = PgOutput2JsonBuilder.Create()
     .WithPgReplicationSlot("my_slot")      // <-- slot specified here
 //...
 ```
-
