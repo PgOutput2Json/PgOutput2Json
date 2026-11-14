@@ -3,7 +3,7 @@ title: SQLite
 description: Copy changed PostgreSQL rows to a SQLite database with PgOutput2Json.Sqlite.
 ---
 
-PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json supports copying modified PostgreSQL rows to SQLite. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.

@@ -22,6 +22,9 @@ namespace PgOutput2Json.ClickHouse
                 LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
+        // the compact write mode has the column types, and the JSON is not seen outside the output
+        public JsonWriteMode? RequiredWriteMode => JsonWriteMode.Compact;
+
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
             return new ClickHousePublisher(_options, _client.Value, loggerFactory?.CreateLogger<ClickHousePublisher>());

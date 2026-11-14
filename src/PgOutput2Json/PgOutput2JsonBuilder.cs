@@ -10,6 +10,8 @@ namespace PgOutput2Json
         private ILoggerFactory? _loggerFactory;
 
         private readonly JsonOptions _jsonOptions = new();
+
+        internal JsonOptions JsonOptions => _jsonOptions;
         private readonly ReplicationListenerOptions _listenerOptions = new();
 
         public static PgOutput2JsonBuilder Create()
@@ -143,6 +145,12 @@ namespace PgOutput2Json
             if (_messagePublisherFactory == null)
             {
                 throw new InvalidOperationException("MessagePublisherFactory must be provided");
+            }
+
+            // an output that reads the rows itself (the stores) needs its write mode, wherever WithJsonOptions was called
+            if (_messagePublisherFactory.RequiredWriteMode is { } requiredWriteMode)
+            {
+                _jsonOptions.WriteMode = requiredWriteMode;
             }
 
             if (_listenerOptions.BatchSize <= 0)

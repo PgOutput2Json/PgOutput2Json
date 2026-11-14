@@ -107,7 +107,7 @@ In the example code below, we'll assume the database name is `my_database`.
 
 ### Setup MongoDB
 
-PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. By default, rows are copied only when they change, using logical replication and compact JSON messages.
+PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. 

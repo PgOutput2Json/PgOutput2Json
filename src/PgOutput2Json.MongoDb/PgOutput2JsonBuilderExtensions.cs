@@ -9,9 +9,6 @@ namespace PgOutput2Json
         public static PgOutput2JsonBuilder UseMongoDb(this PgOutput2JsonBuilder builder,
                                                       Action<MongoDbPublisherOptions>? configureAction = null)
         {
-            // Mongo publisher only supports compact mode (for now)
-            builder.WithJsonOptions(options => options.WriteMode = JsonWriteMode.Compact);
-
             var options = new MongoDbPublisherOptions
             {
                 ClientSettings = new MongoClientSettings

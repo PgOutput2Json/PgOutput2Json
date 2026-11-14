@@ -11,6 +11,9 @@ namespace PgOutput2Json.Sqlite
             _options = options;
         }
 
+        // the compact write mode has the column types, and the JSON is not seen outside the output
+        public JsonWriteMode? RequiredWriteMode => JsonWriteMode.Compact;
+
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
             return new SqlitePublisher(_options, loggerFactory?.CreateLogger<SqlitePublisher>());
