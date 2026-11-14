@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Testcontainers.DynamoDb;
+using Testcontainers.EventHubs;
 using Testcontainers.Kafka;
 using Testcontainers.LocalStack;
 using Testcontainers.MongoDb;
@@ -25,6 +26,7 @@ namespace PgOutput2Json.IntegrationTests
         private static RabbitMqContainer? _rabbitMq;
         private static RedisContainer? _redis;
         private static LocalStackContainer? _localStack;
+        private static EventHubsContainer? _eventHubs;
 
         public static string PgConnectionString => _postgres!.GetConnectionString();
 
@@ -151,6 +153,46 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         /// <summary>
+        /// The event hubs of the emulator and their partition counts. The emulator cannot create an event hub
+        /// while it runs, so every test that needs one adds it here.
+        /// </summary>
+        public static readonly (string Name, int Partitions)[] EventHubs =
+        [
+            ("eh_plain", 1),
+            ("eh_route_table", 4),
+            ("eh_route_pk", 4),
+            ("of_eventhub", 1),
+        ];
+
+        /// <summary>
+        /// The Event Hubs emulator of Microsoft (with its Azurite container, which the builder starts).
+        /// </summary>
+        public static async Task<string> GetEventHubsConnectionStringAsync()
+        {
+            if (_eventHubs == null)
+            {
+                var configuration = EventHubsServiceConfiguration.Create();
+
+                foreach (var (name, partitions) in EventHubs)
+                {
+                    configuration = configuration.WithEntity(name, partitions, ["test"]);
+                }
+
+                var container = new EventHubsBuilder("mcr.microsoft.com/azure-messaging/eventhubs-emulator:latest")
+                    .WithAcceptLicenseAgreement(true)
+                    .WithConfigurationBuilder(configuration)
+                    .WithPortBinding(FreePort(), 5672)
+                    .Build();
+
+                await StartWithRetryAsync(container);
+
+                _eventHubs = container;
+            }
+
+            return _eventHubs.GetConnectionString();
+        }
+
+        /// <summary>
         /// The containers that the failure tests stop and start again have a fixed host port,
         /// because a random one changes with every start.
         /// </summary>
@@ -175,6 +217,7 @@ namespace PgOutput2Json.IntegrationTests
 
         public static DotNet.Testcontainers.Containers.IContainer DynamoDb => _dynamoDb!;
         public static DotNet.Testcontainers.Containers.IContainer Redis => _redis!;
+        public static DotNet.Testcontainers.Containers.IContainer EventHubsEmulator => _eventHubs!;
 
         /// <summary>
         /// Starting a container pulls its image, and a pull fails now and then, mostly on a CI runner.
@@ -206,6 +249,7 @@ namespace PgOutput2Json.IntegrationTests
             if (_rabbitMq != null) await _rabbitMq.DisposeAsync();
             if (_redis != null) await _redis.DisposeAsync();
             if (_localStack != null) await _localStack.DisposeAsync();
+            if (_eventHubs != null) await _eventHubs.DisposeAsync();
             if (_postgres != null) await _postgres.DisposeAsync();
         }
     }

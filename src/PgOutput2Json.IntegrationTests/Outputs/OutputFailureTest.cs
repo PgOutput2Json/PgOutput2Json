@@ -10,6 +10,9 @@ using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Amazon.Kinesis;
 using Amazon.Kinesis.Model;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Consumer;
+using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Data.Sqlite;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using MongoDB.Bson;
@@ -125,6 +128,65 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
+        public async Task RabbitMq_super_stream_that_does_not_exist_should_not_confirm_and_deliver_once_it_exists()
+        {
+            await Containers.GetRabbitMqAsync();
+
+            var endpoint = new IPEndPoint(IPAddress.Loopback, Containers.RabbitMqStreamPort);
+
+            StreamSystemConfig CreateConfig() => new()
+            {
+                UserName = "rabbitmq",
+                Password = "rabbitmq",
+                Endpoints = [endpoint],
+                AddressResolver = new AddressResolver(endpoint),
+            };
+
+            var system = await StreamSystem.Create(CreateConfig());
+
+            var bodies = new List<string>();
+            Consumer? consumer = null;
+
+            try
+            {
+                await FailureScenario.RunAsync("of_super",
+                    builder => builder.UseRabbitMqStreams(options =>
+                    {
+                        options.StreamName = "of_super";
+                        options.IsSuperStream = true;
+                        options.StreamSystemConfig = CreateConfig();
+                    }),
+                    breakAsync: () => Task.FromResult<Func<Task>>(async () =>
+                    {
+                        await system.CreateSuperStream(new PartitionsSuperStreamSpec("of_super", 2));
+
+                        consumer = await Consumer.Create(new ConsumerConfig(system, "of_super")
+                        {
+                            IsSuperStream = true,
+                            OffsetSpec = new OffsetTypeFirst(),
+                            MessageHandler = (_, _, _, message) =>
+                            {
+                                lock (bodies) bodies.Add(Encoding.UTF8.GetString(message.Data.Contents));
+
+                                return Task.CompletedTask;
+                            },
+                        });
+                    }),
+                    readIdsAsync: () =>
+                    {
+                        lock (bodies) return Task.FromResult(FailureScenario.Ids(bodies));
+                    },
+                    breakBeforeStart: true);
+            }
+            finally
+            {
+                if (consumer != null) await consumer.Close();
+
+                await system.Close();
+            }
+        }
+
+        [TestMethod]
         public async Task Kinesis_stream_that_does_not_exist_should_not_confirm_and_deliver_once_it_exists()
         {
             var config = new AmazonKinesisConfig { ServiceURL = await Containers.GetLocalStackUrlAsync(), AuthenticationRegion = "us-east-1" };
@@ -187,6 +249,37 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                         return FailureScenario.Ids((await redis.GetDatabase().StreamRangeAsync("of_redis")).Select(e => e["m"].ToString()));
                     }
                     catch (RedisException)
+                    {
+                        return [];
+                    }
+                });
+        }
+
+        [TestMethod]
+        public async Task Event_hubs_that_go_down_should_not_confirm_and_deliver_once_they_are_back()
+        {
+            var connectionString = await Containers.GetEventHubsConnectionStringAsync();
+
+            // the default is three more attempts of a minute each
+            var retry = new EventHubsRetryOptions { MaximumRetries = 0, TryTimeout = TimeSpan.FromSeconds(5) };
+
+            await FailureScenario.RunAsync("of_eventhub",
+                builder => builder.UseEventHubs(options =>
+                {
+                    options.ConnectionString = connectionString;
+                    options.EventHubName = "of_eventhub";
+                    options.ClientOptions = new EventHubProducerClientOptions { RetryOptions = retry };
+                }),
+                breakAsync: () => Containers.StopAsync(Containers.EventHubsEmulator),
+                readIdsAsync: async () =>
+                {
+                    try
+                    {
+                        var events = await EventHubsPublisherTest.ReadAsync(connectionString, "of_eventhub", new EventHubConsumerClientOptions { RetryOptions = retry });
+
+                        return FailureScenario.Ids(events.Select(e => e.Event.EventBody.ToString()));
+                    }
+                    catch (Exception ex) when (ex is EventHubsException or OperationCanceledException or TimeoutException or System.Net.Sockets.SocketException)
                     {
                         return [];
                     }
