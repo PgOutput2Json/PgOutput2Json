@@ -11,6 +11,7 @@ namespace PgOutput2Json.ClickHouse
         Other,
         Date,
         Timestamp,
+        Json,
     }
 
     internal sealed class ClickHouseColumn
@@ -116,7 +117,7 @@ namespace PgOutput2Json.ClickHouse
         /// <summary>
         /// Reads the schema of the compact write mode: the table name, then [name, isKey, type oid, type modifier] per column.
         /// </summary>
-        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement)
+        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType)
         {
             if (schemaElement.ValueKind != JsonValueKind.Array) throw new Exception("Invalid schema - expected array");
 
@@ -136,16 +137,22 @@ namespace PgOutput2Json.ClickHouse
                 var name = columnElement[0].GetString() ?? string.Empty;
                 var oid = columnElement[2].GetUInt32();
 
+                var isKey = columnElement[1].GetInt32() == 1;
+
                 var typeModifier = columnElement.GetArrayLength() > 3 && columnElement[3].TryGetInt32(out var modifier) ? modifier : -1;
+
+                // a table cannot be ordered by a JSON column, so a json column of the key stays a String
+                var isJson = useJsonType && !isKey && oid is (uint)PgOid.JSONOID or (uint)PgOid.JSONBOID;
 
                 columns.Add(new ClickHouseColumn
                 {
                     Name = name,
                     QuotedName = Quote(name),
-                    IsKey = columnElement[1].GetInt32() == 1,
-                    Type = GetType(oid, typeModifier),
+                    IsKey = isKey,
+                    Type = isJson ? "JSON" : GetType(oid, typeModifier),
                     Kind = oid == (uint)PgOid.DATEOID ? ColumnKind.Date
                         : oid is (uint)PgOid.TIMESTAMPOID or (uint)PgOid.TIMESTAMPTZOID ? ColumnKind.Timestamp
+                        : isJson ? ColumnKind.Json
                         : ColumnKind.Other,
                 });
             }
@@ -155,7 +162,7 @@ namespace PgOutput2Json.ClickHouse
 
         /// <summary>
         /// Anything without a type of its own in ClickHouse is a String with the text PostgreSQL sends.
-        /// Arrays and json are Strings too, with the JSON text.
+        /// Arrays are Strings too, with the JSON text, and so is json when the JSON type is not used.
         /// </summary>
         internal static string GetType(uint oid, int typeModifier)
         {

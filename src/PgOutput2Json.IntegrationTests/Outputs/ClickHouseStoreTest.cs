@@ -51,7 +51,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
         /// <summary>
         /// The current rows of the table as JSON arrays, without the version and the deleted flag, ordered by <paramref name="orderBy"/>.
-        /// A long text is shortened to its first character and its length.
+        /// A long run of x is shortened to x and its length.
         /// </summary>
         public static async Task<string> ReadAsync(string endpoint, string table, string orderBy = "id", bool final = true)
         {
@@ -63,10 +63,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             {
                 using var json = JsonDocument.Parse(line);
 
-                return "[" + string.Join(",", json.RootElement.EnumerateArray().Select(value =>
-                    value.ValueKind == JsonValueKind.String && value.GetString()!.Length > 100
-                        ? $"\"{value.GetString()![0]}*{value.GetString()!.Length}\""
-                        : value.GetRawText())) + "]";
+                var row = "[" + string.Join(",", json.RootElement.EnumerateArray().Select(value => value.GetRawText())) + "]";
+
+                return System.Text.RegularExpressions.Regex.Replace(row, "x{100,}", match => $"x*{match.Length}");
             }));
         }
 
@@ -105,7 +104,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         /// <summary>
         /// Runs a listener with ClickHouse as the output on a publication of the tables, while <paramref name="changeAsync"/> runs.
         /// </summary>
-        private static async Task<string> RunAsync(string name, string tables, Func<string, Task> changeAsync)
+        private static async Task<string> RunAsync(string name, string tables, Func<string, Task> changeAsync, Action<ClickHousePublisherOptions>? configure = null)
         {
             var endpoint = await Containers.GetClickHouseEndpointAsync();
 
@@ -119,7 +118,11 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithPgConnectionString(Containers.PgConnectionString)
                 .WithPgPublications($"{name}_pub")
                 .WithPgReplicationSlot($"{name}_slot")
-                .UseClickHouse(options => Configure(options, endpoint));
+                .UseClickHouse(options =>
+                {
+                    Configure(options, endpoint);
+                    configure?.Invoke(options);
+                });
 
             await using (new RunningListener(builder))
             {
@@ -167,7 +170,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 // NaN is null, as in the JSON; a date ClickHouse cannot store is the first or the last one it can
                 await WaitForAsync(endpoint, "clk_types",
                     """
-                    [1,-2,9223372036854775807,12345678901234567890.123456789,1.5,1.5,1e300,true,"deadbeef","quote\" back\\ nl\n tab\t unié 😀","a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","2024-02-29","2024-02-29 12:34:56.789000","2024-02-29 10:34:56.789000","12:34:56","1 day","{\"a\": 1}","[[1,2],[3,4]]","happy"]
+                    [1,-2,9223372036854775807,12345678901234567890.123456789,1.5,1.5,1e300,true,"deadbeef","quote\" back\\ nl\n tab\t unié 😀","a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","2024-02-29","2024-02-29 12:34:56.789000","2024-02-29 10:34:56.789000","12:34:56","1 day",{"a":1},"[[1,2],[3,4]]","happy"]
                     [2,null,null,null,null,null,null,null,null,null,null,"9999-12-31","0001-01-01 00:00:00.000000","9999-12-31 23:59:59.999999",null,null,null,null,null]
                     [3,null,null,null,null,null,null,null,null,null,null,"0001-01-01","9999-12-31 23:59:59.999999","0001-01-01 00:00:00.000000",null,null,null,null,null]
                     """);
@@ -176,7 +179,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             Assert.AreEqual(
                 "id Int32, i2 Nullable(Int16), i8 Nullable(Int64), num Nullable(Decimal(76, 38)), n2 Nullable(Decimal(12, 4)), f4 Nullable(Float32), " +
                 "f8 Nullable(Float64), b Nullable(Bool), by Nullable(String), t Nullable(String), u Nullable(UUID), d Nullable(Date32), " +
-                "ts Nullable(DateTime64(6)), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(String), " +
+                "ts Nullable(DateTime64(6)), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
                 "a Nullable(String), mood Nullable(String), _version UInt128, _deleted UInt8",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_types' ORDER BY position) FORMAT TSVRaw"));
         }
@@ -267,6 +270,62 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     ["z",null,3,9]
                     """, "code");
             });
+        }
+
+        [TestMethod]
+        public async Task Json_should_be_stored_in_the_JSON_type_with_other_values_than_objects_wrapped()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE clk_json (id int PRIMARY KEY, j json, jb jsonb, v int);
+                ALTER TABLE clk_json ALTER COLUMN jb SET STORAGE EXTERNAL;");
+
+            await RunAsync("clk_json", "clk_json", async endpoint =>
+            {
+                // json keeps its text, with the line break; row 6 has a jsonb too large to be sent again with an update;
+                // row 7 has what ClickHouse would reject: a key twice, a number above the largest double and two keys with the same path
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_json VALUES
+                        (1, E'{""a"": 1,\n ""b"": {""c"": [1, ""x""]}}', '{""a"": 1, ""t"": ""quote\"" é""}', 1),
+                        (2, '[1, 2]', '[{""a"": 1}]', 1),
+                        (3, '5', '""text""', 1),
+                        (4, 'null', 'true', 1),
+                        (5, NULL, NULL, 1),
+                        (6, '{}', jsonb_build_object('big', repeat('x', 3000)), 1),
+                        (7, '{""a"": 1, ""a"": 2, ""n"": 1e400, ""o"": {""a.b"": 1, ""a"": {""b"": 2}}}', NULL, 1);
+                    UPDATE clk_json SET v = 2 WHERE id = 6;");
+
+                await WaitForAsync(endpoint, "clk_json",
+                    """
+                    [1,{"a":1,"b":{"c":[1,"x"]}},{"a":1,"t":"quote\" é"},1]
+                    [2,{"v":[1,2]},{"v":[{"a":1}]},1]
+                    [3,{"v":5},{"v":"text"},1]
+                    [4,{},{"v":true},1]
+                    [5,null,null,1]
+                    [6,{},{"big":"x*3000"},2]
+                    [7,{"a":2,"n":"1e400","o":{"a":{"b":1}}},null,1]
+                    """);
+            });
+        }
+
+        [TestMethod]
+        public async Task Json_should_be_stored_as_text_without_the_JSON_type()
+        {
+            await Db.ExecuteAsync("CREATE TABLE clk_jtext (id int PRIMARY KEY, jb jsonb)");
+
+            var endpoint = await RunAsync("clk_jtext", "clk_jtext", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"INSERT INTO clk_jtext VALUES (1, '{""a"": 1}'), (2, '[1, 2]'), (3, NULL)");
+
+                await WaitForAsync(endpoint, "clk_jtext",
+                    """
+                    [1,"{\"a\": 1}"]
+                    [2,"[1, 2]"]
+                    [3,null]
+                    """);
+            },
+            options => options.UseJsonType = false);
+
+            Assert.AreEqual("Nullable(String)", await QueryAsync(endpoint, $"SELECT type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_jtext' AND name = 'jb'"));
         }
     }
 }

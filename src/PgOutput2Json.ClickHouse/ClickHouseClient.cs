@@ -32,6 +32,12 @@ namespace PgOutput2Json.ClickHouse
             // set either way: the default of the server depends on its version
             url.Append(options.UseAsyncInserts ? "&async_insert=1&wait_for_async_insert=1" : "&async_insert=0");
 
+            // two keys of a json value can lead to the same path ("a.b" and "b" inside "a"): one of them is kept, instead of the row rejected
+            if (options.UseJsonType)
+            {
+                url.Append("&type_json_skip_duplicated_paths=1");
+            }
+
             foreach (var setting in options.Settings)
             {
                 url.Append('&').Append(Uri.EscapeDataString(setting.Key)).Append('=').Append(Uri.EscapeDataString(setting.Value));

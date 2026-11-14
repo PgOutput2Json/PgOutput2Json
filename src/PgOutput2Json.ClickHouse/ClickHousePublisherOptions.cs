@@ -27,6 +27,13 @@ namespace PgOutput2Json.ClickHouse
         public bool UseAsyncInserts { get; set; } = true;
 
         /// <summary>
+        /// Stores json and jsonb columns in the JSON type of ClickHouse (version 25.3 or newer). The JSON type holds
+        /// only objects, so any other value (an array, a number, a string, a JSON null) is stored as {"v": value}.
+        /// With false the columns are Strings with the JSON text. Default is true.
+        /// </summary>
+        public bool UseJsonType { get; set; } = true;
+
+        /// <summary>
         /// ClickHouse settings sent with every request, e.g. "insert_quorum".
         /// </summary>
         public Dictionary<string, string> Settings { get; } = [];

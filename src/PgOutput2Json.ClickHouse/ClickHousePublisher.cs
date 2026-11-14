@@ -144,7 +144,7 @@ namespace PgOutput2Json.ClickHouse
                 await FlushAsync(existing, token).ConfigureAwait(false);
             }
 
-            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement);
+            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType);
 
             await _client.ExecuteAsync(table.GetCreateStatement(), null, null, token).ConfigureAwait(false);
 
@@ -181,7 +181,11 @@ namespace PgOutput2Json.ClickHouse
 
         private static void AppendValue(StringBuilder line, ClickHouseColumn column, JsonElement value)
         {
-            if (column.Kind != ColumnKind.Other && value.ValueKind == JsonValueKind.String)
+            if (column.Kind == ColumnKind.Json && value.ValueKind == JsonValueKind.String)
+            {
+                AppendJson(line, value.GetString()!);
+            }
+            else if (column.Kind is ColumnKind.Date or ColumnKind.Timestamp && value.ValueKind == JsonValueKind.String)
             {
                 line.Append('"').Append(Clamp(column.Kind, value.GetString()!)).Append('"');
             }
@@ -189,6 +193,100 @@ namespace PgOutput2Json.ClickHouse
             {
                 line.Append(value.GetRawText());
             }
+        }
+
+        /// <summary>
+        /// The value of a json column comes as a string with the JSON text. The JSON type of ClickHouse takes it as it is,
+        /// but holds only objects: any other value is stored as {"v": value}.
+        /// </summary>
+        internal static void AppendJson(StringBuilder line, string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+
+            var isObject = doc.RootElement.ValueKind == JsonValueKind.Object;
+
+            if (!isObject) line.Append("{\"v\":");
+
+            // the text of a json column can have line breaks, and a row must be one line
+            using (var stream = new System.IO.MemoryStream())
+            {
+                using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+                {
+                    WriteJson(writer, doc.RootElement);
+                }
+
+                line.Append(Encoding.UTF8.GetString(stream.GetBuffer(), 0, (int)stream.Length));
+            }
+
+            if (!isObject) line.Append('}');
+        }
+
+        /// <summary>
+        /// Writes the value without what ClickHouse rejects in a JSON column: a key that is twice in an object
+        /// (the last one wins, as in jsonb) and a number too large for a double (written as a string).
+        /// </summary>
+        private static void WriteJson(Utf8JsonWriter writer, JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    writer.WriteStartObject();
+
+                    HashSet<string>? names = null;
+                    var hasDuplicates = false;
+
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        if (!(names ??= []).Add(property.Name)) hasDuplicates = true;
+                    }
+
+                    var index = 0;
+
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        index++;
+
+                        if (hasDuplicates && IsRepeatedLater(element, property.Name, index)) continue;
+
+                        writer.WritePropertyName(property.Name);
+
+                        WriteJson(writer, property.Value);
+                    }
+
+                    writer.WriteEndObject();
+                    break;
+
+                case JsonValueKind.Array:
+                    writer.WriteStartArray();
+
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        WriteJson(writer, item);
+                    }
+
+                    writer.WriteEndArray();
+                    break;
+
+                case JsonValueKind.Number when element.TryGetDouble(out var number) && double.IsInfinity(number):
+                    writer.WriteStringValue(element.GetRawText());
+                    break;
+
+                default:
+                    element.WriteTo(writer);
+                    break;
+            }
+        }
+
+        private static bool IsRepeatedLater(JsonElement element, string name, int skip)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (skip-- > 0) continue;
+
+                if (property.NameEquals(name)) return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -292,7 +390,7 @@ namespace PgOutput2Json.ClickHouse
 
                 var text = keyValue.ValueKind == JsonValueKind.String ? keyValue.GetString()! : keyValue.GetRawText();
 
-                if (column.Kind != ColumnKind.Other) text = Clamp(column.Kind, text);
+                if (column.Kind is ColumnKind.Date or ColumnKind.Timestamp) text = Clamp(column.Kind, text);
 
                 conditions.Add($"{column.QuotedName} = {{k{keyIndex}:{column.Type}}}");
                 parameters.Add(new($"k{keyIndex}", EscapeParameter(text)));

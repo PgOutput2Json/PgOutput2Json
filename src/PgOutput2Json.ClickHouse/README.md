@@ -34,7 +34,7 @@ The row of a delete stays in the table as a marker. ClickHouse can remove the ma
 
 - A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself.
 - A table that already exists is used as it is. To choose the engine (for example a replicated one), the partitioning or the column types, create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`.
-- A column added in PostgreSQL is added in ClickHouse. A column dropped in PostgreSQL stays. A changed column type or a changed key is not followed: change the ClickHouse table yourself.
+- A column added in PostgreSQL is added in ClickHouse. A column dropped in PostgreSQL stays. A changed column type is not followed: change the ClickHouse table yourself. Neither is a changed primary key definition (other key columns), because ClickHouse cannot change the order of an existing table: drop the ClickHouse table and copy it again. An update that changes the key value of a row is followed.
 - The database must exist.
 
 ## Column types
@@ -51,11 +51,26 @@ The row of a delete stays in the table as a marker. ClickHouse can remove the ma
 | `timestamp` | `DateTime64(6)` |
 | `timestamptz` | `DateTime64(6, 'UTC')` |
 | arrays | `String` with the JSON text, e.g. `[1,2,null]` |
-| `json`, `jsonb` | `String` with the JSON text |
+| `json`, `jsonb` | `JSON` (see [JSON columns](#json-columns)) |
 | `bytea` | `String` with the bytes in hex |
 | anything else (`text`, `time`, `interval`, enums...) | `String` with the text PostgreSQL sends |
 
 Key columns are not `Nullable`, all the other columns are.
+
+## JSON columns
+
+`json` and `jsonb` columns are stored in the `JSON` type of ClickHouse, which needs ClickHouse 25.3 or newer. With `options.UseJsonType = false` they are `String` columns with the JSON text.
+
+The `JSON` type holds only objects, and rejects some values PostgreSQL accepts. The output changes those values, so that no row is rejected:
+
+- A value that is not an object (an array, a number, a string, `true`, a JSON `null`) is stored as `{"v": value}`. ClickHouse does not store a null inside an object, so a JSON `null` becomes `{}`.
+- A key that is twice in an object of a `json` column keeps its last value, as in `jsonb`.
+- A number too large for a double (above about 1.8e308) is stored as a string.
+- Two keys with the same path, such as `"a.b"` and `"b"` inside `"a"`, keep one value.
+
+ClickHouse stores a number with a fraction as a double, and an integer of more than 64 bits as a string.
+
+A `json` column that is part of the key is a `String`, as is an array of `json`.
 
 ## Limits
 
@@ -124,6 +139,7 @@ public class Worker : BackgroundService
 | `Database` | `default` | The database of the tables. It must exist. |
 | `Username`, `Password` | `default`, empty | |
 | `UseAsyncInserts` | `true` | See [Batch size](#batch-size). |
+| `UseJsonType` | `true` | See [JSON columns](#json-columns). |
 | `Settings` | empty | ClickHouse settings sent with every request, e.g. `options.Settings["insert_quorum"] = "2"`. |
 | `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table (`schema.table`). |
 | `HttpClient` | none | Your own `HttpClient`, e.g. with a proxy or a client certificate. |

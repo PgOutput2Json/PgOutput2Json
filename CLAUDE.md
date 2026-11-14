@@ -69,7 +69,7 @@ The message outputs (Kafka, RabbitMQ, RabbitMQ Streams, Redis, Kinesis, Event Hu
 
 The stores (SQLite, MongoDB, DynamoDB) save the last position with the data and return it from `GetLastPublishedWalSeqAsync`; the listener skips replayed messages at or below it (`ReplicationListenerOptions.UseDeduplication`, on by default).
 
-ClickHouse is a store that saves no position. It only inserts: every change is a new row with `_version` (`w * 2^64 + n`) and `_deleted`, in a `ReplacingMergeTree` ordered by the key, so a replayed change is the same row again. It uses the HTTP interface with `JSONCompactEachRow` (no client library), reads an unchanged TOAST value back from ClickHouse, and `UseClickHouse` raises the batch size to 10,000.
+ClickHouse is a store that saves no position. It only inserts: every change is a new row with `_version` (`w * 2^64 + n`) and `_deleted`, in a `ReplacingMergeTree` ordered by the key, so a replayed change is the same row again. It uses the HTTP interface with `JSONCompactEachRow` (no client library), reads an unchanged TOAST value back from ClickHouse, stores json in the `JSON` type (values that are not objects as `{"v": value}`), and `UseClickHouse` raises the batch size to 10,000.
 
 Routing: Kafka routes by message key with librdkafka's `Murmur2Random` partitioner; with partition-key columns the publisher picks the partition itself with the same hash (`MurmurHash2` in the core project, also used by Event Hubs and Redis). RabbitMQ super streams are routed by the client library.
 
