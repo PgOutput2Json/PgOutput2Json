@@ -169,7 +169,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
                 await Wait.UntilAsync(() => ReadIds(bootstrapServers, "kafka_rejected").Count >= 1, "1 message in the topic", 60);
 
-                beforeRejected = await Db.ScalarAsync<NpgsqlLogSequenceNumber>("SELECT pg_current_wal_lsn()");
+                beforeRejected = await Db.ScalarAsync<NpgsqlLogSequenceNumber>("SELECT pg_current_wal_insert_lsn()");
 
                 await Db.ExecuteAsync($"INSERT INTO kafka_rejected VALUES (2, '{new string('x', 5000)}')");
 

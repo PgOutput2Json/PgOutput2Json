@@ -170,6 +170,28 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
+        public async Task Webhook_that_keeps_failing_should_not_confirm_and_deliver_once_it_works()
+        {
+            var down = true;
+
+            using var endpoint = new Endpoint { NextStatus = _ => down ? 503 : 200 };
+
+            await FailureScenario.RunAsync("of_hook",
+                // one retry, then the batch fails and the listener starts over
+                builder => builder.UseWebhook(endpoint.Url, options => options.RetryDelays = [TimeSpan.FromMilliseconds(100)]),
+                breakAsync: () => Task.FromResult<Func<Task>>(() =>
+                {
+                    down = false;
+
+                    return Task.CompletedTask;
+                }),
+                readIdsAsync: async () => FailureScenario.Ids(await endpoint.ReadAsync()),
+                breakBeforeStart: true);
+
+            Assert.IsTrue(endpoint.Received >= 3, $"{endpoint.Received} requests");
+        }
+
+        [TestMethod]
         public async Task Webhook_with_a_thin_payload_should_send_only_the_position_the_table_and_the_key()
         {
             using var endpoint = new Endpoint();

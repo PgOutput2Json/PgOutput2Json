@@ -88,7 +88,7 @@ namespace PgOutput2Json.IntegrationTests
         {
             if (_dynamoDb == null)
             {
-                _dynamoDb = new DynamoDbBuilder("amazon/dynamodb-local:latest").Build();
+                _dynamoDb = new DynamoDbBuilder("amazon/dynamodb-local:latest").WithPortBinding(FreePort(), 8000).Build();
 
                 await StartWithRetryAsync(_dynamoDb);
             }
@@ -127,7 +127,7 @@ namespace PgOutput2Json.IntegrationTests
         {
             if (_redis == null)
             {
-                _redis = new RedisBuilder("redis:7").Build();
+                _redis = new RedisBuilder("redis:7").WithPortBinding(FreePort(), 6379).Build();
 
                 await StartWithRetryAsync(_redis);
             }
@@ -149,6 +149,32 @@ namespace PgOutput2Json.IntegrationTests
 
             return _localStack.GetConnectionString();
         }
+
+        /// <summary>
+        /// The containers that the failure tests stop and start again have a fixed host port,
+        /// because a random one changes with every start.
+        /// </summary>
+        public static int FreePort()
+        {
+            using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+
+            listener.Start();
+
+            return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        }
+
+        /// <summary>
+        /// Stops a container, the way an output goes down, and returns the action that starts it again.
+        /// </summary>
+        public static async Task<Func<Task>> StopAsync(DotNet.Testcontainers.Containers.IContainer container)
+        {
+            await container.StopAsync();
+
+            return () => container.StartAsync();
+        }
+
+        public static DotNet.Testcontainers.Containers.IContainer DynamoDb => _dynamoDb!;
+        public static DotNet.Testcontainers.Containers.IContainer Redis => _redis!;
 
         /// <summary>
         /// Starting a container pulls its image, and a pull fails now and then, mostly on a CI runner.

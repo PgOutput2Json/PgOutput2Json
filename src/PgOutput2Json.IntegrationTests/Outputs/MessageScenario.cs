@@ -61,7 +61,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 }
 
                 // the batch is acknowledged by the output, so PostgreSQL gets the confirmation
-                var afterChanges = await Db.ScalarAsync<NpgsqlTypes.NpgsqlLogSequenceNumber>("SELECT pg_current_wal_lsn()");
+                var afterChanges = await Db.ScalarAsync<NpgsqlTypes.NpgsqlLogSequenceNumber>("SELECT pg_current_wal_insert_lsn()");
 
                 await Wait.UntilAsync(
                     async () => await Db.ScalarAsync<NpgsqlTypes.NpgsqlLogSequenceNumber>($"SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = '{name}_slot'") >= afterChanges,
