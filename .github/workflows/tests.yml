@@ -3,6 +3,7 @@
 #   test      builds, runs the unit tests and the PostgreSQL tests on PostgreSQL 16
 #   outputs   runs the tests of the outputs (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB, Kinesis, webhooks, SQLite)
 #   postgres  repeats the PostgreSQL tests on the other supported versions
+# A change of only the website, the docs (*.md), the docker files for manual testing or the license does not run them.
 name: Tests
 
 on:
@@ -11,10 +12,18 @@ on:
     paths-ignore:
       - 'website/**'
       - '.github/workflows/website.yml'
+      - '**/*.md'
+      - 'docker/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
     paths-ignore:
       - 'website/**'
       - '.github/workflows/website.yml'
+      - '**/*.md'
+      - 'docker/**'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:
