@@ -57,7 +57,7 @@ A large value that an update did not change is not sent by PostgreSQL. It is wri
 
 ## Compact mode
 
-With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names. The SQLite, MongoDB and DynamoDB adapters always use compact mode. The column names come in a schema property:
+With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names. The SQLite, MongoDB, DynamoDB and ClickHouse adapters always use compact mode. The column names come in a schema property:
 
 ```jsonc
 "s": ["schema.table", ["id", 1, 23], ["name", 0, 1043, 104], ...]

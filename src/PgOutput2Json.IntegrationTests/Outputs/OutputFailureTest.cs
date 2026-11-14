@@ -287,6 +287,29 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
+        public async Task ClickHouse_that_goes_down_should_not_confirm_and_deliver_once_it_is_back()
+        {
+            var endpoint = await Containers.GetClickHouseEndpointAsync();
+
+            await FailureScenario.RunAsync("of_click",
+                builder => builder.UseClickHouse(options => ClickHouseStoreTest.Configure(options, endpoint)),
+                breakAsync: () => Containers.StopAsync(Containers.ClickHouse),
+                readIdsAsync: async () =>
+                {
+                    try
+                    {
+                        var ids = await ClickHouseStoreTest.QueryAsync(endpoint, "SELECT id FROM of_click FINAL ORDER BY id");
+
+                        return ids.Length == 0 || ids == "(no table)" ? [] : ids.Split('\n').Select(int.Parse).ToList();
+                    }
+                    catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or InvalidOperationException)
+                    {
+                        return [];
+                    }
+                });
+        }
+
+        [TestMethod]
         public async Task MongoDb_that_goes_down_should_not_confirm_and_deliver_once_it_is_back()
         {
             // its own server: the MongoDB module of Testcontainers cannot start a container a second time

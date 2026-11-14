@@ -20,6 +20,7 @@ rem than the reverse.
 set PACKAGES=^
 PgOutput2Json ^
 PgOutput2Json.AzureEventHubs ^
+PgOutput2Json.ClickHouse ^
 PgOutput2Json.DynamoDb ^
 PgOutput2Json.Kafka ^
 PgOutput2Json.Kinesis ^
