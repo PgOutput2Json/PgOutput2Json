@@ -54,9 +54,9 @@ The change events JSON format:
 }
 ```
 
-## ⚠️ Development Status
+## 🧪 Testing
 
-**Still early days** — the library is under active development, but it's **fully usable for testing and early integration**.
+Every output is covered by integration tests, which run on each change against PostgreSQL 14 to 18.
 
 ## 1. Quick Start
 

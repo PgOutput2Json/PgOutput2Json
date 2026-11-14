@@ -16,7 +16,7 @@
                                   missing icon.png.
           Description             differs per package, and it is what readers
                                   of the NuGet page see.
-          icon.png / README.md    those item groups only belong to the 11
+          icon.png / README.md    those item groups only belong to the 12
                                   packable projects where the files exist.
     -->
     <PropertyGroup>
