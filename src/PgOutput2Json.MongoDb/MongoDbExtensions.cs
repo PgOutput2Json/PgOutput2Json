@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -223,6 +224,14 @@ namespace PgOutput2Json.MongoDb
                         var data = valElement.GetString();
                         return data != null ? ParseJson(data) : BsonNull.Value;
                     }
+                    else if (column.IsTextArray)
+                    {
+                        var json = new StringBuilder();
+
+                        JsonUtils.WriteArrayOfText(json, valElement.GetString());
+
+                        return ParseJson(json.ToString());
+                    }
                     else
                     {
                         return valElement.GetString();
@@ -414,6 +423,18 @@ namespace PgOutput2Json.MongoDb
         public bool IsKey { get; set; }
         public uint DataType { get; set; }
         public int TypeModifier { get; set; }
+
+        /// <summary>
+        /// The name of a type that is not built in, from the schema (for a domain the name of its base type).
+        /// </summary>
+        public string? TypeName { get; set; }
+
+        /// <summary>
+        /// An array of a type that is not built in (an enum, a user type, a domain over an array): PostgreSQL names
+        /// an array type after its element type with an underscore, and the library sends its value as the PostgreSQL text.
+        /// A key column keeps the text: a unique index on an array field would index each element.
+        /// </summary>
+        public readonly bool IsTextArray => !IsKey && TypeName != null && TypeName.StartsWith('_');
 
         public readonly PgOid PgOid { get {  return (PgOid)DataType; } }
     }
