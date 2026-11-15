@@ -13,6 +13,9 @@ namespace PgOutput2Json.ClickHouse
         Date,
         Timestamp,
         Json,
+        Array,
+        DateArray,
+        TimestampArray,
     }
 
     internal sealed class ClickHouseColumn
@@ -26,7 +29,7 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public required string Type { get; init; }
 
-        public required ColumnKind Kind { get; init; }
+        public required ColumnKind Kind { get; set; }
     }
 
     /// <summary>
@@ -42,6 +45,7 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public const string SyncedAtColumn = "_synced_at";
 
+        public string Name { get; }
         public string QuotedName { get; }
 
         public IReadOnlyList<ClickHouseColumn> Columns { get; }
@@ -74,6 +78,7 @@ namespace PgOutput2Json.ClickHouse
 
         public ClickHouseTable(string tableName, IReadOnlyList<ClickHouseColumn> columns, ClickHouseTableOptions? options = null)
         {
+            Name = tableName;
             QuotedName = Quote(tableName);
 
             Columns = columns;
@@ -107,10 +112,30 @@ namespace PgOutput2Json.ClickHouse
         }
 
         /// <summary>
-        /// The type of the column in the table. Only the columns of a real key are not Nullable.
+        /// An array column that is not an array in ClickHouse (created before the array types, or changed to a String
+        /// after a multi-dimensional value) gets the JSON text, which ClickHouse turns into a string.
+        /// </summary>
+        public void UseExistingTypes(IReadOnlyDictionary<string, string> types)
+        {
+            foreach (var column in Columns)
+            {
+                if (column.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray
+                    && types.TryGetValue(column.Name, out var type)
+                    && !type.StartsWith("Array(", StringComparison.Ordinal))
+                {
+                    column.Kind = ColumnKind.Other;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The type of the column in the table. Only the columns of a real key are not Nullable, and the arrays,
+        /// which ClickHouse does not allow to be Nullable: a null array is an empty one.
         /// </summary>
         public string GetColumnType(ClickHouseColumn column)
         {
+            if (column.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray) return column.Type;
+
             return column.IsKey && !HasNullableKey ? column.Type : $"Nullable({column.Type})";
         }
 
@@ -232,7 +257,7 @@ namespace PgOutput2Json.ClickHouse
         /// <summary>
         /// Reads the schema of the compact write mode: the table name, then [name, isKey, type oid, type modifier] per column.
         /// </summary>
-        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType, ClickHouseTableOptions? options = null)
+        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null)
         {
             if (schemaElement.ValueKind != JsonValueKind.Array) throw new Exception("Invalid schema - expected array");
 
@@ -259,13 +284,19 @@ namespace PgOutput2Json.ClickHouse
                 // a table cannot be ordered by a JSON column, so a json column of the key stays a String
                 var isJson = useJsonType && !isKey && oid is (uint)PgOid.JSONOID or (uint)PgOid.JSONBOID;
 
+                // the same for an array: a key column cannot be Nullable inside
+                var elementType = useArrayTypes && !isKey ? GetArrayElementType(oid, typeModifier) : null;
+
                 columns.Add(new ClickHouseColumn
                 {
                     Name = name,
                     QuotedName = Quote(name),
                     IsKey = isKey,
-                    Type = isJson ? "JSON" : GetType(oid, typeModifier),
-                    Kind = oid == (uint)PgOid.DATEOID ? ColumnKind.Date
+                    Type = isJson ? "JSON" : elementType != null ? $"Array(Nullable({elementType}))" : GetType(oid, typeModifier),
+                    Kind = elementType != null ? (oid == (uint)PgOid.A_DATEOID ? ColumnKind.DateArray
+                                                  : oid is (uint)PgOid.A_TIMESTAMPOID or (uint)PgOid.A_TIMESTAMPTZOID ? ColumnKind.TimestampArray
+                                                  : ColumnKind.Array)
+                        : oid == (uint)PgOid.DATEOID ? ColumnKind.Date
                         : oid is (uint)PgOid.TIMESTAMPOID or (uint)PgOid.TIMESTAMPTZOID ? ColumnKind.Timestamp
                         : isJson ? ColumnKind.Json
                         : ColumnKind.Other,
@@ -276,8 +307,34 @@ namespace PgOutput2Json.ClickHouse
         }
 
         /// <summary>
+        /// The ClickHouse type of the elements of a PostgreSQL array, or null for an array that stays a String:
+        /// the library sends the arrays of other types (enums, user types) as their PostgreSQL text.
+        /// The type modifier of an array column is that of its elements.
+        /// </summary>
+        internal static string? GetArrayElementType(uint oid, int typeModifier)
+        {
+            switch ((PgOid)oid)
+            {
+                case PgOid.A_BOOLOID: return "Bool";
+                case PgOid.A_INT2OID: return "Int16";
+                case PgOid.A_INT4OID: return "Int32";
+                case PgOid.A_INT8OID: return "Int64";
+                case PgOid.A_OIDOID: return "UInt32";
+                case PgOid.A_FLOAT4OID: return "Float32";
+                case PgOid.A_FLOAT8OID: return "Float64";
+                case PgOid.A_NUMERICOID: return GetNumericType(typeModifier);
+                case PgOid.A_UUIDOID: return "UUID";
+                case PgOid.A_DATEOID: return "Date32";
+                case PgOid.A_TIMESTAMPOID: return "DateTime64(6)";
+                case PgOid.A_TIMESTAMPTZOID: return "DateTime64(6, 'UTC')";
+                case PgOid.A_BYTEAOID: return "String";
+                default: return ((PgOid)oid).IsArrayOfText() ? "String" : null;
+            }
+        }
+
+        /// <summary>
         /// Anything without a type of its own in ClickHouse is a String with the text PostgreSQL sends.
-        /// Arrays are Strings too, with the JSON text, and so is json when the JSON type is not used.
+        /// So are the arrays that are not ClickHouse arrays (see GetArrayElementType), with the JSON text, and json when the JSON type is not used.
         /// </summary>
         internal static string GetType(uint oid, int typeModifier)
         {

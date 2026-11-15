@@ -1,5 +1,7 @@
 using System;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -106,6 +108,60 @@ namespace PgOutput2Json.Tests
             // its columns are Nullable
             StringAssert.EndsWith(TableWithoutKey(new() { OrderBy = ["b"], PartitionBy = "a" }).GetCreateStatement(TimeSpan.FromMinutes(1)),
                 "ENGINE = MergeTree PARTITION BY a ORDER BY (`b`) SETTINGS allow_nullable_key = 1");
+        }
+
+        private static string Append(string type, ColumnKind kind, string json)
+        {
+            var column = new ClickHouseColumn { Name = "a", QuotedName = "`a`", IsKey = false, Type = type, Kind = kind };
+
+            using var doc = JsonDocument.Parse(json);
+
+            var line = new StringBuilder();
+
+            ClickHousePublisher.AppendValue(line, column, doc.RootElement);
+
+            return line.ToString();
+        }
+
+        [TestMethod]
+        public void Array_types_should_map_the_arrays_the_library_sends_as_JSON_arrays()
+        {
+            Assert.AreEqual("Int32", ClickHouseTable.GetArrayElementType((uint)PgOid.A_INT4OID, -1));
+            Assert.AreEqual("Decimal(10, 2)", ClickHouseTable.GetArrayElementType((uint)PgOid.A_NUMERICOID, (10 << 16 | 2) + 4));
+            Assert.AreEqual("String", ClickHouseTable.GetArrayElementType((uint)PgOid.A_INTERVALOID, -1));
+            Assert.AreEqual("String", ClickHouseTable.GetArrayElementType((uint)PgOid.A_BYTEAOID, -1));
+
+            // not an array, or an array the library sends as its PostgreSQL text (enums, user types)
+            Assert.IsNull(ClickHouseTable.GetArrayElementType((uint)PgOid.INT4OID, -1));
+            Assert.IsNull(ClickHouseTable.GetArrayElementType(16385, -1));
+        }
+
+        [TestMethod]
+        public void Array_values_should_clamp_their_dates_and_reject_more_dimensions()
+        {
+            Assert.AreEqual("""["2024-02-29","9999-12-31",null,"0001-01-01"]""",
+                Append("Array(Nullable(Date32))", ColumnKind.DateArray, """["2024-02-29","infinity",null,"0044-03-15 BC"]"""));
+
+            Assert.AreEqual("""["0001-01-01 00:00:00"]""", Append("Array(Nullable(DateTime64(6)))", ColumnKind.TimestampArray, """["-infinity"]"""));
+
+            // the text of the other arrays is not touched, and a null array goes to ClickHouse as null (an empty array)
+            Assert.AreEqual("""["infinity",null]""", Append("Array(Nullable(String))", ColumnKind.Array, """["infinity",null]"""));
+            Assert.AreEqual("null", Append("Array(Nullable(Int32))", ColumnKind.Array, "null"));
+
+            var exception = Assert.ThrowsExactly<Exception>(() => Append("Array(Nullable(Int32))", ColumnKind.Array, "[[1,2],[3,4]]"));
+
+            StringAssert.Contains(exception.Message, "Column a has a multi-dimensional array, and its ClickHouse type Array(Nullable(Int32)) has one dimension");
+        }
+
+        [TestMethod]
+        public void Array_columns_should_not_be_Nullable()
+        {
+            var column = new ClickHouseColumn { Name = "a", QuotedName = "`a`", IsKey = false, Type = "Array(Nullable(Int32))", Kind = ColumnKind.Array };
+
+            var table = new ClickHouseTable("t", [Column("id", true), column]);
+
+            StringAssert.Contains(table.GetCreateStatement(null), "`a` Array(Nullable(Int32)),");
+            StringAssert.Contains(table.GetAlterStatement(), "ADD COLUMN IF NOT EXISTS `a` Array(Nullable(Int32))");
         }
 
         [TestMethod]
