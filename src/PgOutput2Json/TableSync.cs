@@ -381,6 +381,7 @@ namespace PgOutput2Json
                 }
 
                 var writer = new JsonWriter(_jsonOptions, _options);
+                var rowReader = new RowReader(_options);
                 var message = new ReplicationMessage { HasRelationChanged = true };
 
                 var lastWalEnd = default(NpgsqlLogSequenceNumber);
@@ -471,6 +472,7 @@ namespace PgOutput2Json
 
                             case TypeMessage type:
                                 writer.AddType(type);
+                                rowReader.AddType(type);
                                 continue;
 
                             case BeginMessage begin:
@@ -500,12 +502,24 @@ namespace PgOutput2Json
                                 {
                                     message.Message = msg;
 
-                                    var jsonMessage = await writer.WriteMessageAsync(message, token).ConfigureAwait(false);
+                                    if (publisher is IRowPublisher rowPublisher)
+                                    {
+                                        var row = await rowReader.ReadAsync(message, token).ConfigureAwait(false);
 
-                                    jsonMessage.IsTableSync = true;
-                                    message.HasRelationChanged = false;
+                                        row.IsTableSync = true;
+                                        message.HasRelationChanged = false;
 
-                                    await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
+                                        await rowPublisher.PublishRowAsync(row, token).ConfigureAwait(false);
+                                    }
+                                    else
+                                    {
+                                        var jsonMessage = await writer.WriteMessageAsync(message, token).ConfigureAwait(false);
+
+                                        jsonMessage.IsTableSync = true;
+                                        message.HasRelationChanged = false;
+
+                                        await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
+                                    }
 
                                     MetricsHelper.IncrementPublishCounter();
 

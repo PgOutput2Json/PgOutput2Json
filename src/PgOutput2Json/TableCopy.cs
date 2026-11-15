@@ -75,6 +75,8 @@ namespace PgOutput2Json
                                           JsonOptions JsonOptions,
                                           ConcurrentQueue<Chunk> Chunks,
                                           CopyProgress Progress,
+                                          RowTable RowTable,
+                                          int[] RowIndexes,
                                           ILogger? Logger);
 
         /// <summary>
@@ -117,6 +119,8 @@ namespace PgOutput2Json
                 }
             }
 
+            var (rowTable, rowIndexes) = CreateRowTable(table, columns, includedColumns);
+
             // the SELECT form names the columns; ONLY, because a child of an inheritance tree is a table of its own
             // in the publication, and the leaves of a partitioned table are copied one by one
             var context = new CopyContext(table,
@@ -129,6 +133,8 @@ namespace PgOutput2Json
                                           jsonOptions,
                                           chunks,
                                           progress,
+                                          rowTable,
+                                          rowIndexes,
                                           logger);
 
             // the others stop when one fails: the chunks they did not finish are copied again by the next attempt
@@ -228,6 +234,8 @@ namespace PgOutput2Json
             var value = new StringBuilder(256);
             var values = new List<string>(100);
 
+            var row = new ChangeRow { ChangeType = RowChangeType.Copy, Table = context.RowTable, IsTableSync = true };
+
             while (context.Chunks.TryDequeue(out var chunk))
             {
                 var query = $"{context.Select}{chunk.RelationName} WHERE ctid >= '({chunk.Page},0)'"
@@ -242,10 +250,6 @@ namespace PgOutput2Json
                     string? line;
                     while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
                     {
-                        jsonMessage.Json.Clear();
-                        jsonMessage.KeyKolValue.Clear();
-                        jsonMessage.PartitionKolValue.Clear();
-
                         GetValues(values, value, line, context.Logger);
 
                         if (values.Count != context.Columns.Count)
@@ -253,39 +257,14 @@ namespace PgOutput2Json
                             throw new Exception("Inconsistent column count between COPY output and table metadata");
                         }
 
-                        jsonMessage.Json.Append("{\"c\":\"C\"");
-                        jsonMessage.Json.Append(",\"w\":0");
-                        jsonMessage.Json.Append(",\"n\":0");
-
-                        if (context.JsonOptions.WriteTableNames)
+                        if (publisher is IRowPublisher rowPublisher)
                         {
-                            jsonMessage.Json.Append(",\"t\":\"");
-                            JsonUtils.EscapeText(jsonMessage.Json, context.Table.TableName);
-                            jsonMessage.Json.Append('"');
+                            await rowPublisher.PublishRowAsync(GetRow(row, values, context), token).ConfigureAwait(false);
                         }
-
-                        if (!schemaWritten)
+                        else
                         {
-                            schemaWritten = true;
-
-                            jsonMessage.Json.Append(',');
-                            switch (context.JsonOptions.WriteMode)
-                            {
-                                case JsonWriteMode.Compact:
-                                    WriteSchemaCompact(jsonMessage.Json, context.Table, context.Columns, context.IncludedColumns);
-                                    break;
-                                default:
-                                    WriteSchemaDefault(jsonMessage.Json, context.Table, context.Columns, context.IncludedColumns);
-                                    break;
-                            }
+                            await publisher.PublishAsync(GetJsonMessage(jsonMessage, values, context, ref schemaWritten), token).ConfigureAwait(false);
                         }
-
-                        WriteRow(context.Columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonMessage.PartitionKolValue,
-                                 context.JsonOptions, context.IncludedColumns, context.PartitionKeyColumns);
-
-                        jsonMessage.Json.Append('}');
-
-                        await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
 
                         MetricsHelper.IncrementPublishCounter();
 
@@ -303,6 +282,102 @@ namespace PgOutput2Json
 
                 context.Progress.SetCopied(chunk.Relation, chunk.Page, chunkRows);
             }
+        }
+
+        private static JsonMessage GetJsonMessage(JsonMessage jsonMessage, List<string> values, CopyContext context, ref bool schemaWritten)
+        {
+            jsonMessage.Json.Clear();
+            jsonMessage.KeyKolValue.Clear();
+            jsonMessage.PartitionKolValue.Clear();
+
+            jsonMessage.Json.Append("{\"c\":\"C\"");
+            jsonMessage.Json.Append(",\"w\":0");
+            jsonMessage.Json.Append(",\"n\":0");
+
+            if (context.JsonOptions.WriteTableNames)
+            {
+                jsonMessage.Json.Append(",\"t\":\"");
+                JsonUtils.EscapeText(jsonMessage.Json, context.Table.TableName);
+                jsonMessage.Json.Append('"');
+            }
+
+            // every publisher gets the schema with its first row
+            if (!schemaWritten)
+            {
+                schemaWritten = true;
+
+                jsonMessage.Json.Append(',');
+                switch (context.JsonOptions.WriteMode)
+                {
+                    case JsonWriteMode.Compact:
+                        WriteSchemaCompact(jsonMessage.Json, context.Table, context.Columns, context.IncludedColumns);
+                        break;
+                    default:
+                        WriteSchemaDefault(jsonMessage.Json, context.Table, context.Columns, context.IncludedColumns);
+                        break;
+                }
+            }
+
+            WriteRow(context.Columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonMessage.PartitionKolValue,
+                     context.JsonOptions, context.IncludedColumns, context.PartitionKeyColumns);
+
+            jsonMessage.Json.Append('}');
+
+            return jsonMessage;
+        }
+
+        /// <summary>
+        /// The table of the rows for an <see cref="IRowPublisher"/>: the columns that are not left out, and the index of each column in it (-1 for one left out).
+        /// </summary>
+        private static (RowTable, int[]) CreateRowTable(PublishedTable table, List<PgColumnInfo> columns, IReadOnlyList<string>? includedColumns)
+        {
+            var rowColumns = new List<RowColumn>(columns.Count);
+            var indexes = new int[columns.Count];
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                var col = columns[i];
+
+                if (!IsIncluded(includedColumns, col))
+                {
+                    indexes[i] = -1;
+                    continue;
+                }
+
+                indexes[i] = rowColumns.Count;
+
+                rowColumns.Add(new RowColumn
+                {
+                    Name = col.ColumnName,
+                    TypeId = col.DataTypeId,
+                    TypeModifier = col.TypeModifier,
+                    TypeName = col.TypeName,
+                    IsKey = col.IsKey,
+                    IsPartitionKey = col.IsPartitionKey,
+                });
+            }
+
+            return (new RowTable(table.TableName, rowColumns), indexes);
+        }
+
+        private static ChangeRow GetRow(ChangeRow row, List<string> values, CopyContext context)
+        {
+            var newValues = row.NewValueList;
+
+            newValues.Clear();
+
+            for (var i = 0; i < values.Count; i++)
+            {
+                if (context.RowIndexes[i] < 0) continue;
+
+                var text = values[i];
+
+                newValues.Add(text == @"\N" ? RowValue.Null : RowValue.FromText(text));
+            }
+
+            row.NewValues = newValues;
+
+            return row;
         }
 
         /// <summary>
