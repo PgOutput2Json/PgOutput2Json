@@ -201,7 +201,7 @@ This tells connections with foreign key checks off from those with them on, so i
 
 ### Batch size
 
-Every batch of changes is one transaction. `UseSqlite` sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 58,000 rows per second and the stream at about 62,000 with batches of 1,000, and at about 52,000 and 56,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL in Docker on the same machine). Larger batches add little. To use another size, call `WithBatchSize` after `UseSqlite`. A batch that is not full is still written after the batch wait time (100 ms by default).
+Every batch of changes is one transaction. `UseSqlite` sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 85,000 rows per second and the stream at about 75,000 with batches of 1,000, and at about 72,000 and 68,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL in Docker on the same machine). Larger batches add little. To use another size, call `WithBatchSize` after `UseSqlite`. A batch that is not full is still written after the batch wait time (100 ms by default).
 
 ### Create a .NET Worker Service
 
