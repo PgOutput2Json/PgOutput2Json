@@ -159,7 +159,7 @@ namespace PgOutput2Json.IntegrationTests
         {
             await Db.ExecuteAsync(@"
                 CREATE TABLE rp_copy (id int PRIMARY KEY, v text, skipped int);
-                INSERT INTO rp_copy VALUES (1, 'a', 1), (2, NULL, 2), (3, E'tab\there', 3);
+                INSERT INTO rp_copy VALUES (1, 'a', 1), (2, NULL, 2), (3, E'tab\there', 3), (4, '\N', 4);
                 CREATE PUBLICATION rp_copy_pub FOR TABLE rp_copy;");
 
             await Db.CreateSlotAsync("rp_copy_slot");
@@ -178,9 +178,9 @@ namespace PgOutput2Json.IntegrationTests
             {
                 await Wait.UntilAsync(async () => await Db.TableStatesAsync("rp_copy_slot") == "public.rp_copy:ready", "the table ready");
 
-                await Db.ExecuteAsync("INSERT INTO rp_copy VALUES (4, 'd', 4)");
+                await Db.ExecuteAsync("INSERT INTO rp_copy VALUES (5, 'd', 5)");
 
-                await Wait.UntilAsync(() => publisher.Lines.Count(l => !l.Contains(':')) >= 4, "4 rows");
+                await Wait.UntilAsync(() => publisher.Lines.Count(l => !l.Contains(':')) >= 5, "5 rows");
             }
 
             var lines = publisher.Lines;
@@ -191,14 +191,16 @@ namespace PgOutput2Json.IntegrationTests
                 "Copy public.rp_copy new=[1,a] sync",
                 "Copy public.rp_copy new=[2,NULL] sync",
                 "Copy public.rp_copy new=[3,tab\there] sync",
-            ], lines.Take(4));
+                // the text \N, not a NULL
+                "Copy public.rp_copy new=[4,\\N] sync",
+            ], lines.Take(5));
 
             // the table was handed over: the main stream, with a publisher of its own, has the change
             AssertLines(
             [
                 "public.rp_copy: id:23:-1:key v:25:-1",
-                "Insert public.rp_copy new=[4,d]",
-            ], lines.Skip(4));
+                "Insert public.rp_copy new=[5,d]",
+            ], lines.Skip(5));
         }
     }
 }

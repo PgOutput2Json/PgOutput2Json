@@ -230,6 +230,28 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
+        public async Task Copied_text_that_is_backslash_N_should_not_be_null()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE ts_bn (id int PRIMARY KEY, v text);
+                INSERT INTO ts_bn VALUES (1, '\N'), (2, NULL);
+                CREATE PUBLICATION ts_bn_pub FOR TABLE ts_bn;");
+
+            await Db.CreateSlotAsync("ts_bn_slot");
+
+            var publisher = new CollectingPublisherFactory();
+
+            await using (new RunningListener(CreateBuilder("ts_bn", publisher).WithJsonOptions(o => o.WriteNulls = true)))
+            {
+                await Wait.UntilAsync(() => publisher.Messages.Count >= 2, "the copied rows");
+            }
+
+            CollectionAssert.AreEqual(
+                new[] { """{"id":1,"v":"\\N"}""", """{"id":2,"v":null}""" },
+                publisher.Messages.Select(m => JsonDocument.Parse(m.Json).RootElement.GetProperty("r").GetRawText()).ToArray());
+        }
+
+        [TestMethod]
         public async Task Copied_rows_should_have_the_key_of_the_replica_identity_like_the_streamed_ones()
         {
             await Db.ExecuteAsync(@"
