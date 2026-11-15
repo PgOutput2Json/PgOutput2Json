@@ -17,6 +17,11 @@ namespace PgOutput2Json.Sqlite
 
         public static async Task<(ulong, ulong)> GetWalEndAsync(this SqliteConnection cn, CancellationToken token)
         {
+            var position = await GetConfigAsync(cn, ConfigKey.Position, token).ConfigureAwait(false);
+
+            if (position != null) return ParsePosition(position);
+
+            // saved before version 2.1: the next confirm saves the position under its new key
             var walEndValue = await GetConfigAsync(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
             var messageNoValue = await GetConfigAsync(cn, ConfigKey.MessageNo, token).ConfigureAwait(false);
 
@@ -26,8 +31,20 @@ namespace PgOutput2Json.Sqlite
 
         public static async Task SetWalEndAsync(this SqliteConnection cn, ulong walEnd, ulong messageNo, CancellationToken token)
         {
-            await SaveConfigAsync(cn, ConfigKey.WalEnd, walEnd.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
-            await SaveConfigAsync(cn, ConfigKey.MessageNo, messageNo.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
+            await SaveConfigAsync(cn, ConfigKey.Position, FormatPosition(walEnd, messageNo), token).ConfigureAwait(false);
+        }
+
+        internal static string FormatPosition(ulong walEnd, ulong messageNo)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{walEnd}/{messageNo}");
+        }
+
+        internal static (ulong, ulong) ParsePosition(string position)
+        {
+            var slash = position.IndexOf('/');
+
+            return (ulong.Parse(position.AsSpan(0, slash), CultureInfo.InvariantCulture),
+                    ulong.Parse(position.AsSpan(slash + 1), CultureInfo.InvariantCulture));
         }
 
         public static async Task SetSchemaAsync(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)

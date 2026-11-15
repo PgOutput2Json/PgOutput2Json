@@ -24,6 +24,47 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
+        public async Task Position_saved_in_two_values_should_be_read_and_saved_again_as_one()
+        {
+            var config = new AmazonDynamoDBConfig { ServiceURL = await Containers.GetDynamoDbUrlAsync() };
+
+            using var client = new AmazonDynamoDBClient(config);
+
+            var options = new global::PgOutput2Json.DynamoDb.DynamoDbPublisherOptions { ClientConfig = config };
+
+            Task PutAsync(string key, string value) => client.PutItemAsync(new PutItemRequest
+            {
+                TableName = "__pg2j_config",
+                Item = new() { ["ConfigKey"] = new AttributeValue { S = key }, ["Value"] = new AttributeValue { S = value } },
+            });
+
+            await using (var publisher = new global::PgOutput2Json.DynamoDb.DynamoDbPublisher(options, null))
+            {
+                // creates the config table; the other store tests leave their own position in it
+                await publisher.GetLastPublishedWalSeqAsync(default);
+
+                // a store of an earlier version: the two parts of the position under keys of their own
+                await client.DeleteItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = "Position" } });
+                await PutAsync("WalEnd", "200");
+                await PutAsync("MessageNo", "5");
+
+                Assert.AreEqual((200UL, 5UL), await publisher.GetLastPublishedWalSeqAsync(default));
+
+                await publisher.PublishAsync(StoreMessage.Create(300, 1), default);
+                await publisher.ConfirmAsync(default);
+            }
+
+            var position = await client.GetItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = "Position" } }, true);
+
+            Assert.AreEqual("300/1", position.Item["Value"].S);
+
+            await using (var publisher = new global::PgOutput2Json.DynamoDb.DynamoDbPublisher(options, null))
+            {
+                Assert.AreEqual((300UL, 1UL), await publisher.GetLastPublishedWalSeqAsync(default));
+            }
+        }
+
+        [TestMethod]
         public async Task DynamoDb_should_mirror_the_tables()
         {
             var config = new AmazonDynamoDBConfig { ServiceURL = await Containers.GetDynamoDbUrlAsync() };

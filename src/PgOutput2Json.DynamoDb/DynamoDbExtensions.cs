@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 using System.Threading;
@@ -10,6 +11,12 @@ namespace PgOutput2Json.DynamoDb
 {
     internal static class ConfigKey
     {
+        /// <summary>
+        /// The position of the last saved change: "w/n", one value, so that it is saved at once.
+        /// </summary>
+        public const string Position = "Position";
+
+        // before version 2.1 the two parts of the position had keys of their own, and were not saved at once
         public const string WalEnd = "WalEnd";
         public const string MessageNo = "MessageNo";
         public const string Schema = "Schema";
@@ -21,11 +28,29 @@ namespace PgOutput2Json.DynamoDb
     {
         public static async Task<(ulong, ulong)> GetWalEndAsync(this AmazonDynamoDBClient client, CancellationToken token)
         {
+            var position = await client.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
+
+            if (position != null) return ParsePosition(position);
+
+            // saved before version 2.1: the next confirm saves the position under its new key
             var walEndValue = await client.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
             var messageNoValue = await client.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
 
             return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
                     messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+        }
+
+        internal static string FormatPosition(ulong walEnd, ulong messageNo)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{walEnd}/{messageNo}");
+        }
+
+        internal static (ulong, ulong) ParsePosition(string position)
+        {
+            var slash = position.IndexOf('/');
+
+            return (ulong.Parse(position.AsSpan(0, slash), CultureInfo.InvariantCulture),
+                    ulong.Parse(position.AsSpan(slash + 1), CultureInfo.InvariantCulture));
         }
 
         public static async Task SetSchemaAsync(this AmazonDynamoDBClient client, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
