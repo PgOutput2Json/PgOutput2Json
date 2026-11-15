@@ -24,6 +24,7 @@ namespace PgOutput2Json.Benchmark
               --clickhouse-user USER     (default: default)
               --clickhouse-password PWD  (default: bench)
               --clickhouse-database DB   Dropped and created again for every run (default: pg2j_bench)
+              --clickhouse-format F      rowbinary or json: the format of the inserts (default: rowbinary)
             """;
 
         public string[] Scenarios { get; private set; } = ["copy", "stream"];
@@ -41,6 +42,7 @@ namespace PgOutput2Json.Benchmark
         public string ClickHouseUsername { get; private set; } = "default";
         public string ClickHousePassword { get; private set; } = "bench";
         public string ClickHouseDatabase { get; private set; } = "pg2j_bench";
+        public bool ClickHouseRowBinary { get; private set; } = true;
 
         public static BenchmarkOptions? Parse(string[] args)
         {
@@ -71,6 +73,11 @@ namespace PgOutput2Json.Benchmark
                     case "--clickhouse-user": options.ClickHouseUsername = Value(); break;
                     case "--clickhouse-password": options.ClickHousePassword = Value(); break;
                     case "--clickhouse-database": options.ClickHouseDatabase = Value(); break;
+                    case "--clickhouse-format":
+                        var format = Value();
+                        if (format is not ("rowbinary" or "json")) return null;
+                        options.ClickHouseRowBinary = format == "rowbinary";
+                        break;
                     default: return null;
                 }
             }

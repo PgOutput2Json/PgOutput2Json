@@ -30,6 +30,9 @@ namespace PgOutput2Json.ClickHouse
 
         private string _tableName = "";
 
+        // the time zone and the date range of the server, read once
+        private ClickHouseServerInfo? _server;
+
         // the values of the row being written
         private JsonElement[] _row = new JsonElement[16];
 
@@ -92,7 +95,7 @@ namespace PgOutput2Json.ClickHouse
             {
                 if (!hasKey) throw new Exception($"Missing key in a delete of {tableName}");
 
-                AppendDelete(table, keyElement, version);
+                AppendDelete(table, keyElement, version, msg);
                 return;
             }
 
@@ -117,8 +120,16 @@ namespace PgOutput2Json.ClickHouse
             // an update of the key comes with the old key: the row with the old key is deleted
             if (hasKey && table.KeyColumns.Count > 0 && !IsSameKey(table, keyElement, _row))
             {
-                AppendDelete(table, keyElement, version);
+                AppendDelete(table, keyElement, version, msg);
             }
+
+            if (table.BinaryTypes != null)
+            {
+                WriteBinaryRow(table, unchanged, msg.TxFinalLsn, msg.MessageNo);
+                return;
+            }
+
+            table.UpsertCount++;
 
             var line = table.Upserts.Append('[');
 
@@ -139,6 +150,31 @@ namespace PgOutput2Json.ClickHouse
             line.Append(",\"").Append(version).Append("\",0]\n");
         }
 
+        private void WriteBinaryRow(ClickHouseTable table, Dictionary<int, string>? unchanged, ulong transactionFinalLsn, ulong messageNo)
+        {
+            var writer = table.BinaryUpserts!;
+
+            table.UpsertCount++;
+
+            for (var i = 0; i < table.Columns.Count; i++)
+            {
+                if (unchanged != null && unchanged.TryGetValue(i, out var value))
+                {
+                    // read from ClickHouse, as JSON
+                    using var doc = JsonDocument.Parse(value);
+
+                    RowBinaryValues.Write(writer, table.BinaryTypes![i], table.Columns[i], doc.RootElement, _server!);
+                }
+                else
+                {
+                    RowBinaryValues.Write(writer, table.BinaryTypes![i], table.Columns[i], _row[i], _server!);
+                }
+            }
+
+            RowBinaryValues.WriteVersion(writer, transactionFinalLsn, messageNo);
+            writer.WriteByte(0);
+        }
+
         public override async Task ConfirmAsync(CancellationToken token)
         {
             foreach (var table in _tables.Values)
@@ -154,23 +190,50 @@ namespace PgOutput2Json.ClickHouse
             return ValueTask.CompletedTask;
         }
 
+        /// <summary>
+        /// Fewer rows than this are an asynchronous insert (with UseAsyncInserts): ClickHouse collects them with others,
+        /// instead of writing a part for a few rows. A larger batch is written at once: an asynchronous insert would only
+        /// wait for the next flush of ClickHouse, since the output sends one insert at a time.
+        /// </summary>
+        internal const int AsyncInsertMaxRows = 1000;
+
         private async Task FlushAsync(ClickHouseTable table, CancellationToken token)
         {
             // the deletes go first: when a row is deleted and inserted with the same version, the last insert wins
+            if (table.BinaryDeletes is { Length: > 0 } binaryDeletes)
+            {
+                await _client.ExecuteAsync(table.BinaryDeleteQuery, new RowBinaryContent(binaryDeletes), null, token, IsAsyncInsert(table.DeleteCount)).ConfigureAwait(false);
+
+                binaryDeletes.Clear();
+            }
+
             if (table.Deletes.Length > 0)
             {
-                await _client.ExecuteAsync(table.DeleteQuery, table.Deletes, null, token).ConfigureAwait(false);
+                await _client.ExecuteAsync(table.DeleteQuery, new StringBuilderContent(table.Deletes), null, token, IsAsyncInsert(table.DeleteCount)).ConfigureAwait(false);
 
                 table.Deletes.Clear();
             }
 
+            table.DeleteCount = 0;
+
+            if (table.BinaryUpserts is { Length: > 0 } binaryUpserts)
+            {
+                await _client.ExecuteAsync(table.BinaryUpsertQuery, new RowBinaryContent(binaryUpserts), null, token, IsAsyncInsert(table.UpsertCount)).ConfigureAwait(false);
+
+                binaryUpserts.Clear();
+            }
+
             if (table.Upserts.Length > 0)
             {
-                await _client.ExecuteAsync(table.UpsertQuery, table.Upserts, null, token).ConfigureAwait(false);
+                await _client.ExecuteAsync(table.UpsertQuery, new StringBuilderContent(table.Upserts), null, token, IsAsyncInsert(table.UpsertCount)).ConfigureAwait(false);
 
                 table.Upserts.Clear();
             }
+
+            table.UpsertCount = 0;
         }
+
+        private bool IsAsyncInsert(int rows) => _options.UseAsyncInserts && rows < AsyncInsertMaxRows;
 
         private async Task<ClickHouseTable> EnsureTableAsync(string tableName, JsonElement root, CancellationToken token)
         {
@@ -201,9 +264,19 @@ namespace PgOutput2Json.ClickHouse
                 await _client.ExecuteAsync(table.GetAlterStatement(), null, null, token).ConfigureAwait(false);
             }
 
-            if (table.Columns.Any(c => c.IsArray))
+            // the types the columns really have: an existing table can have others than the output would create
+            var types = await GetColumnTypesAsync(table, token).ConfigureAwait(false);
+
+            table.UseExistingTypes(types);
+
+            if (_options.UseRowBinary)
             {
-                table.UseExistingTypes(await GetColumnTypesAsync(table, token).ConfigureAwait(false));
+                _server ??= await GetServerInfoAsync(token).ConfigureAwait(false);
+
+                if (table.UseRowBinary(types, _server.TimeZone) is { } column)
+                {
+                    _logger?.LogInformation("The rows of {Table} are sent as JSON: RowBinary does not cover the column {Column}", table.QuotedName, column);
+                }
             }
 
             _logger?.LogInformation("Table {Table} is ready for {PgTable}", table.QuotedName, tableName);
@@ -211,6 +284,31 @@ namespace PgOutput2Json.ClickHouse
             _tables[tableName] = table;
 
             return table;
+        }
+
+        private async Task<ClickHouseServerInfo> GetServerInfoAsync(CancellationToken token)
+        {
+            // an older server saturates the dates it cannot store, so these are its own first and last ones
+            var result = await _client.ExecuteAsync(
+                "SELECT timezone(), toInt32(toDate32('0001-01-01')), toInt32(toDate32('9999-12-31')), " +
+                "toUnixTimestamp64Micro(toDateTime64('0001-01-01 00:00:00', 6, 'UTC')), toUnixTimestamp64Micro(toDateTime64('9999-12-31 23:59:59.999999', 6, 'UTC')) " +
+                "FORMAT JSONCompactEachRow", null, null, token).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(result);
+
+            var row = doc.RootElement;
+
+            var timeZoneName = row[0].GetString()!;
+            var timeZone = ClickHouseBinaryType.FindTimeZone(timeZoneName);
+
+            if (timeZone == null)
+            {
+                _logger?.LogWarning("The time zone {TimeZone} of the ClickHouse server is not known here: tables with a DateTime64 column without a time zone get JSON", timeZoneName);
+            }
+
+            static long Number(JsonElement value) => value.ValueKind == JsonValueKind.String ? long.Parse(value.GetString()!, System.Globalization.CultureInfo.InvariantCulture) : value.GetInt64();
+
+            return new ClickHouseServerInfo(timeZone, (int)Number(row[1]), (int)Number(row[2]), Number(row[3]), Number(row[4]));
         }
 
         private async Task<Dictionary<string, string>> GetColumnTypesAsync(ClickHouseTable table, CancellationToken token)
@@ -231,11 +329,27 @@ namespace PgOutput2Json.ClickHouse
             return types;
         }
 
-        private static void AppendDelete(ClickHouseTable table, JsonElement keyElement, string version)
+        private void AppendDelete(ClickHouseTable table, JsonElement keyElement, string version, JsonMessage msg)
         {
             if (keyElement.GetArrayLength() != table.KeyColumns.Count)
             {
                 throw new Exception($"The key of {table.QuotedName} has {keyElement.GetArrayLength()} values, the schema has {table.KeyColumns.Count} key columns");
+            }
+
+            table.DeleteCount++;
+
+            if (table.BinaryKeyTypes != null)
+            {
+                var writer = table.BinaryDeletes!;
+
+                for (var i = 0; i < table.KeyColumns.Count; i++)
+                {
+                    RowBinaryValues.Write(writer, table.BinaryKeyTypes[i], table.KeyColumns[i], keyElement[i], _server!);
+                }
+
+                RowBinaryValues.WriteVersion(writer, msg.TxFinalLsn, msg.MessageNo);
+                writer.WriteByte(1);
+                return;
             }
 
             var line = table.Deletes.Append('[');
@@ -325,11 +439,20 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         internal static void AppendJson(StringBuilder line, string json, bool checkDuplicateKeys = true)
         {
+            var bytes = NormalizeJson(json, checkDuplicateKeys);
+
+            var chars = t_jsonChars is { } cached && cached.Length >= bytes.Length ? cached : t_jsonChars = new char[Math.Max(bytes.Length, 1024)];
+
+            line.Append(chars, 0, Encoding.UTF8.GetChars(bytes, chars));
+        }
+
+        /// <summary>
+        /// The UTF-8 of a json value as the JSON type of ClickHouse takes it: an object, on one line (the text of
+        /// a json column can have line breaks, and a row of the text formats must be one line). Valid until the next call on the thread.
+        /// </summary>
+        internal static ReadOnlySpan<byte> NormalizeJson(string json, bool checkDuplicateKeys)
+        {
             using var doc = JsonDocument.Parse(json);
-
-            var isObject = doc.RootElement.ValueKind == JsonValueKind.Object;
-
-            if (!isObject) line.Append("{\"v\":");
 
             var buffer = t_jsonBuffer ??= new ArrayBufferWriter<byte>(1024);
 
@@ -339,18 +462,21 @@ namespace PgOutput2Json.ClickHouse
 
             writer.Reset(buffer);
 
-            // the text of a json column can have line breaks, and a row must be one line
-            WriteJson(writer, doc.RootElement, checkDuplicateKeys);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                WriteJson(writer, doc.RootElement, checkDuplicateKeys);
+            }
+            else
+            {
+                writer.WriteStartObject();
+                writer.WritePropertyName("v");
+                WriteJson(writer, doc.RootElement, checkDuplicateKeys);
+                writer.WriteEndObject();
+            }
 
             writer.Flush();
 
-            var bytes = buffer.WrittenSpan;
-
-            var chars = t_jsonChars is { } cached && cached.Length >= bytes.Length ? cached : t_jsonChars = new char[Math.Max(bytes.Length, 1024)];
-
-            line.Append(chars, 0, Encoding.UTF8.GetChars(bytes, chars));
-
-            if (!isObject) line.Append('}');
+            return buffer.WrittenSpan;
         }
 
         /// <summary>

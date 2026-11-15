@@ -22,6 +22,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             options.Database = Containers.ClickHouseDatabase;
             options.Username = Containers.ClickHouseUsername;
             options.Password = Containers.ClickHousePassword;
+
+            // CLICKHOUSE_ROWBINARY=false runs the tests with JSON, the format of the tables RowBinary does not cover
+            options.UseRowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") != "false";
         }
 
         /// <summary>
@@ -148,6 +151,53 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             {
                 Assert.AreEqual(expected, actual, table);
             }
+        }
+
+        [TestMethod]
+        public async Task Existing_table_should_get_RowBinary_for_the_types_it_covers_and_JSON_for_others()
+        {
+            var endpoint = await Containers.GetClickHouseEndpointAsync();
+
+            // made before the first row, with other types than the output creates: covered by RowBinary, and not (DateTime, Enum8)
+            await QueryAsync(endpoint, "CREATE TABLE clk_own_bin (id Int64, name LowCardinality(String), at DateTime64(3, 'UTC'), _version UInt128, _deleted UInt8, " +
+                "_synced_at DateTime64(6, 'UTC') DEFAULT now64(6)) ENGINE = ReplacingMergeTree(_version, _deleted) ORDER BY id");
+            await QueryAsync(endpoint, "CREATE TABLE clk_own_json (id Int32, name String, at DateTime('UTC'), mood Enum8('sad' = 1, 'happy' = 2), _version UInt128, _deleted UInt8, " +
+                "_synced_at DateTime64(6, 'UTC') DEFAULT now64(6)) ENGINE = ReplacingMergeTree(_version, _deleted) ORDER BY id");
+
+            await Db.ExecuteAsync(@"
+                CREATE TYPE clk_own_mood AS ENUM ('sad', 'happy');
+                CREATE TABLE clk_own_bin (id int PRIMARY KEY, name text, at timestamptz);
+                CREATE TABLE clk_own_json (id int PRIMARY KEY, name text, at timestamptz, mood clk_own_mood);");
+
+            await RunAsync("clk_own", "clk_own_bin, clk_own_json", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_own_bin VALUES (1, 'a', '2024-02-29 12:34:56.789+02'), (2, NULL, '1999-01-01 00:00:00+00'), (3, 'x', NULL);
+                    UPDATE clk_own_bin SET name = 'b' WHERE id = 2;
+                    DELETE FROM clk_own_bin WHERE id = 3;
+                    INSERT INTO clk_own_json VALUES (1, 'a', '2024-02-29 12:34:56.789+02', 'happy'), (2, 'b', '1999-01-01 00:00:00+00', 'sad');
+                    DELETE FROM clk_own_json WHERE id = 2;");
+
+                // a null for a column that is not Nullable is the default, as with JSON
+                await WaitForAsync(endpoint, "clk_own_bin",
+                    """
+                    [1,"a","2024-02-29 10:34:56.789"]
+                    [2,"b","1999-01-01 00:00:00.000"]
+                    """);
+
+                await WaitForAsync(endpoint, "clk_own_json", """[1,"a","2024-02-29 10:34:56","happy"]""");
+            });
+
+            await QueryAsync(endpoint, "SYSTEM FLUSH LOGS");
+
+            async Task<string> FormatsAsync(string table) => await QueryAsync(endpoint,
+                "SELECT arrayStringConcat(groupUniqArray(extract(query, 'FORMAT (\\w+)')), ',') FROM system.query_log " +
+                $"WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND query LIKE '%`{table}`%' FORMAT TSVRaw");
+
+            var rowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") != "false";
+
+            Assert.AreEqual(rowBinary ? "RowBinary" : "JSONCompactEachRow", await FormatsAsync("clk_own_bin"));
+            Assert.AreEqual("JSONCompactEachRow", await FormatsAsync("clk_own_json"));
         }
 
         [TestMethod]

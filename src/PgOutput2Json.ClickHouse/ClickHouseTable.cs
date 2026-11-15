@@ -88,6 +88,25 @@ namespace PgOutput2Json.ClickHouse
         public StringBuilder Upserts { get; } = new();
         public StringBuilder Deletes { get; } = new();
 
+        /// <summary>The rows waiting in Upserts or BinaryUpserts, and in Deletes or BinaryDeletes.</summary>
+        public int UpsertCount { get; set; }
+        public int DeleteCount { get; set; }
+
+        /// <summary>
+        /// The RowBinary of each column, by the type the column has in ClickHouse, or null if the rows are sent as JSON:
+        /// ClickHouse does not convert the values of RowBinary, and a type the output does not create could be any.
+        /// </summary>
+        public ClickHouseBinaryType[]? BinaryTypes { get; private set; }
+
+        /// <summary>The RowBinary of the key columns, in their order, for the deletes.</summary>
+        public ClickHouseBinaryType[]? BinaryKeyTypes { get; private set; }
+
+        public RowBinaryWriter? BinaryUpserts { get; private set; }
+        public RowBinaryWriter? BinaryDeletes { get; private set; }
+
+        public string BinaryUpsertQuery { get; }
+        public string BinaryDeleteQuery { get; }
+
         public ClickHouseTable(string tableName, IReadOnlyList<ClickHouseColumn> columns, ClickHouseTableOptions? options = null)
         {
             Name = tableName;
@@ -121,12 +140,47 @@ namespace PgOutput2Json.ClickHouse
 
             UpsertQuery = $"INSERT INTO {QuotedName} ({string.Join(", ", columns.Select(c => c.QuotedName))}, {VersionColumn}, {DeletedColumn}) FORMAT JSONCompactEachRow";
             DeleteQuery = $"INSERT INTO {QuotedName} ({string.Join(", ", KeyColumns.Select(c => c.QuotedName))}, {VersionColumn}, {DeletedColumn}) FORMAT JSONCompactEachRow";
+
+            BinaryUpsertQuery = UpsertQuery.Replace("FORMAT JSONCompactEachRow", "FORMAT RowBinary");
+            BinaryDeleteQuery = DeleteQuery.Replace("FORMAT JSONCompactEachRow", "FORMAT RowBinary");
         }
 
         /// <summary>
         /// An array column that is not an array in ClickHouse (created before the array types, or changed to a String
         /// after a multi-dimensional value) gets the JSON text, which ClickHouse turns into a string.
         /// </summary>
+        /// <summary>
+        /// Sends the rows in RowBinary if every column has a type it covers, and returns null, or else the column
+        /// that keeps the rows in JSON.
+        /// </summary>
+        public string? UseRowBinary(IReadOnlyDictionary<string, string> types, TimeZoneInfo? serverTimeZone)
+        {
+            var binaryTypes = new ClickHouseBinaryType[Columns.Count];
+
+            for (var i = 0; i < Columns.Count; i++)
+            {
+                if (!types.TryGetValue(Columns[i].Name, out var type)) return $"{Columns[i].Name} (not found)";
+
+                // a DateTime64 without a time zone needs the one of the server, if it is not known
+                var binaryType = ClickHouseBinaryType.Parse(type, serverTimeZone);
+
+                if (binaryType == null) return $"{Columns[i].Name} {type}";
+
+                binaryTypes[i] = binaryType;
+            }
+
+            // the version and the deleted flag are written as the types the output creates
+            if (!types.TryGetValue(VersionColumn, out var version) || version != "UInt128") return $"{VersionColumn} {version}";
+            if (!types.TryGetValue(DeletedColumn, out var deleted) || deleted != "UInt8") return $"{DeletedColumn} {deleted}";
+
+            BinaryTypes = binaryTypes;
+            BinaryKeyTypes = KeyColumns.Select(k => binaryTypes[Columns.ToList().IndexOf(k)]).ToArray();
+            BinaryUpserts ??= new RowBinaryWriter();
+            BinaryDeletes ??= new RowBinaryWriter();
+
+            return null;
+        }
+
         public void UseExistingTypes(IReadOnlyDictionary<string, string> types)
         {
             foreach (var column in Columns)
