@@ -21,7 +21,7 @@ Each scenario gets a fresh table, publication and replication slot, with rows of
 
 - **null**: counts the rows and does nothing else. It measures the library itself: reading the replication stream or the copy, and writing the JSON.
 - **clickhouse**: the ClickHouse output, into a database that is dropped and created again for every run.
-- **sqlite**: the SQLite output, into a file that is deleted before every run (`--sqlite`, `--sqlite-wal`).
+- **sqlite**: the SQLite output, into a file that is deleted before every run (`--sqlite`, `--sqlite-wal`). By default the file is in the temp directory, which on many Linux systems is a tmpfs in memory, so no commit waits for a disk: give `--sqlite` a path on the disk to measure that.
 - **mongodb**: the MongoDB output, into a database that is dropped before every run (`--mongodb`).
 - **dynamodb**: the DynamoDB output, into a DynamoDB Local container whose tables are all deleted before every run (`--dynamodb URL` for another endpoint, `--dynamodb-parallel`). DynamoDB Local is not DynamoDB: its numbers say little about AWS.
 - **rabbitmq**: the RabbitMQ output, into a topic exchange with a durable queue bound to it, both created again for every run (`--rabbitmq-amqp`, `--rabbitmq-transient`).

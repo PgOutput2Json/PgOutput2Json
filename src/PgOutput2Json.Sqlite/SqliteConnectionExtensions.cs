@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return whereBuilder.ToString();
         }
 
-        public static async Task<int> InsertAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement[] rowElement, bool ignoreConflicts, CancellationToken token)
+        public static async Task<int> InsertAsync(this SqliteConnection cn, PreparedCommands commands, SqliteValue[] rowElement, bool ignoreConflicts, CancellationToken token)
         {
             var cmd = ignoreConflicts ? commands.InsertIgnoreCommand : commands.InsertCommand;
 
@@ -391,7 +391,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Updates the row using the prepared update command.
         /// Returns the number of updated rows.
         /// </summary>
-        public static async Task<int> UpdateAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement[] rowElement, CancellationToken token)
+        public static async Task<int> UpdateAsync(this SqliteConnection cn, PreparedCommands commands, SqliteValue[] rowElement, CancellationToken token)
         {
             var updateCommand = commands.UpdateCommand;
             if (updateCommand == null) return 0;
@@ -426,7 +426,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Used when some row values are toasted (unchanged and not sent by PostgreSQL).
         /// Returns the number of updated rows.
         /// </summary>
-        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement[] rowElement, CancellationToken token)
+        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, SqliteValue[] rowElement, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
             var columns = commands.Columns;
@@ -437,7 +437,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             {
                 if (columns[i].IsKey) continue;
 
-                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == ToastValue)
+                if (rowElement[i].Kind == SqliteValueKind.Unchanged)
                 {
                     continue; // skip unchanged toasted columns
                 }
@@ -489,7 +489,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Moves a row to its new key, if the update changed the key. The key element holds the old values of
         /// the key columns, the row element the new row. The other columns are written by the update that follows.
         /// </summary>
-        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement[]? keyElement, JsonElement[] rowElement, CancellationToken token)
+        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, SqliteValue[]? keyElement, SqliteValue[] rowElement, CancellationToken token)
         {
             if (keyElement == null) return;
 
@@ -505,7 +505,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 // the key element has the key columns only
                 if (keyColumns.Count >= keyElement.Length) return;
 
-                changed |= keyElement[keyColumns.Count].GetRawText() != rowElement[i].GetRawText();
+                changed |= !keyElement[keyColumns.Count].IsSameAs(rowElement[i]);
 
                 keyColumns.Add(i);
             }
@@ -514,7 +514,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             // with REPLICA IDENTITY FULL every column is a key column, and a large one may come as unchanged
             var setColumns = keyColumns
-                .Where(i => !(rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == ToastValue))
+                .Where(i => rowElement[i].Kind != SqliteValueKind.Unchanged)
                 .ToList();
 
             if (setColumns.Count == 0) return;
@@ -550,7 +550,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task DeleteAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement[]? keyElement, CancellationToken token)
+        public static async Task DeleteAsync(this SqliteConnection cn, PreparedCommands commands, SqliteValue[]? keyElement, CancellationToken token)
         {
             var deleteCommand = commands.DeleteCommand;
             if (deleteCommand == null || keyElement == null) return;
@@ -571,51 +571,53 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await deleteCommand.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        private static void BindValue(SqliteParameter param, JsonElement valElement, ColumnInfo column)
+        internal static void BindValue(SqliteParameter param, SqliteValue value, ColumnInfo column)
         {
-            switch (valElement.ValueKind)
+            switch (value.Kind)
             {
-                case JsonValueKind.Undefined:
-                case JsonValueKind.Null:
+                case SqliteValueKind.Null:
                     param.Value = DBNull.Value;
                     break;
-                case JsonValueKind.Number:
-                    if (valElement.TryGetInt64(out var intValue))
+                case SqliteValueKind.Number:
+                    if (value.TryGetInt64(out var intValue))
                     {
                         param.Value = intValue;
                     }
-                    else if (valElement.TryGetDecimal(out var decimalValue))
+                    else if (value.TryGetDecimal(out var decimalValue))
                     {
                         param.Value = decimalValue;
                     }
                     else
                     {
-                        param.Value = valElement.GetRawText();
+                        param.Value = value.Text;
                     }
                     break;
-                case JsonValueKind.True:
+                case SqliteValueKind.True:
                     param.Value = 1L;
                     break;
-                case JsonValueKind.False:
+                case SqliteValueKind.False:
                     param.Value = 0L;
                     break;
-                case JsonValueKind.String:
-                    if (column.IsDateTime())
+                case SqliteValueKind.String or SqliteValueKind.Unchanged:
+                    // an unchanged value is not written; with REPLICA IDENTITY FULL it can be in a key, as its marker
+                    var text = value.Kind == SqliteValueKind.Unchanged ? ToastValue : value.Text;
+
+                    if (column.IsDateTime() && value.Kind == SqliteValueKind.String)
                     {
-                        var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
+                        var dateTime = DateTimeOffset.Parse(text, CultureInfo.InvariantCulture);
                         param.Value = dateTime.ToString("O");
                     }
-                    else if (column.IsBlob())
+                    else if (column.IsBlob() && value.Kind == SqliteValueKind.String)
                     {
-                        param.Value = ParseHexBlob(valElement.GetString());
+                        param.Value = ParseHexBlob(text);
                     }
                     else
                     {
-                        param.Value = valElement.GetString() ?? "";
+                        param.Value = text;
                     }
                     break;
                 default:
-                    param.Value = valElement.GetRawText();
+                    param.Value = value.Text;
                     break;
             }
         }

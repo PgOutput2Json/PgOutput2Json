@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,7 +11,7 @@ using Microsoft.Data.Sqlite;
 
 namespace PgOutput2Json.Sqlite
 {
-    public class SqlitePublisher : MessagePublisher
+    public class SqlitePublisher : MessagePublisher, IRowPublisher
     {
         private readonly SqlitePublisherOptions _options;
         private readonly ILogger<SqlitePublisher>? _logger;
@@ -28,8 +29,11 @@ namespace PgOutput2Json.Sqlite
         private string _tableName = "";
 
         // the values of the row and of the key of the change being applied
-        private JsonElement[] _row = [];
-        private JsonElement[] _key = [];
+        private SqliteValue[] _row = [];
+        private SqliteValue[] _key = [];
+
+        // the JSON of an array value of a row
+        private readonly StringBuilder _json = new();
 
         public SqlitePublisher(SqlitePublisherOptions options, ILogger<SqlitePublisher>? logger)
         {
@@ -48,12 +52,70 @@ namespace PgOutput2Json.Sqlite
 
             await ApplyChangeAsync(connection, _tableName, doc, token).ConfigureAwait(false);
 
-            // the messages of a table sync are behind the main stream - they must not move the saved position
-            if (!msg.IsTableSync)
+            SetPosition(msg.IsTableSync, msg.TxFinalLsn, msg.MessageNo);
+        }
+
+        /// <summary>
+        /// A row of the library, without its JSON: the values are PostgreSQL's text.
+        /// </summary>
+        public async Task PublishRowAsync(ChangeRow row, CancellationToken token)
+        {
+            var connection = await EnsureConnectionInTransactionAsync(token).ConfigureAwait(false);
+
+            var table = await EnsureTableAsync(connection, row.Table, token).ConfigureAwait(false);
+
+            var columns = table.Commands.Columns;
+
+            var rowValues = row.NewValues != null ? ReadValues(row.NewValues, columns, keyOnly: false, ref _row) : [];
+            var keyValues = row.OldValues != null ? ReadValues(row.OldValues, columns, keyOnly: true, ref _key) : null;
+
+            var changeType = row.ChangeType switch
             {
-                _lastWalEnd = msg.TxFinalLsn;
-                _lastMessageNo = msg.MessageNo;
+                RowChangeType.Insert => "I",
+                RowChangeType.Copy => "C",
+                RowChangeType.Update => "U",
+                _ => "D",
+            };
+
+            await ApplyChangeAsync(connection, table, changeType, keyValues, rowValues, token).ConfigureAwait(false);
+
+            SetPosition(row.IsTableSync, row.TxFinalLsn, row.MessageNo);
+        }
+
+        private void SetPosition(bool isTableSync, ulong txFinalLsn, ulong messageNo)
+        {
+            // the messages of a table sync are behind the main stream - they must not move the saved position
+            if (!isTableSync)
+            {
+                _lastWalEnd = txFinalLsn;
+                _lastMessageNo = messageNo;
             }
+        }
+
+        /// <summary>
+        /// The values of a row, or of the key columns of an old row (as the "k" of the JSON has them).
+        /// </summary>
+        private SqliteValue[] ReadValues(IReadOnlyList<RowValue> values, IReadOnlyList<ColumnInfo> columns, bool keyOnly, ref SqliteValue[] result)
+        {
+            var length = 0;
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (!keyOnly || columns[i].IsKey) length++;
+            }
+
+            if (result.Length != length) result = new SqliteValue[length];
+
+            var j = 0;
+
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (keyOnly && !columns[i].IsKey) continue;
+
+                result[j++] = SqliteValue.FromRow(values[i], columns[i].DataType, _json);
+            }
+
+            return result;
         }
 
         private async Task ApplyChangeAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
@@ -72,6 +134,11 @@ namespace PgOutput2Json.Sqlite
             var keyElement = doc.RootElement.TryGetProperty("k", out var key) && key.ValueKind == JsonValueKind.Array ? ReadValues(key, ref _key) : null;
             var rowElement = doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array ? ReadValues(row, ref _row) : [];
 
+            await ApplyChangeAsync(connection, table, changeType, keyElement, rowElement, token).ConfigureAwait(false);
+        }
+
+        private static async Task ApplyChangeAsync(SqliteConnection connection, TableContext table, string? changeType, SqliteValue[]? keyElement, SqliteValue[] rowElement, CancellationToken token)
+        {
             if (changeType == "I")
             {
                 await connection.InsertAsync(table.Commands, rowElement, ignoreConflicts: true, token).ConfigureAwait(false);
@@ -165,20 +232,20 @@ namespace PgOutput2Json.Sqlite
         /// <summary>
         /// The values of a JSON array, in an array of exactly their number, reused while that number stays.
         /// </summary>
-        private static JsonElement[] ReadValues(JsonElement array, ref JsonElement[] values)
+        private static SqliteValue[] ReadValues(JsonElement array, ref SqliteValue[] values)
         {
             var length = array.GetArrayLength();
 
-            if (values.Length != length) values = new JsonElement[length];
+            if (values.Length != length) values = new SqliteValue[length];
 
             var i = 0;
 
-            foreach (var value in array.EnumerateArray()) values[i++] = value;
+            foreach (var value in array.EnumerateArray()) values[i++] = SqliteValue.FromJson(value);
 
             return values;
         }
 
-        private static async Task UpdateRowAsync(SqliteConnection connection, TableContext table, JsonElement[] rowElement, CancellationToken token)
+        private static async Task UpdateRowAsync(SqliteConnection connection, TableContext table, SqliteValue[] rowElement, CancellationToken token)
         {
             var hasToast = HasUnchangedToast(rowElement);
 
@@ -193,11 +260,11 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        private static bool HasUnchangedToast(JsonElement[] rowElement)
+        private static bool HasUnchangedToast(SqliteValue[] rowElement)
         {
             foreach (var value in rowElement)
             {
-                if (value.ValueKind == JsonValueKind.String && value.GetString() == "__TOAST__") return true;
+                if (value.Kind == SqliteValueKind.Unchanged) return true;
             }
 
             return false;
@@ -209,22 +276,7 @@ namespace PgOutput2Json.Sqlite
             {
                 // relation message - schema changed, rebuild the cached commands
 
-                var columns = ParseSchema(schemaElement);
-
-                var table = new TableContext(tableName, connection.CreatePreparedCommands(tableName, columns));
-
-                if (_tables.Remove(tableName, out var existing))
-                {
-                    await existing.DisposeAsync().ConfigureAwait(false);
-                }
-
-                _tables[tableName] = table;
-
-                await connection.CreateOrAlterTableAsync(tableName, columns, token).ConfigureAwait(false);
-
-                await connection.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
-
-                return table;
+                return await CreateTableContextAsync(connection, tableName, ParseSchema(schemaElement), null, token).ConfigureAwait(false);
             }
 
             if (_tables.TryGetValue(tableName, out var cached)) return cached;
@@ -240,6 +292,41 @@ namespace PgOutput2Json.Sqlite
             _tables[tableName] = restored;
 
             return restored;
+        }
+
+        /// <summary>
+        /// The table of a row: the same <see cref="RowTable"/> until the columns may have changed.
+        /// </summary>
+        private async Task<TableContext> EnsureTableAsync(SqliteConnection connection, RowTable rowTable, CancellationToken token)
+        {
+            if (_tables.TryGetValue(rowTable.Name, out var cached) && cached.Source == rowTable) return cached;
+
+            var columns = new List<ColumnInfo>(rowTable.Columns.Count);
+
+            foreach (var column in rowTable.Columns)
+            {
+                columns.Add(new ColumnInfo { Name = column.Name, DataType = column.TypeId, TypeModifier = column.TypeModifier, IsKey = column.IsKey });
+            }
+
+            return await CreateTableContextAsync(connection, rowTable.Name, columns, rowTable, token).ConfigureAwait(false);
+        }
+
+        private async Task<TableContext> CreateTableContextAsync(SqliteConnection connection, string tableName, List<ColumnInfo> columns, RowTable? source, CancellationToken token)
+        {
+            var table = new TableContext(tableName, connection.CreatePreparedCommands(tableName, columns)) { Source = source };
+
+            if (_tables.Remove(tableName, out var existing))
+            {
+                await existing.DisposeAsync().ConfigureAwait(false);
+            }
+
+            _tables[tableName] = table;
+
+            await connection.CreateOrAlterTableAsync(tableName, columns, token).ConfigureAwait(false);
+
+            await connection.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
+
+            return table;
         }
 
         private static List<ColumnInfo> ParseSchema(JsonElement schemaElement)
@@ -331,6 +418,9 @@ namespace PgOutput2Json.Sqlite
             public string FullTableName { get; }
 
             public PreparedCommands Commands { get; }
+
+            /// <summary>The <see cref="RowTable"/> of the rows, for an <see cref="IRowPublisher"/> row.</summary>
+            public RowTable? Source { get; init; }
 
             public TableContext(string fullTableName, PreparedCommands commands)
             {
