@@ -23,8 +23,8 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             options.Username = Containers.ClickHouseUsername;
             options.Password = Containers.ClickHousePassword;
 
-            // CLICKHOUSE_ROWBINARY=false runs the tests with JSON, the format of the tables RowBinary does not cover
-            options.UseRowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") != "false";
+            // CLICKHOUSE_ROWBINARY=true runs the tests with RowBinary instead of JSON, the default
+            options.UseRowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") == "true";
         }
 
         /// <summary>
@@ -199,7 +199,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 "SELECT arrayStringConcat(groupUniqArray(extract(query, 'FORMAT (\\w+)')), ',') FROM system.query_log " +
                 $"WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND query LIKE '%`{table}`%' FORMAT TSVRaw");
 
-            var rowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") != "false";
+            var rowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") == "true";
 
             Assert.AreEqual(rowBinary ? "RowBinary" : "JSONCompactEachRow", await FormatsAsync("clk_own_bin"));
             Assert.AreEqual("JSONCompactEachRow", await FormatsAsync("clk_own_json"));

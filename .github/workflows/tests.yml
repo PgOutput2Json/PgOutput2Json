@@ -2,7 +2,7 @@
 # The integration tests start their containers with Testcontainers, on the runner's Docker.
 #   test      builds, runs the unit tests and the PostgreSQL tests on PostgreSQL 16
 #   outputs   runs the tests of the outputs (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB, Kinesis, webhooks, SQLite, ClickHouse),
-#             and the ClickHouse tests again with JSON, the format of the tables RowBinary does not cover
+#             and the ClickHouse tests again with RowBinary (UseRowBinary), which is off by default
 #   postgres  repeats the PostgreSQL tests on the other supported versions
 # A change of only the website, the docs (*.md), the docker files for manual testing or the license does not run them.
 name: Tests
@@ -74,9 +74,9 @@ jobs:
       - name: Output tests
         run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --filter "FullyQualifiedName~.Outputs." --logger "console;verbosity=normal"
 
-      - name: ClickHouse tests with JSON
+      - name: ClickHouse tests with RowBinary
         env:
-          CLICKHOUSE_ROWBINARY: "false"
+          CLICKHOUSE_ROWBINARY: "true"
         run: dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --filter "FullyQualifiedName~.Outputs.ClickHouse" --logger "console;verbosity=normal"
 
   postgres:

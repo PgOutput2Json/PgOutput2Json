@@ -183,7 +183,7 @@ In the example code below, we'll assume the database name is `my_database`.
 PgOutput2Json can keep a copy of your PostgreSQL tables in ClickHouse. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
-The output uses the HTTP interface of ClickHouse, and sends the rows in the RowBinary format (see [Insert format](#insert-format)). It needs no ClickHouse client library, and is tested with ClickHouse 26.10.
+The output uses the HTTP interface of ClickHouse, and sends the rows as JSON, or in the faster RowBinary format if you turn it on (see [Insert format](#insert-format)). It needs no ClickHouse client library, and is tested with ClickHouse 26.10.
 
 ### How the rows are stored
 
@@ -222,7 +222,7 @@ The row of a delete stays in the table, marked deleted. `FINAL` hides it, but it
 ### Tables
 
 - A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself.
-- A table that already exists is used as it is. To choose the column types or an engine the options do not offer (for example a replicated one), create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`. A column type the output does not create can make the rows of the table go as JSON: see [Insert format](#insert-format).
+- A table that already exists is used as it is. To choose the column types or an engine the options do not offer (for example a replicated one), create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`. With RowBinary, a column type it does not cover makes the rows of the table go as JSON: see [Insert format](#insert-format).
 - A column added in PostgreSQL is added in ClickHouse. A column dropped in PostgreSQL stays. A changed column type is not followed: change the ClickHouse table yourself. Neither is a changed primary key definition (other key columns), because ClickHouse cannot change the order of an existing table: drop the ClickHouse table and copy it again. An update that changes the key value of a row is followed.
 - The database must exist.
 
@@ -324,9 +324,13 @@ With `options.UseAsyncInserts` (on by default) a batch of fewer than 1,000 rows 
 
 ### Insert format
 
-The rows are sent in RowBinary, which ClickHouse reads two to three times faster than JSON. RowBinary has no conversion: every value must be of the type the column has. So the output reads the column types of each table from ClickHouse when it starts, and writes each value as that type. It covers the types it creates, also when an existing table has them differently (another integer width, `Nullable` or not, another `DateTime64` precision or time zone), and also every integer (`Int8` to `Int256`, `UInt8` to `UInt256`), `Date`, `DateTime`, `Enum8`, `Enum16`, `FixedString`, `IPv4`, `IPv6` and `LowCardinality` of these. Values ClickHouse cannot store are handled as with the text: a date out of the range of the type is its first or its last one, and a value that is not in an `Enum`, too long for a `FixedString`, or an address with a netmask (an `inet` like `10.0.0.0/8`, or a `cidr`) stops the replication with an error that names the column.
+By default the rows are sent as JSON (`JSONCompactEachRow`), and ClickHouse parses every value itself: what it stores is what its own parser makes of the value.
 
-A table with any other column type (for example `Map`, `Tuple` or `Nested`) gets its rows as JSON (`JSONCompactEachRow`), which ClickHouse converts to the type of the column. The output logs this when it prepares the table. So does a table with a `DateTime` or `DateTime64` without a time zone when the time zone of the server is not known to .NET. With `options.UseRowBinary = false`, every table gets JSON.
+With `options.UseRowBinary = true` they are sent in RowBinary, which ClickHouse reads two to three times faster. In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) it made the initial copy and the stream about 10% faster, since the inserts are only a part of the time. It is newer, and off by default, as the binary format of PostgreSQL's own replication: the output then does what the parser of ClickHouse does with the text (the time zone of a `timestamp`, dates out of range, decimal digits), so a difference would be stored without an error.
+
+RowBinary has no conversion: every value must be of the type the column has. So the output reads the column types of each table from ClickHouse when it starts, and writes each value as that type. It covers the types it creates, also when an existing table has them differently (another integer width, `Nullable` or not, another `DateTime64` precision or time zone), and also every integer (`Int8` to `Int256`, `UInt8` to `UInt256`), `Date`, `DateTime`, `Enum8`, `Enum16`, `FixedString`, `IPv4`, `IPv6` and `LowCardinality` of these. Values ClickHouse cannot store are handled as with the text: a date out of the range of the type is its first or its last one, and a value that is not in an `Enum`, too long for a `FixedString`, or an address with a netmask (an `inet` like `10.0.0.0/8`, or a `cidr`) stops the replication with an error that names the column.
+
+A table with any other column type (for example `Map`, `Tuple` or `Nested`) gets its rows as JSON (`JSONCompactEachRow`), which ClickHouse converts to the type of the column. The output logs this when it prepares the table. So does a table with a `DateTime` or `DateTime64` without a time zone when the time zone of the server is not known to .NET.
 
 A `timestamp` (without time zone) is written as a time of the time zone of the column, or of the server if the column has none, as ClickHouse reads the text of a time.
 
@@ -384,7 +388,7 @@ public class Worker : BackgroundService
 | `Database` | `default` | The database of the tables. It must exist. |
 | `Username`, `Password` | `default`, empty | |
 | `UseAsyncInserts` | `true` | For batches of fewer than 1,000 rows. See [Batch size](#batch-size). |
-| `UseRowBinary` | `true` | See [Insert format](#insert-format). |
+| `UseRowBinary` | `false` | See [Insert format](#insert-format). |
 | `UseJsonType` | `true` | See [JSON columns](#json-columns). |
 | `UseArrayTypes` | `true` | See [Arrays](#arrays). |
 | `CleanUpDeletedRowsAfter` | none | Removes the deleted rows. See [Deleted rows](#deleted-rows). |
