@@ -6,6 +6,7 @@
 [assembly: InternalsVisibleTo("PgOutput2Json.ClickHouse")]
 [assembly: InternalsVisibleTo("PgOutput2Json.Sqlite")]
 [assembly: InternalsVisibleTo("PgOutput2Json.MongoDb")]
+[assembly: InternalsVisibleTo("PgOutput2Json.Webhooks")]
 [assembly: InternalsVisibleTo("PgOutput2Json.RabbitMq")]
 [assembly: InternalsVisibleTo("PgOutput2Json.Redis")]
 [assembly: InternalsVisibleTo("PgOutput2Json.Kafka")]

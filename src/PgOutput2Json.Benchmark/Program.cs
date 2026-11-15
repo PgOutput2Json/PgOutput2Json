@@ -132,6 +132,12 @@ try
             : mongo.GetConnectionString();
     }
 
+    var webhookUrl = options.WebhookUrl;
+
+    using var receiver = options.Outputs.Contains("webhooks") && webhookUrl == null ? new WebhookReceiver() : null;
+
+    webhookUrl ??= receiver?.Url;
+
     var kafkaBootstrapServers = options.KafkaBootstrapServers;
 
     if (options.Outputs.Contains("kafka") && kafkaBootstrapServers == null)
@@ -293,6 +299,10 @@ try
                 o.ClientSettings = settings;
                 o.DatabaseName = BenchmarkStream;
             });
+        }
+        else if (output == "webhooks")
+        {
+            builder.UseWebhook(webhookUrl!, o => o.WebhookSecret = options.WebhookSecret);
         }
         else if (output == "sqlite")
         {

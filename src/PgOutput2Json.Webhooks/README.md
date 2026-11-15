@@ -260,6 +260,10 @@ If `options.UseStandardWebhooks` is `true` then each request includes standard h
 In both cases, the request includes:
 - `User-Agent`: string in this format: `PgHook/ReplicationSlotName`;
 
+### Batch size
+
+Every batch of changes is one POST, and the listener waits for its answer before it goes on. The batch size is the default of the library, 100 changes. In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark), with a webhook that only reads the request, the initial copy ran at about 130,000 rows per second and the stream at about 81,000 with batches of 100, at about 184,000 and 86,000 with batches of 1,000, and at about 209,000 and 106,000 with batches of 10,000 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL in Docker on the same machine and the webhook in the process of the benchmark). A larger batch is a larger request (about 300 bytes a row in the benchmark), so call `WithBatchSize` after `UseWebhook` if your webhook takes it. A batch that is not full is still sent after the batch wait time (100 ms by default).
+
 ## Working with Permanent Replication Slots
 
 If you want to capture changes made while the worker is stopped, you need a permanent replication slot. 
