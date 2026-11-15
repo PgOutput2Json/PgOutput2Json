@@ -332,15 +332,24 @@ namespace PgOutput2Json
         {
             using var cmd = connection.CreateCommand();
 
+            // the key columns are those of the replica identity, as in the stream: the primary key by default,
+            // the columns of the replica identity index, every column for FULL, and none for NOTHING
             cmd.CommandText = $@"
 SELECT 
     a.attname, 
     a.atttypid, 
     a.atttypmod, 
-    CASE WHEN i.indexrelid IS NOT NULL THEN true ELSE false END AS is_key
+    CASE c.relreplident
+        WHEN 'f' THEN true
+        WHEN 'n' THEN false
+        ELSE EXISTS (
+            SELECT 1 FROM pg_index i
+            WHERE i.indrelid = a.attrelid
+              AND (CASE c.relreplident WHEN 'i' THEN i.indisreplident ELSE i.indisprimary END)
+              AND a.attnum = ANY(i.indkey))
+    END AS is_key
 FROM pg_attribute a
-LEFT JOIN
-    pg_index i ON i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)
+JOIN pg_class c ON c.oid = a.attrelid
 WHERE
     a.attrelid = {table.Oid}
     AND a.attnum > 0
