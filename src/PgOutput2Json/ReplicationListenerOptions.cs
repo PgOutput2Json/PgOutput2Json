@@ -55,6 +55,12 @@ namespace PgOutput2Json
         public int MaxParallelCopyJobs { get; internal set; } = 2;
 
         /// <summary>
+        /// The number of workers that copy one table, each with a connection of its own, in chunks of 1000 pages
+        /// from the same snapshot. Default is 1. An output that cannot take parallel writes uses one.
+        /// </summary>
+        public int CopyWorkersPerTable { get; internal set; } = 1;
+
+        /// <summary>
         /// Interval at which pg_logical_emit_message is called to prevent restart_lsn from lagging
         /// when replicated tables are idle but other tables generate WAL.
         /// Set to <see cref="TimeSpan.Zero"/> or <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> to disable.

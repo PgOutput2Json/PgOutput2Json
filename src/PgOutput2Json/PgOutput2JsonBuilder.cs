@@ -103,8 +103,23 @@ namespace PgOutput2Json
         /// <param name="maxParallelJobs">The number of tables synced at the same time. Each one uses a replication slot and two connections.</param>
         public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 2)
         {
+            return WithInitialDataCopy(copyData, maxParallelJobs, 1);
+        }
+
+        /// <summary>
+        /// Copies the existing rows of the published tables, each table once per replication slot.
+        /// </summary>
+        /// <param name="copyData">Turns the copy on or off.</param>
+        /// <param name="maxParallelJobs">The number of tables synced at the same time. Each one uses a replication slot and two connections.</param>
+        /// <param name="workersPerTable">
+        /// The number of workers that copy one table, in chunks of 1000 pages from the same snapshot. Each worker
+        /// after the first uses one more connection and one more publisher. An output that cannot take parallel writes uses one.
+        /// </param>
+        public PgOutput2JsonBuilder WithInitialDataCopy(bool copyData, int maxParallelJobs, int workersPerTable)
+        {
             _listenerOptions.CopyData = copyData;
             _listenerOptions.MaxParallelCopyJobs = maxParallelJobs;
+            _listenerOptions.CopyWorkersPerTable = workersPerTable;
             return this;
         }
 
@@ -170,6 +185,11 @@ namespace PgOutput2Json
             if (_listenerOptions.MaxParallelCopyJobs <= 0)
             {
                 _listenerOptions.MaxParallelCopyJobs = 1;
+            }
+
+            if (_listenerOptions.CopyWorkersPerTable <= 0)
+            {
+                _listenerOptions.CopyWorkersPerTable = 1;
             }
 
             if (_listenerOptions.ReconnectDelay < TimeSpan.Zero)
