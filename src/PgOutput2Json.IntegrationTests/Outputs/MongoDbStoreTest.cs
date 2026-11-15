@@ -227,6 +227,38 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             }
         }
 
+        [TestMethod]
+        public async Task Position_saved_in_two_values_should_be_read_and_saved_again_as_one()
+        {
+            var settings = MongoClientSettings.FromConnectionString(await Containers.GetMongoConnectionStringAsync());
+
+            using var client = new MongoClient(settings);
+
+            var config = client.GetDatabase("os_mongo_pos_db").GetCollection<BsonDocument>("__pg2j_config");
+
+            // a store of an earlier version: the two parts of the position under keys of their own
+            await config.InsertManyAsync([new BsonDocument { ["_id"] = "WalEnd", ["Value"] = "200" }, new BsonDocument { ["_id"] = "MessageNo", ["Value"] = "5" }]);
+
+            var options = new global::PgOutput2Json.MongoDb.MongoDbPublisherOptions { ClientSettings = settings, DatabaseName = "os_mongo_pos_db" };
+
+            await using (var publisher = new global::PgOutput2Json.MongoDb.MongoDbPublisher(options, null))
+            {
+                Assert.AreEqual((200UL, 5UL), await publisher.GetLastPublishedWalSeqAsync(default));
+
+                await publisher.PublishAsync(StoreMessage.Create(300, 1), default);
+                await publisher.ConfirmAsync(default);
+            }
+
+            var position = await config.Find(Builders<BsonDocument>.Filter.Eq("_id", "Position")).FirstAsync();
+
+            Assert.AreEqual("300/1", position["Value"].AsString);
+
+            await using (var publisher = new global::PgOutput2Json.MongoDb.MongoDbPublisher(options, null))
+            {
+                Assert.AreEqual((300UL, 1UL), await publisher.GetLastPublishedWalSeqAsync(default));
+            }
+        }
+
         private static string Number(BsonValue value)
         {
             return value.IsDouble ? value.AsDouble.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : value.ToString()!;

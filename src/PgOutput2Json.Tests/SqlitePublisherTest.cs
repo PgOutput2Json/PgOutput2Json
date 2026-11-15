@@ -82,6 +82,55 @@ namespace PgOutput2Json.Tests
             }
         }
 
+        [TestMethod]
+        public async Task Position_saved_in_two_values_should_be_read_and_saved_again_as_one()
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pg2j_{System.Guid.NewGuid():N}.db");
+
+            var options = new SqlitePublisherOptions
+            {
+                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False")
+            };
+
+            async Task<string?> ConfigAsync(string sql)
+            {
+                await using var connection = new SqliteConnection(options.ConnectionStringBuilder.ConnectionString);
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = sql;
+
+                return (string?)await command.ExecuteScalarAsync();
+            }
+
+            try
+            {
+                // a store of an earlier version: the two parts of the position under keys of their own
+                await ConfigAsync(@"
+                    CREATE TABLE __pg2j_config (cfg_key TEXT NOT NULL, cfg_value TEXT, CONSTRAINT __pg2j_config_pk PRIMARY KEY (cfg_key));
+                    INSERT INTO __pg2j_config VALUES ('WalEnd', '200'), ('MessageNo', '5');");
+
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    Assert.AreEqual((200UL, 5UL), await publisher.GetLastPublishedWalSeqAsync(CancellationToken.None));
+
+                    await publisher.PublishAsync(CreateMessage("{\"c\":\"I\",\"s\":[\"test_table\",[\"id\",1,23]],\"r\":[1]}", 300, 1), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+                }
+
+                Assert.AreEqual("300/1", await ConfigAsync("SELECT cfg_value FROM __pg2j_config WHERE cfg_key = 'Position'"));
+
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    Assert.AreEqual((300UL, 1UL), await publisher.GetLastPublishedWalSeqAsync(CancellationToken.None));
+                }
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
         private static JsonMessage CreateMessage(string json, ulong txFinalLsn = 0, ulong messageNo = 0, bool isTableSync = false)
         {
             var msg = new JsonMessage { TxFinalLsn = txFinalLsn, MessageNo = messageNo, IsTableSync = isTableSync };

@@ -15,11 +15,29 @@ namespace PgOutput2Json.MongoDb
     {
         public static async Task<(ulong, ulong)> GetWalEndAsync(this IMongoDatabase db, CancellationToken token)
         {
+            var position = await db.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
+
+            if (position != null) return ParsePosition(position);
+
+            // saved before version 2.1: the next confirm saves the position under its new key
             var walEndValue = await db.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
             var messageNoValue = await db.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
 
             return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
                     messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+        }
+
+        internal static string FormatPosition(ulong walEnd, ulong messageNo)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{walEnd}/{messageNo}");
+        }
+
+        internal static (ulong, ulong) ParsePosition(string position)
+        {
+            var slash = position.IndexOf('/');
+
+            return (ulong.Parse(position.AsSpan(0, slash), CultureInfo.InvariantCulture),
+                    ulong.Parse(position.AsSpan(slash + 1), CultureInfo.InvariantCulture));
         }
 
         public static async Task SetSchemaAsync(this IMongoDatabase db, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
@@ -106,17 +124,11 @@ namespace PgOutput2Json.MongoDb
             {
                 var configNamespace = $"{db.DatabaseNamespace.DatabaseName}.__pg2j_config";
 
+                // the last write of the ordered bulk write: saved only once all the rows before it are
                 batch.Add(new BulkWriteReplaceOneModel<Config>(
                     configNamespace,
-                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.WalEnd),
-                    new Config { Id = ConfigKey.WalEnd, Value = walEnd.Value.ToString(CultureInfo.InvariantCulture) },
-                    isUpsert: true
-                ));
-
-                batch.Add(new BulkWriteReplaceOneModel<Config>(
-                    configNamespace,
-                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.MessageNo),
-                    new Config { Id = ConfigKey.MessageNo, Value = messageNo.ToString(CultureInfo.InvariantCulture) },
+                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.Position),
+                    new Config { Id = ConfigKey.Position, Value = FormatPosition(walEnd.Value, messageNo) },
                     isUpsert: true
                 ));
             }

@@ -101,10 +101,7 @@ namespace PgOutput2Json.DynamoDb
             // Data exporter messages have no LSN info (0,0) - they must not overwrite the replication position
             if (_useDeduplication && _lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0))
             {
-                await client.SaveConfigAsync(ConfigKey.WalEnd, _lastWal.Value.ToString(CultureInfo.InvariantCulture), token)
-                    .ConfigureAwait(false);
-
-                await client.SaveConfigAsync(ConfigKey.MessageNo, _lastMessageNo.ToString(CultureInfo.InvariantCulture), token)
+                await client.SaveConfigAsync(ConfigKey.Position, DynamoDbExtensions.FormatPosition(_lastWal.Value, _lastMessageNo), token)
                     .ConfigureAwait(false);
             }
         }
