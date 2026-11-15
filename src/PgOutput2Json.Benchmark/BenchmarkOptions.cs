@@ -14,6 +14,7 @@ namespace PgOutput2Json.Benchmark
               --rows N                   Rows per scenario (default: 1000000)
               --workers N                Copy workers per table (default: 1)
               --tx-rows N                Rows per transaction of the stream scenario (default: 1000)
+              --runs N                   Runs of each scenario: the table has the fastest and the median (default: 1)
               --batch-size N             Batch size of the listener (default: that of the output)
               --compact                  The compact write mode for the null output
               --timeout SECONDS          Gives up after this long (default: 1800)
@@ -30,6 +31,7 @@ namespace PgOutput2Json.Benchmark
         public long Rows { get; private set; } = 1_000_000;
         public int Workers { get; private set; } = 1;
         public long TxRows { get; private set; } = 1000;
+        public int Runs { get; private set; } = 1;
         public int? BatchSize { get; private set; }
         public bool Compact { get; private set; }
         public TimeSpan Timeout { get; private set; } = TimeSpan.FromMinutes(30);
@@ -59,6 +61,7 @@ namespace PgOutput2Json.Benchmark
                     case "--rows": options.Rows = Number(); break;
                     case "--workers": options.Workers = (int)Number(); break;
                     case "--tx-rows": options.TxRows = Number(); break;
+                    case "--runs": options.Runs = (int)Number(); break;
                     case "--batch-size": options.BatchSize = (int)Number(); break;
                     case "--compact": options.Compact = true; break;
                     case "--timeout": options.Timeout = TimeSpan.FromSeconds(Number()); break;
@@ -75,7 +78,7 @@ namespace PgOutput2Json.Benchmark
             if (options.Scenarios.Any(s => s is not ("copy" or "stream"))) return null;
             if (options.Outputs.Any(o => o is not ("null" or "clickhouse"))) return null;
 
-            return options.Rows > 0 && options.Workers > 0 && options.TxRows > 0 ? options : null;
+            return options.Rows > 0 && options.Workers > 0 && options.TxRows > 0 && options.Runs > 0 ? options : null;
         }
     }
 }

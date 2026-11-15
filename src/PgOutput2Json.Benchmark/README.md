@@ -6,6 +6,8 @@ Measures how fast PgOutput2Json copies and streams rows from PostgreSQL to an ou
 dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --rows 1000000 --output null,clickhouse
 ```
 
+A shared or virtual machine gives noisy times: `--runs 3` runs each scenario three times and reports the fastest and the median. To compare two versions, run them one after the other, more than once.
+
 It needs Docker: it starts PostgreSQL (and ClickHouse, for that output) with Testcontainers, unless you give it your own with `--pg` and `--clickhouse`. On Linux it connects to the containers at their own addresses, because the port that Docker maps goes through a proxy that costs throughput. Run `dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --help` for all the options.
 
 ## Scenarios
@@ -33,10 +35,10 @@ Build it once, then run the benchmark under [dotnet-trace](https://learn.microso
 ```
 dotnet tool install --global dotnet-trace
 dotnet build -c Release src/PgOutput2Json.Benchmark
-dotnet-trace collect --format speedscope -- dotnet src/PgOutput2Json.Benchmark/bin/Release/net8.0/PgOutput2Json.Benchmark.dll --scenario stream --output clickhouse
+dotnet-trace collect --show-child-io --format speedscope -- dotnet src/PgOutput2Json.Benchmark/bin/Release/net8.0/PgOutput2Json.Benchmark.dll --scenario stream --output clickhouse
 ```
 
-Open the `.speedscope.json` file at [speedscope.app](https://www.speedscope.app/), or the `.nettrace` file in Visual Studio or PerfView. The trace also covers starting the containers and loading the rows: look at the time after "Running ...". For the allocations, use `--profile gc-verbose`, and [dotnet-counters](https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-counters) shows the GC and CPU while it runs:
+Open the `.speedscope.json` file at [speedscope.app](https://www.speedscope.app/), or the `.nettrace` file in Visual Studio or PerfView. The trace also covers starting the containers and loading the rows: look at the time after "Running ...". The sample profiler of .NET stops the threads where the runtime can suspend them, so the time of a method can show up in another one: check a finding by measuring the change. For the allocations, use `--profile gc-verbose`, and [dotnet-counters](https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-counters) shows the GC and CPU while it runs:
 
 ```
 dotnet-counters monitor -- dotnet src/PgOutput2Json.Benchmark/bin/Release/net8.0/PgOutput2Json.Benchmark.dll --rows 5000000
