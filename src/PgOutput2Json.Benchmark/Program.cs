@@ -1,3 +1,4 @@
+using System.Net;
 using System.Diagnostics;
 using System.Globalization;
 
@@ -11,6 +12,16 @@ using PgOutput2Json.ClickHouse;
 
 using Testcontainers.ClickHouse;
 using Testcontainers.PostgreSql;
+using Testcontainers.RabbitMq;
+using Testcontainers.Kafka;
+
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
+
+using Confluent.Kafka;
+using Confluent.Kafka.Admin;
+
+using RabbitMQ.Stream.Client;
 
 var options = BenchmarkOptions.Parse(args);
 
@@ -24,6 +35,8 @@ using var loggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.Si
 
 PostgreSqlContainer? postgres = null;
 ClickHouseContainer? clickHouse = null;
+RabbitMqContainer? rabbitMq = null;
+IContainer? kafka = null;
 
 try
 {
@@ -63,6 +76,83 @@ try
         clickHouseEndpoint = OperatingSystem.IsLinux()
             ? $"http://{clickHouse.IpAddress}:8123"
             : $"http://{clickHouse.Hostname}:{clickHouse.GetMappedPublicPort(8123)}";
+    }
+
+    IPEndPoint? rabbitMqEndpoint = options.RabbitMqEndpoint != null ? IPEndPoint.Parse(options.RabbitMqEndpoint) : null;
+    IPEndPoint? rabbitMqAmqpEndpoint = options.RabbitMqAmqpEndpoint != null ? IPEndPoint.Parse(options.RabbitMqAmqpEndpoint) : null;
+
+    // one container for both RabbitMQ outputs
+    if (options.Outputs.Contains("rabbitmqstreams") && rabbitMqEndpoint == null || options.Outputs.Contains("rabbitmq") && rabbitMqAmqpEndpoint == null)
+    {
+        Console.WriteLine("Starting rabbitmq:4-management...");
+
+        rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithPortBinding(5552, true).WithPortBinding(5672, true).Build();
+
+        await rabbitMq.StartAsync();
+
+        var plugin = await rabbitMq.ExecAsync(["rabbitmq-plugins", "enable", "rabbitmq_stream"]);
+
+        if (plugin.ExitCode != 0) throw new Exception($"Could not enable the stream plugin: {plugin.Stderr}");
+
+        rabbitMqEndpoint ??= OperatingSystem.IsLinux()
+            ? new IPEndPoint(IPAddress.Parse(rabbitMq.IpAddress), 5552)
+            : new IPEndPoint(IPAddress.Loopback, rabbitMq.GetMappedPublicPort(5552));
+
+        rabbitMqAmqpEndpoint ??= OperatingSystem.IsLinux()
+            ? new IPEndPoint(IPAddress.Parse(rabbitMq.IpAddress), 5672)
+            : new IPEndPoint(IPAddress.Loopback, rabbitMq.GetMappedPublicPort(5672));
+    }
+
+    // the server advertises its own host name to the clients, which the resolver replaces with the endpoint
+    StreamSystemConfig RabbitMqConfig() => new()
+    {
+        UserName = options.RabbitMqUsername,
+        Password = options.RabbitMqPassword,
+        Endpoints = [rabbitMqEndpoint!],
+        AddressResolver = new AddressResolver(rabbitMqEndpoint!),
+    };
+
+    var kafkaBootstrapServers = options.KafkaBootstrapServers;
+
+    if (options.Outputs.Contains("kafka") && kafkaBootstrapServers == null)
+    {
+        Console.WriteLine("Starting apache/kafka:3.9.0...");
+
+        if (OperatingSystem.IsLinux())
+        {
+            // the broker tells the clients where to connect: its own address, not a mapped port behind Docker's proxy
+            kafka = new ContainerBuilder("apache/kafka:3.9.0")
+                .WithEnvironment(new Dictionary<string, string>
+                {
+                    ["KAFKA_NODE_ID"] = "1",
+                    ["KAFKA_PROCESS_ROLES"] = "broker,controller",
+                    ["KAFKA_LISTENERS"] = "PLAINTEXT://:9092,CONTROLLER://:9093",
+                    ["KAFKA_CONTROLLER_LISTENER_NAMES"] = "CONTROLLER",
+                    ["KAFKA_LISTENER_SECURITY_PROTOCOL_MAP"] = "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT",
+                    ["KAFKA_CONTROLLER_QUORUM_VOTERS"] = "1@localhost:9093",
+                    ["KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR"] = "1",
+                    ["KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR"] = "1",
+                    ["KAFKA_TRANSACTION_STATE_LOG_MIN_ISR"] = "1",
+                    ["KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS"] = "0",
+                })
+                .WithEntrypoint("sh", "-c")
+                .WithCommand("export KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://$(hostname -i):9092 && exec /etc/kafka/docker/run")
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Kafka Server started"))
+                .Build();
+
+            await kafka.StartAsync();
+
+            kafkaBootstrapServers = $"{kafka.IpAddress}:9092";
+        }
+        else
+        {
+            var container = new KafkaBuilder("apache/kafka:3.9.0").Build();
+
+            await container.StartAsync();
+
+            kafka = container;
+            kafkaBootstrapServers = container.GetBootstrapAddress();
+        }
     }
 
     var results = new List<(Result Best, Result Median)>();
@@ -128,6 +218,58 @@ try
                 o.Username = options.ClickHouseUsername;
                 o.Password = options.ClickHousePassword;
                 o.UseRowBinary = options.ClickHouseRowBinary;
+            });
+        }
+        else if (output == "rabbitmq")
+        {
+            var factory = new RabbitMQ.Client.ConnectionFactory
+            {
+                HostName = rabbitMqAmqpEndpoint!.Address.ToString(),
+                Port = rabbitMqAmqpEndpoint.Port,
+                UserName = options.RabbitMqUsername,
+                Password = options.RabbitMqPassword,
+            };
+
+            await RecreateExchangeAsync(factory);
+
+            builder.UseRabbitMq(o =>
+            {
+                o.ExchangeName = BenchmarkStream;
+                o.ConnectionFactory = factory;
+                o.HostNames.Add(factory.HostName);
+                o.UsePersistentMessagesByDefault = !options.RabbitMqTransient;
+            });
+        }
+        else if (output == "rabbitmqstreams")
+        {
+            await RecreateStreamAsync(RabbitMqConfig());
+
+            builder.UseRabbitMqStreams(o =>
+            {
+                o.StreamName = BenchmarkStream;
+                o.StreamSystemConfig = RabbitMqConfig();
+
+                if (options.RabbitMqBufferSize != null) o.MessageBufferSize = options.RabbitMqBufferSize.Value;
+            });
+        }
+        else if (output == "kafka")
+        {
+            await RecreateTopicAsync(kafkaBootstrapServers!, options.KafkaPartitions);
+
+            builder.UseKafka(o =>
+            {
+                o.Topic = BenchmarkStream;
+                o.ProducerConfig = new ProducerConfig(new Dictionary<string, string>(options.KafkaConfig)) { BootstrapServers = kafkaBootstrapServers };
+            });
+        }
+        else if (output == "sqlite")
+        {
+            foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" }) File.Delete(options.SqliteFile + suffix);
+
+            builder.UseSqlite(o =>
+            {
+                o.ConnectionStringBuilder.DataSource = options.SqliteFile;
+                o.UseWal = options.SqliteWal;
             });
         }
         else if (options.Compact)
@@ -197,6 +339,8 @@ finally
 {
     if (postgres != null) await postgres.DisposeAsync();
     if (clickHouse != null) await clickHouse.DisposeAsync();
+    if (rabbitMq != null) await rabbitMq.DisposeAsync();
+    if (kafka != null) await kafka.DisposeAsync();
 }
 
 /// <summary>
@@ -254,6 +398,92 @@ static async Task PrepareAsync(string connectionString, string table, string slo
     }
 }
 
+/// <summary>
+/// A new, empty stream; the stream plugin may still be starting.
+/// </summary>
+static async Task RecreateStreamAsync(StreamSystemConfig config)
+{
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            var system = await StreamSystem.Create(config);
+
+            try
+            {
+                if (await system.StreamExists(BenchmarkStream)) await system.DeleteStream(BenchmarkStream);
+
+                await system.CreateStream(new StreamSpec(BenchmarkStream));
+                return;
+            }
+            finally
+            {
+                await system.Close();
+            }
+        }
+        catch (Exception) when (attempt < 30)
+        {
+            await Task.Delay(1000);
+        }
+    }
+}
+
+/// <summary>
+/// A new topic exchange with a new, empty queue bound to it, so that the messages are stored, as they would be.
+/// </summary>
+static async Task RecreateExchangeAsync(RabbitMQ.Client.ConnectionFactory factory)
+{
+    await using var connection = await factory.CreateConnectionAsync();
+    await using var channel = await connection.CreateChannelAsync();
+
+    await channel.QueueDeleteAsync(BenchmarkStream, ifUnused: false, ifEmpty: false);
+    await channel.ExchangeDeleteAsync(BenchmarkStream);
+
+    await channel.ExchangeDeclareAsync(BenchmarkStream, RabbitMQ.Client.ExchangeType.Topic, durable: true, autoDelete: false);
+    await channel.QueueDeclareAsync(BenchmarkStream, durable: true, exclusive: false, autoDelete: false);
+    await channel.QueueBindAsync(BenchmarkStream, BenchmarkStream, "#");
+}
+
+/// <summary>
+/// A new, empty topic.
+/// </summary>
+static async Task RecreateTopicAsync(string bootstrapServers, int partitions)
+{
+    using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build();
+
+    try
+    {
+        await admin.DeleteTopicsAsync([BenchmarkStream]);
+    }
+    catch (DeleteTopicsException ex) when (ex.Results.All(r => r.Error.Code == ErrorCode.UnknownTopicOrPart))
+    {
+    }
+
+    // the deletion completes in the background
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            await admin.CreateTopicsAsync([new TopicSpecification { Name = BenchmarkStream, NumPartitions = partitions, ReplicationFactor = 1 }]);
+            break;
+        }
+        catch (CreateTopicsException ex) when (ex.Results.Any(r => r.Error.Code == ErrorCode.TopicAlreadyExists) && attempt < 60)
+        {
+            await Task.Delay(500);
+        }
+    }
+
+    // the metadata of a new topic has its partitions a moment later
+    for (var attempt = 1; attempt < 60; attempt++)
+    {
+        var metadata = admin.GetMetadata(BenchmarkStream, TimeSpan.FromSeconds(5));
+
+        if (metadata.Topics.FirstOrDefault()?.Partitions.Count == partitions) break;
+
+        await Task.Delay(500);
+    }
+}
+
 static async Task ClickHouseAsync(string endpoint, BenchmarkOptions options, string sql)
 {
     using var http = new HttpClient();
@@ -277,6 +507,11 @@ static async Task<string> ServerVersionAsync(string connectionString)
     await connection.OpenAsync();
 
     return connection.ServerVersion;
+}
+
+internal sealed partial class Program
+{
+    private const string BenchmarkStream = "pg2j_bench";
 }
 
 internal sealed record Result(string Scenario, string Output, TimeSpan Elapsed, TimeSpan Cpu, long AllocatedBytes, int Gc0, int Gc1, int Gc2);

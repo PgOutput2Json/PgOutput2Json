@@ -24,11 +24,17 @@ namespace PgOutput2Json.RabbitMq
             var channel = await EnsureConnectionAsync(token)
                 .ConfigureAwait(false);
 
-            var tableName = msg.TableName.ToString();
-            var json = msg.Json.ToString();
+            // the rows of a batch are mostly of one table: its name and its routing key are not made again for each of them
+            if (!msg.TableName.Equals(_tableName.AsSpan()))
+            {
+                _tableName = msg.TableName.ToString();
+                _routingKey = _tableName + ".0";
+            }
+
+            var tableName = _tableName;
             var partition = GetPartitionId(msg, tableName);
 
-            var routingKey = string.Join('.', tableName, partition);
+            var routingKey = partition == 0 ? _routingKey : string.Join('.', tableName, partition);
 
             if (_options.PersistencyConfigurationByTable.Count == 0 
                 || !_options.PersistencyConfigurationByTable.TryGetValue(tableName, out var persistent))
@@ -36,9 +42,14 @@ namespace PgOutput2Json.RabbitMq
                 persistent = _options.UsePersistentMessagesByDefault;
             }
             
-            _logger.SafeLogDebug($"Publishing to Exchange={_options.ExchangeName}, RoutingKey={routingKey}, Body={json}");
+            // the message of the log is made only when it is written: the body is the whole JSON
+            if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.SafeLogDebug("Publishing to Exchange={Exchange}, RoutingKey={RoutingKey}, Body={Body}", _options.ExchangeName, routingKey, msg.Json.ToString());
+            }
 
-            var body = Encoding.UTF8.GetBytes(json);
+            // the body is the client's until the message is sent, so it is an array of its own, made without a string of the JSON
+            var body = Utf8Buffer.ToArray(msg.Json);
 
             var basicProperties = new BasicProperties { Type = tableName, Persistent = persistent };
 
@@ -156,5 +167,8 @@ namespace PgOutput2Json.RabbitMq
         private readonly ILogger<RabbitMqPublisher>? _logger;
 
         private readonly List<ValueTask> _pendingTasks = new List<ValueTask>();
+
+        private string _tableName = "";
+        private string _routingKey = "";
     }
 }

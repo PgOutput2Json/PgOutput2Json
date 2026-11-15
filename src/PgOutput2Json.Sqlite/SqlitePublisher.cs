@@ -23,6 +23,14 @@ namespace PgOutput2Json.Sqlite
         private ulong _lastWalEnd;
         private ulong _lastMessageNo;
 
+        private readonly Utf8Buffer _utf8 = new();
+
+        private string _tableName = "";
+
+        // the values of the row and of the key of the change being applied
+        private JsonElement[] _row = [];
+        private JsonElement[] _key = [];
+
         public SqlitePublisher(SqlitePublisherOptions options, ILogger<SqlitePublisher>? logger)
         {
             _options = options;
@@ -33,9 +41,12 @@ namespace PgOutput2Json.Sqlite
         {
             var connection = await EnsureConnectionInTransactionAsync(token).ConfigureAwait(false);
 
-            using var doc = JsonDocument.Parse(msg.Json.ToString());
+            using var doc = JsonDocument.Parse(_utf8.Encode(msg.Json));
 
-            await ApplyChangeAsync(connection, msg.TableName.ToString(), doc, token).ConfigureAwait(false);
+            // the rows of a batch are mostly of one table: its name is not made again for each of them
+            if (!msg.TableName.Equals(_tableName.AsSpan())) _tableName = msg.TableName.ToString();
+
+            await ApplyChangeAsync(connection, _tableName, doc, token).ConfigureAwait(false);
 
             // the messages of a table sync are behind the main stream - they must not move the saved position
             if (!msg.IsTableSync)
@@ -57,8 +68,9 @@ namespace PgOutput2Json.Sqlite
 
             var table = await EnsureTableAsync(connection, tableName, doc, token).ConfigureAwait(false);
 
-            doc.RootElement.TryGetProperty("k", out var keyElement);
-            doc.RootElement.TryGetProperty("r", out var rowElement);
+            // read once: indexing a JSON array walks it from the start when it has arrays or objects in it
+            var keyElement = doc.RootElement.TryGetProperty("k", out var key) && key.ValueKind == JsonValueKind.Array ? ReadValues(key, ref _key) : null;
+            var rowElement = doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array ? ReadValues(row, ref _row) : [];
 
             if (changeType == "I")
             {
@@ -150,7 +162,23 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        private static async Task UpdateRowAsync(SqliteConnection connection, TableContext table, JsonElement rowElement, CancellationToken token)
+        /// <summary>
+        /// The values of a JSON array, in an array of exactly their number, reused while that number stays.
+        /// </summary>
+        private static JsonElement[] ReadValues(JsonElement array, ref JsonElement[] values)
+        {
+            var length = array.GetArrayLength();
+
+            if (values.Length != length) values = new JsonElement[length];
+
+            var i = 0;
+
+            foreach (var value in array.EnumerateArray()) values[i++] = value;
+
+            return values;
+        }
+
+        private static async Task UpdateRowAsync(SqliteConnection connection, TableContext table, JsonElement[] rowElement, CancellationToken token)
         {
             var hasToast = HasUnchangedToast(rowElement);
 
@@ -165,11 +193,9 @@ namespace PgOutput2Json.Sqlite
             }
         }
 
-        private static bool HasUnchangedToast(JsonElement rowElement)
+        private static bool HasUnchangedToast(JsonElement[] rowElement)
         {
-            if (rowElement.ValueKind != JsonValueKind.Array) return false;
-
-            foreach (var value in rowElement.EnumerateArray())
+            foreach (var value in rowElement)
             {
                 if (value.ValueKind == JsonValueKind.String && value.GetString() == "__TOAST__") return true;
             }

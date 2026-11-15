@@ -3,7 +3,7 @@
 Measures how fast PgOutput2Json copies and streams rows from PostgreSQL to an output, end to end, on your machine.
 
 ```
-dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --rows 1000000 --output null,clickhouse
+dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --rows 1000000 --output null,clickhouse,sqlite,rabbitmq,rabbitmqstreams,kafka
 ```
 
 A shared or virtual machine gives noisy times: `--runs 3` runs each scenario three times and reports the fastest and the median. To compare two versions, run them one after the other, more than once.
@@ -21,6 +21,10 @@ Each scenario gets a fresh table, publication and replication slot, with rows of
 
 - **null**: counts the rows and does nothing else. It measures the library itself: reading the replication stream or the copy, and writing the JSON.
 - **clickhouse**: the ClickHouse output, into a database that is dropped and created again for every run.
+- **sqlite**: the SQLite output, into a file that is deleted before every run (`--sqlite`, `--sqlite-wal`).
+- **rabbitmq**: the RabbitMQ output, into a topic exchange with a durable queue bound to it, both created again for every run (`--rabbitmq-amqp`, `--rabbitmq-transient`).
+- **rabbitmqstreams**: the RabbitMQ Streams output, into a stream that is created again for every run (`--rabbitmq`, `--rabbitmq-buffer`).
+- **kafka**: the Kafka output, into a topic that is created again for every run (`--kafka`, `--kafka-partitions`, `--kafka-config linger.ms=20`). The Kafka container advertises its own address, so the clients do not go through Docker's proxy.
 
 The time ends when the output has confirmed every row. A wrapper around the output's publishers counts them, so it is measured the same way for every output, and nothing polls the target.
 

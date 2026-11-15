@@ -48,6 +48,15 @@ namespace PgOutput2Json.Tests
         }
 
         [TestMethod]
+        public void Utf8_array_should_encode_a_pair_split_between_chunks()
+        {
+            var text = SplitText(out var expected);
+
+            Assert.AreEqual(expected, Encoding.UTF8.GetString(Utf8Buffer.ToArray(text)));
+            Assert.AreEqual(0, Utf8Buffer.ToArray(new StringBuilder()).Length);
+        }
+
+        [TestMethod]
         public async Task Content_should_send_a_pair_split_between_chunks()
         {
             var text = SplitText(out var expected);

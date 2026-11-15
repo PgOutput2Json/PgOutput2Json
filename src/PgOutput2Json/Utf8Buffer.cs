@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 
-namespace PgOutput2Json.ClickHouse
+namespace PgOutput2Json
 {
     /// <summary>
     /// A buffer reused for the UTF-8 bytes of one message at a time, so that a message is parsed without
@@ -33,6 +33,18 @@ namespace PgOutput2Json.ClickHouse
             length += _encoder.GetBytes(ReadOnlySpan<char>.Empty, _buffer.AsSpan(length), flush: true);
 
             return _buffer.AsMemory(0, length);
+        }
+
+        [ThreadStatic] private static Utf8Buffer? t_buffer;
+
+        /// <summary>
+        /// The UTF-8 of a StringBuilder in an array of its own, for a message that keeps its bytes, without a string of it.
+        /// Encoded in the buffer of the thread, whose encoder keeps a surrogate pair split between two chunks (GetByteCount
+        /// does not), then copied.
+        /// </summary>
+        public static byte[] ToArray(StringBuilder text)
+        {
+            return (t_buffer ??= new Utf8Buffer()).Encode(text).ToArray();
         }
     }
 }

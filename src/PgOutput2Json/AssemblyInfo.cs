@@ -3,6 +3,8 @@
 [assembly: InternalsVisibleTo("PgOutput2Json.Tests")]
 [assembly: InternalsVisibleTo("PgOutput2Json.IntegrationTests")]
 [assembly: InternalsVisibleTo("PgOutput2Json.Benchmark")]
+[assembly: InternalsVisibleTo("PgOutput2Json.ClickHouse")]
+[assembly: InternalsVisibleTo("PgOutput2Json.Sqlite")]
 [assembly: InternalsVisibleTo("PgOutput2Json.RabbitMq")]
 [assembly: InternalsVisibleTo("PgOutput2Json.Redis")]
 [assembly: InternalsVisibleTo("PgOutput2Json.Kafka")]

@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             return whereBuilder.ToString();
         }
 
-        public static async Task<int> InsertAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement rowElement, bool ignoreConflicts, CancellationToken token)
+        public static async Task<int> InsertAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement[] rowElement, bool ignoreConflicts, CancellationToken token)
         {
             var cmd = ignoreConflicts ? commands.InsertIgnoreCommand : commands.InsertCommand;
 
@@ -391,7 +391,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Updates the row using the prepared update command.
         /// Returns the number of updated rows.
         /// </summary>
-        public static async Task<int> UpdateAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement rowElement, CancellationToken token)
+        public static async Task<int> UpdateAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement[] rowElement, CancellationToken token)
         {
             var updateCommand = commands.UpdateCommand;
             if (updateCommand == null) return 0;
@@ -426,7 +426,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Used when some row values are toasted (unchanged and not sent by PostgreSQL).
         /// Returns the number of updated rows.
         /// </summary>
-        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement rowElement, CancellationToken token)
+        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement[] rowElement, CancellationToken token)
         {
             var tableName = GetTableName(fullTableName);
             var columns = commands.Columns;
@@ -489,9 +489,9 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Moves a row to its new key, if the update changed the key. The key element holds the old values of
         /// the key columns, the row element the new row. The other columns are written by the update that follows.
         /// </summary>
-        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement keyElement, JsonElement rowElement, CancellationToken token)
+        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, JsonElement[]? keyElement, JsonElement[] rowElement, CancellationToken token)
         {
-            if (keyElement.ValueKind != JsonValueKind.Array) return;
+            if (keyElement == null) return;
 
             var columns = commands.Columns;
 
@@ -503,7 +503,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                 if (!columns[i].IsKey) continue;
 
                 // the key element has the key columns only
-                if (keyColumns.Count >= keyElement.GetArrayLength()) return;
+                if (keyColumns.Count >= keyElement.Length) return;
 
                 changed |= keyElement[keyColumns.Count].GetRawText() != rowElement[i].GetRawText();
 
@@ -550,10 +550,10 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task DeleteAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement keyElement, CancellationToken token)
+        public static async Task DeleteAsync(this SqliteConnection cn, PreparedCommands commands, JsonElement[]? keyElement, CancellationToken token)
         {
             var deleteCommand = commands.DeleteCommand;
-            if (deleteCommand == null || keyElement.ValueKind != JsonValueKind.Array) return;
+            if (deleteCommand == null || keyElement == null) return;
 
             var columns = commands.Columns;
 

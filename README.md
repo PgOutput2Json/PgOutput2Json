@@ -328,6 +328,10 @@ public class Worker : BackgroundService
 Run the code, and with a little luck, you should see JSON messages being pushed into the `my_queue` in RabbitMQ when you make a change in the tables specified in `my_publication`. 
 The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
 
+### 3.4 Batch Size
+
+At the end of every batch the listener waits for the confirms of RabbitMQ (publisher confirms). `UseRabbitMq` therefore sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark), with a durable queue bound to the exchange, the initial copy and the stream ran at about 31,000 rows per second with batches of 1,000, and at about 24,000 and 21,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and RabbitMQ in Docker on the same machine). Larger batches added nothing: RabbitMQ itself used most of the CPU, routing and confirming every message, also when the messages were not persistent. For more throughput, use [RabbitMQ Streams](#4-using-rabbitmq-streams). To use another size, call `WithBatchSize` after `UseRabbitMq`. A batch that is not full is still confirmed after the batch wait time (100 ms by default).
+
 ## 4. Using RabbitMQ (Streams)
 
 Using RabbitMQ Streams is similar to the standard RabbitMQ setup, but instead of creating an exchange and binding queues, you need to create a stream, and configure the stream protocol in RabbitMQ.
@@ -391,6 +395,12 @@ public class Worker : BackgroundService
 Once the stream is configured in RabbitMQ and the .NET service is running, changes to the PostgreSQL tables specified in `my_publication` will be pushed to the `my_stream` stream in RabbitMQ. 
 No need to manage exchanges or queues — everything will flow directly through the stream.
 
+### 4.3 Batch Size
+
+The producer has up to one batch of messages in flight, and the listener waits for their confirmations at the end of the batch. `UseRabbitMqStreams` therefore sets the batch size to 10,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 170,000 rows per second and the stream at about 100,000 with batches of 10,000, and at about 68,000 and 42,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and RabbitMQ in Docker on the same machine). To use another size, call `WithBatchSize` after `UseRabbitMqStreams`. A batch that is not full is still confirmed after the batch wait time (100 ms by default). After an error, the unconfirmed messages of the batch are sent again.
+
+The messages go to the client in lists of `options.MessageBufferSize` (100 by default), each of which is one frame. A super stream gets them one by one, since it routes each message to its partition.
+
 ## 5. Using Kafka
 
 Kafka is supported out of the box and works similarly to the RabbitMQ integrations. PgOutput2Json will publish JSON messages directly to a Kafka topic.
@@ -446,6 +456,10 @@ public class Worker : BackgroundService
 ```
 
 Once the service is running, any changes made to the tables listed in `my_publication` will be published to the `my_topic` topic in Kafka as JSON messages.
+
+### 5.3 Batch Size
+
+At the end of every batch the listener waits until Kafka has acknowledged all of its messages (with `acks=all`, which idempotence needs). `UseKafka` therefore sets the batch size to 10,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 140,000 rows per second and the stream at about 94,000 with batches of 10,000, and at about 8,800 and 8,300 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and Kafka in Docker on the same machine). The batching of librdkafka itself (`linger.ms`, 5 ms by default) made no difference there. To use another size, call `WithBatchSize` after `UseKafka`. A batch that is not full is still confirmed after the batch wait time (100 ms by default). After an error, the unconfirmed messages of the batch are sent again.
 
 ## 6. Using Redis
 
@@ -525,6 +539,10 @@ END;
 ```
 
 This tells connections with foreign key checks off from those with them on, so it works as long as your application's connections check them (the default of Microsoft.Data.Sqlite and EF Core), and you do not turn them on in `PostConnectionSetup`.
+
+### Batch size
+
+Every batch of changes is one transaction. `UseSqlite` sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 58,000 rows per second and the stream at about 62,000 with batches of 1,000, and at about 52,000 and 56,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL in Docker on the same machine). Larger batches add little. To use another size, call `WithBatchSize` after `UseSqlite`. A batch that is not full is still written after the batch wait time (100 ms by default).
 
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
 

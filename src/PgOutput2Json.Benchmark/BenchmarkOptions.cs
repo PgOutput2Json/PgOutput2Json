@@ -10,7 +10,8 @@ namespace PgOutput2Json.Benchmark
             dotnet run -c Release --project src/PgOutput2Json.Benchmark -- [options]
 
               --scenario copy,stream     The initial copy of a table, and catching up with rows already in the WAL (default: both)
-              --output null,clickhouse   null: only counts the rows, which measures the library itself (default: null)
+              --output null,clickhouse,sqlite,rabbitmq,rabbitmqstreams,kafka
+                                         null: only counts the rows, which measures the library itself (default: null)
               --rows N                   Rows per scenario (default: 1000000)
               --workers N                Copy workers per table (default: 1)
               --tx-rows N                Rows per transaction of the stream scenario (default: 1000)
@@ -25,6 +26,17 @@ namespace PgOutput2Json.Benchmark
               --clickhouse-password PWD  (default: bench)
               --clickhouse-database DB   Dropped and created again for every run (default: pg2j_bench)
               --clickhouse-format F      json or rowbinary: the format of the inserts (default: json, as the output)
+              --sqlite FILE              The SQLite database, deleted before every run (default: pg2j_bench.db in the temp directory)
+              --sqlite-wal               The WAL journal mode for SQLite (UseWal)
+              --rabbitmq HOST:PORT       A RabbitMQ stream endpoint, instead of a container (stream pg2j_bench, created again for every run)
+              --rabbitmq-amqp HOST:PORT  A RabbitMQ AMQP endpoint, instead of a container (exchange and queue pg2j_bench, created again)
+              --rabbitmq-transient       Messages that are not persistent (UsePersistentMessagesByDefault = false)
+              --rabbitmq-user USER       (default: rabbitmq)
+              --rabbitmq-password PWD    (default: rabbitmq)
+              --rabbitmq-buffer N        Messages per frame (MessageBufferSize, default: that of the output)
+              --kafka HOST:PORT          Kafka bootstrap servers, instead of a container (topic pg2j_bench, created again for every run)
+              --kafka-partitions N       Partitions of the topic (default: 1)
+              --kafka-config KEY=VALUE   A librdkafka producer setting, e.g. linger.ms=20 (more than once for more settings)
             """;
 
         public string[] Scenarios { get; private set; } = ["copy", "stream"];
@@ -43,6 +55,17 @@ namespace PgOutput2Json.Benchmark
         public string ClickHousePassword { get; private set; } = "bench";
         public string ClickHouseDatabase { get; private set; } = "pg2j_bench";
         public bool ClickHouseRowBinary { get; private set; }
+        public string SqliteFile { get; private set; } = Path.Combine(Path.GetTempPath(), "pg2j_bench.db");
+        public bool SqliteWal { get; private set; }
+        public string? RabbitMqEndpoint { get; private set; }
+        public string? RabbitMqAmqpEndpoint { get; private set; }
+        public bool RabbitMqTransient { get; private set; }
+        public string RabbitMqUsername { get; private set; } = "rabbitmq";
+        public string RabbitMqPassword { get; private set; } = "rabbitmq";
+        public int? RabbitMqBufferSize { get; private set; }
+        public string? KafkaBootstrapServers { get; private set; }
+        public int KafkaPartitions { get; private set; } = 1;
+        public Dictionary<string, string> KafkaConfig { get; } = [];
 
         public static BenchmarkOptions? Parse(string[] args)
         {
@@ -73,6 +96,21 @@ namespace PgOutput2Json.Benchmark
                     case "--clickhouse-user": options.ClickHouseUsername = Value(); break;
                     case "--clickhouse-password": options.ClickHousePassword = Value(); break;
                     case "--clickhouse-database": options.ClickHouseDatabase = Value(); break;
+                    case "--sqlite": options.SqliteFile = Value(); break;
+                    case "--sqlite-wal": options.SqliteWal = true; break;
+                    case "--rabbitmq": options.RabbitMqEndpoint = Value(); break;
+                    case "--rabbitmq-amqp": options.RabbitMqAmqpEndpoint = Value(); break;
+                    case "--rabbitmq-transient": options.RabbitMqTransient = true; break;
+                    case "--rabbitmq-user": options.RabbitMqUsername = Value(); break;
+                    case "--rabbitmq-password": options.RabbitMqPassword = Value(); break;
+                    case "--rabbitmq-buffer": options.RabbitMqBufferSize = (int)Number(); break;
+                    case "--kafka": options.KafkaBootstrapServers = Value(); break;
+                    case "--kafka-partitions": options.KafkaPartitions = (int)Number(); break;
+                    case "--kafka-config":
+                        var setting = Value().Split('=', 2);
+                        if (setting.Length != 2) return null;
+                        options.KafkaConfig[setting[0]] = setting[1];
+                        break;
                     case "--clickhouse-format":
                         var format = Value();
                         if (format is not ("rowbinary" or "json")) return null;
@@ -83,7 +121,7 @@ namespace PgOutput2Json.Benchmark
             }
 
             if (options.Scenarios.Any(s => s is not ("copy" or "stream"))) return null;
-            if (options.Outputs.Any(o => o is not ("null" or "clickhouse"))) return null;
+            if (options.Outputs.Any(o => o is not ("null" or "clickhouse" or "sqlite" or "rabbitmq" or "rabbitmqstreams" or "kafka"))) return null;
 
             return options.Rows > 0 && options.Workers > 0 && options.TxRows > 0 && options.Runs > 0 ? options : null;
         }
