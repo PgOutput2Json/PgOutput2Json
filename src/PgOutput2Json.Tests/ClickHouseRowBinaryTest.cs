@@ -44,14 +44,14 @@ namespace PgOutput2Json.Tests
                 "Array(Nullable(Int32))", "Nullable(JSON)", "JSON(max_dynamic_paths = 100)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
                 "UInt128", "UInt8", "Nullable(UUID)", "Nullable(Date32)", "DateTime64(3, 'Europe/Berlin')",
                 "Date", "DateTime", "Nullable(DateTime('UTC'))", "Enum8('a' = 1, 'b c' = -2)", "Enum16('\\'q\\'' = 300)", "FixedString(4)",
-                "LowCardinality(FixedString(2))", "IPv4", "Nullable(IPv6)",
+                "LowCardinality(FixedString(2))", "IPv4", "Nullable(IPv6)", "Int8", "UInt16", "UInt64", "Int128", "Int256", "UInt256",
             })
             {
                 Assert.IsNotNull(ClickHouseBinaryType.Parse(type, TimeZoneInfo.Utc), type);
             }
 
             // another type, more dimensions, a Nullable array, a time zone this system does not know
-            foreach (var type in new[] { "Int128", "Tuple(Int32, String)", "Array(Array(Int32))", "Nullable(Array(Int32))", "Map(String, String)", "DateTime64(6, 'Nowhere/Land')", "Enum8()" })
+            foreach (var type in new[] { "Tuple(Int32, String)", "Array(Array(Int32))", "Nullable(Array(Int32))", "Map(String, String)", "DateTime64(6, 'Nowhere/Land')", "Enum8()" })
             {
                 Assert.IsNull(ClickHouseBinaryType.Parse(type, TimeZoneInfo.Utc), type);
             }
@@ -79,6 +79,19 @@ namespace PgOutput2Json.Tests
 
             Assert.AreEqual("000000c03f", Write("Nullable(Float32)", "1.5"));
             Assert.AreEqual("0001", Write("Nullable(Bool)", "true"));
+
+            Assert.AreEqual("ff", Write("Int8", "-1"));
+            Assert.AreEqual("ffff", Write("UInt16", "65535"));
+            Assert.AreEqual("ffffffffffffffff", Write("UInt64", "18446744073709551615"));
+            Assert.AreEqual("ffffffffffffffffffffffffffffffff", Write("Int128", "-1"));
+            Assert.AreEqual("0100000000000000" + "0000000000000000", Write("Int128", "\"1\""));
+            Assert.AreEqual(new string('f', 64), Write("Int256", "-1"));
+            Assert.AreEqual("02" + new string('0', 62), Write("UInt256", "2"));
+
+            // a number the type cannot hold, or with a fraction, is an error, as ClickHouse rejects it
+            Assert.ThrowsExactly<OverflowException>(() => Write("UInt64", "-1"));
+            Assert.ThrowsExactly<OverflowException>(() => Write("Int8", "128"));
+            Assert.ThrowsExactly<FormatException>(() => Write("Int128", "1.5"));
         }
 
         [TestMethod]

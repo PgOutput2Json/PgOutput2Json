@@ -123,10 +123,16 @@ namespace PgOutput2Json.ClickHouse
                     writer.WriteInt64(GetInt64(column, value));
                     break;
 
-                case BinaryBase.UInt128:
-                    var number = UInt128.Parse(GetText(value), CultureInfo.InvariantCulture);
-                    writer.WriteUInt64((ulong)number);
-                    writer.WriteUInt64((ulong)(number >> 64));
+                case BinaryBase.Int8:
+                    writer.WriteByte(unchecked((byte)checked((sbyte)GetInt64(column, value))));
+                    break;
+
+                case BinaryBase.UInt16:
+                    writer.WriteUInt16(checked((ushort)GetInt64(column, value)));
+                    break;
+
+                case BinaryBase.UInt64 or BinaryBase.UInt128 or BinaryBase.Int128 or BinaryBase.Int256 or BinaryBase.UInt256:
+                    WriteWideInteger(writer, type, column, GetText(value));
                     break;
 
                 case BinaryBase.Float32:
@@ -217,7 +223,11 @@ namespace PgOutput2Json.ClickHouse
                 case BinaryBase.Int16: writer.WriteInt16(0); break;
                 case BinaryBase.Int32 or BinaryBase.UInt32 or BinaryBase.Date32: writer.WriteInt32(0); break;
                 case BinaryBase.Int64 or BinaryBase.DateTime64: writer.WriteInt64(0); break;
-                case BinaryBase.UInt128 or BinaryBase.Uuid: writer.WriteUInt64(0); writer.WriteUInt64(0); break;
+                case BinaryBase.UInt128 or BinaryBase.Int128 or BinaryBase.Uuid: writer.WriteUInt64(0); writer.WriteUInt64(0); break;
+                case BinaryBase.Int8: writer.WriteByte(0); break;
+                case BinaryBase.UInt16: writer.WriteUInt16(0); break;
+                case BinaryBase.UInt64: writer.WriteUInt64(0); break;
+                case BinaryBase.Int256 or BinaryBase.UInt256: for (var i = 0; i < 4; i++) writer.WriteUInt64(0); break;
                 case BinaryBase.Float32: writer.WriteFloat32(0); break;
                 case BinaryBase.Float64: writer.WriteFloat64(0); break;
                 case BinaryBase.Decimal: WriteUnscaled(writer, type, BigInteger.Zero); break;
@@ -268,6 +278,41 @@ namespace PgOutput2Json.ClickHouse
             return long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out number)
                 ? number
                 : throw new FormatException($"Column {column.Name}: {text} is not an integer");
+        }
+
+        /// <summary>
+        /// UInt64 and the integers of 128 and 256 bits, two's complement with the lowest byte first.
+        /// </summary>
+        private static void WriteWideInteger(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, string text)
+        {
+            if (!BigInteger.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var number))
+            {
+                throw new FormatException($"Column {column.Name}: {text} is not an integer");
+            }
+
+            var (bytes, signed) = type.Base switch
+            {
+                BinaryBase.UInt64 => (8, false),
+                BinaryBase.UInt128 => (16, false),
+                BinaryBase.Int128 => (16, true),
+                BinaryBase.Int256 => (32, true),
+                _ => (32, false),
+            };
+
+            var bits = bytes * 8;
+
+            var min = signed ? -(BigInteger.One << (bits - 1)) : BigInteger.Zero;
+            var max = signed ? (BigInteger.One << (bits - 1)) - 1 : (BigInteger.One << bits) - 1;
+
+            if (number < min || number > max) throw new OverflowException($"Column {column.Name}: {text} does not fit {type.Base}");
+
+            Span<byte> buffer = stackalloc byte[32];
+
+            buffer.Fill(number.Sign < 0 ? (byte)0xff : (byte)0);
+
+            number.TryWriteBytes(buffer, out _, isUnsigned: !signed, isBigEndian: false);
+
+            writer.WriteFixed(buffer[..bytes]);
         }
 
         private static double GetDouble(ClickHouseColumn column, JsonElement value)

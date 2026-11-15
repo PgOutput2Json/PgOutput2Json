@@ -28,13 +28,19 @@ namespace PgOutput2Json.ClickHouse
         FixedString,
         IPv4,
         IPv6,
+        Int8,
+        UInt16,
+        UInt64,
+        Int128,
+        Int256,
+        UInt256,
     }
 
     /// <summary>
     /// How a value of a ClickHouse column is written in the RowBinary format. ClickHouse does not convert the values
     /// of RowBinary to the type of the column, so this is made from the type the column really has in ClickHouse.
-    /// The types the output creates are covered, and Date, DateTime, Enum8, Enum16, FixedString, IPv4, IPv6 and LowCardinality:
-    /// a table with another type (Map, Tuple...) gets JSON.
+    /// The types the output creates are covered, and all the integers, Date, DateTime, Enum8, Enum16, FixedString, IPv4, IPv6
+    /// and LowCardinality: a table with another type (Map, Tuple...) gets JSON.
     /// </summary>
     internal sealed class ClickHouseBinaryType
     {
@@ -104,6 +110,12 @@ namespace PgOutput2Json.ClickHouse
                 case "UInt32": return new() { Base = BinaryBase.UInt32 };
                 case "Int64": return new() { Base = BinaryBase.Int64 };
                 case "UInt128": return new() { Base = BinaryBase.UInt128 };
+                case "Int8": return new() { Base = BinaryBase.Int8 };
+                case "UInt16": return new() { Base = BinaryBase.UInt16 };
+                case "UInt64": return new() { Base = BinaryBase.UInt64 };
+                case "Int128": return new() { Base = BinaryBase.Int128 };
+                case "Int256": return new() { Base = BinaryBase.Int256 };
+                case "UInt256": return new() { Base = BinaryBase.UInt256 };
                 case "Float32": return new() { Base = BinaryBase.Float32 };
                 case "Float64": return new() { Base = BinaryBase.Float64 };
                 case "UUID": return new() { Base = BinaryBase.Uuid };
