@@ -144,7 +144,7 @@ namespace PgOutput2Json.ClickHouse
                 await FlushAsync(existing, token).ConfigureAwait(false);
             }
 
-            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType);
+            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType, _options.Tables.GetValueOrDefault(tableName));
 
             await _client.ExecuteAsync(table.GetCreateStatement(_options.CleanUpDeletedRowsAfter), null, null, token).ConfigureAwait(false);
 
@@ -377,6 +377,19 @@ namespace PgOutput2Json.ClickHouse
 
             if (table.KeyColumns.Count == 0 || table.HasNullableKey) return values;
 
+            if (table.Engine == ClickHouseTableEngine.Null)
+            {
+                if (!table.UnchangedValueWarned)
+                {
+                    table.UnchangedValueWarned = true;
+
+                    _logger?.LogWarning("An update of {Table} did not change a large value, and a table with the Null engine has no row to take it from. " +
+                        "The value is null, now and in later updates like this. With REPLICA IDENTITY FULL PostgreSQL sends it.", table.QuotedName);
+                }
+
+                return values;
+            }
+
             // the row to read may still wait for its insert
             await FlushAsync(table, token).ConfigureAwait(false);
 
@@ -404,8 +417,12 @@ namespace PgOutput2Json.ClickHouse
                 keyIndex++;
             }
 
-            var query = $"SELECT {string.Join(", ", missing.Select(i => table.Columns[i].QuotedName))} FROM {table.QuotedName} FINAL " +
-                        $"WHERE {string.Join(" AND ", conditions)} FORMAT JSONCompactEachRow";
+            // the latest version, unless it is a delete: without FINAL, which a MergeTree table does not have
+            var columns = string.Join(", ", missing.Select(i => table.Columns[i].QuotedName));
+
+            var query = $"SELECT {columns} FROM (SELECT {columns}, {ClickHouseTable.DeletedColumn} FROM {table.QuotedName} " +
+                        $"WHERE {string.Join(" AND ", conditions)} ORDER BY {ClickHouseTable.VersionColumn} DESC LIMIT 1) " +
+                        $"WHERE {ClickHouseTable.DeletedColumn} = 0 FORMAT JSONCompactEachRow";
 
             var result = await _client.ExecuteAsync(query, null, parameters, token).ConfigureAwait(false);
 

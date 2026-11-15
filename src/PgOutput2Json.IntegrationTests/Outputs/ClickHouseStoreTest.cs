@@ -292,6 +292,58 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
+        public async Task Table_options_should_set_the_order_the_partitions_and_the_engine()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE clk_opt_order (id int, tenant int, v text, PRIMARY KEY (id, tenant));
+                CREATE TABLE clk_opt_history (id int PRIMARY KEY, big text, v int);
+                ALTER TABLE clk_opt_history ALTER COLUMN big SET STORAGE EXTERNAL;
+                CREATE TABLE clk_opt_null (id int PRIMARY KEY, v text);");
+
+            var endpoint = await RunAsync("clk_opt", "clk_opt_order, clk_opt_history, clk_opt_null", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_opt_order VALUES (1, 100, 'a'), (2, 200, 'b'), (3, 200, 'c');
+                    UPDATE clk_opt_order SET v = 'bb' WHERE id = 2;
+                    DELETE FROM clk_opt_order WHERE id = 3;
+                    INSERT INTO clk_opt_history VALUES (1, repeat('x', 3000), 1);
+                    UPDATE clk_opt_history SET v = 2;
+                    DELETE FROM clk_opt_history;
+                    INSERT INTO clk_opt_null VALUES (1, 'a');");
+
+                await WaitForAsync(endpoint, "clk_opt_order",
+                    """
+                    [1,100,"a"]
+                    [2,200,"bb"]
+                    """);
+
+                // every version, the delete too, and the large value of the update read from the table without FINAL
+                await Wait.UntilAsync(async () => await QueryAsync(endpoint, "SELECT count() FROM clk_opt_history") == "3", "the history");
+
+                Assert.AreEqual("[1, \"x*3000\", 1, 0]\n[1, \"x*3000\", 2, 0]\n[1, null, null, 1]",
+                    System.Text.RegularExpressions.Regex.Replace(
+                        await QueryAsync(endpoint, "SELECT id, big, v, _deleted FROM clk_opt_history ORDER BY _version FORMAT JSONCompactEachRow"),
+                        "x{100,}", match => $"x*{match.Length}"));
+
+                // a new column for a Null table
+                await Db.ExecuteAsync("ALTER TABLE clk_opt_null ADD COLUMN extra int; INSERT INTO clk_opt_null VALUES (2, 'b', 9);");
+
+                await Wait.UntilAsync(async () => (await QueryAsync(endpoint, "SELECT count() FROM system.columns WHERE table = 'clk_opt_null' AND name = 'extra'")) == "1", "the new column");
+            }, options =>
+            {
+                options.Tables["public.clk_opt_order"] = new() { OrderBy = ["tenant", "id"], PartitionBy = "intDiv(tenant, 100)" };
+                options.Tables["public.clk_opt_history"] = new() { Engine = ClickHouseTableEngine.MergeTree };
+                options.Tables["public.clk_opt_null"] = new() { Engine = ClickHouseTableEngine.Null };
+            });
+
+            Assert.AreEqual(
+                "clk_opt_history MergeTree  (id)\nclk_opt_null Null  \nclk_opt_order ReplacingMergeTree intDiv(tenant, 100) tenant, id",
+                await QueryAsync(endpoint, $"SELECT name, engine, partition_key, sorting_key FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name LIKE 'clk_opt_%' ORDER BY name FORMAT TSVRaw").ContinueWith(t => t.Result.Replace('\t', ' ')));
+
+            Assert.AreEqual("0", await QueryAsync(endpoint, "SELECT count() FROM clk_opt_null"));
+        }
+
+        [TestMethod]
         public async Task New_column_and_a_changed_key_should_keep_the_large_value()
         {
             await Db.ExecuteAsync(@"

@@ -43,6 +43,12 @@ namespace PgOutput2Json.ClickHouse
         public TimeSpan? CleanUpDeletedRowsAfter { get; set; }
 
         /// <summary>
+        /// The ORDER BY, PARTITION BY and engine of the ClickHouse table of a PostgreSQL table, by its name ("schema.table").
+        /// They are used only when the output creates the table. A table that is not listed gets the defaults.
+        /// </summary>
+        public Dictionary<string, ClickHouseTableOptions> Tables { get; } = [];
+
+        /// <summary>
         /// ClickHouse settings sent with every request, e.g. "insert_quorum".
         /// </summary>
         public Dictionary<string, string> Settings { get; } = [];

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace PgOutput2Json.ClickHouse
 {
@@ -51,13 +52,27 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public bool HasNullableKey { get; }
 
+        public ClickHouseTableEngine Engine { get; }
+
+        /// <summary>
+        /// The columns of the ORDER BY: the key columns, in the order of the options or of the table.
+        /// </summary>
+        public IReadOnlyList<ClickHouseColumn> OrderByColumns { get; }
+
+        public string? PartitionBy { get; }
+
+        /// <summary>
+        /// Set once the warning that a large value cannot be read from a Null table was logged.
+        /// </summary>
+        public bool UnchangedValueWarned { get; set; }
+
         public string UpsertQuery { get; }
         public string DeleteQuery { get; }
 
         public StringBuilder Upserts { get; } = new();
         public StringBuilder Deletes { get; } = new();
 
-        public ClickHouseTable(string tableName, IReadOnlyList<ClickHouseColumn> columns)
+        public ClickHouseTable(string tableName, IReadOnlyList<ClickHouseColumn> columns, ClickHouseTableOptions? options = null)
         {
             QuotedName = Quote(tableName);
 
@@ -65,6 +80,27 @@ namespace PgOutput2Json.ClickHouse
             KeyColumns = columns.Where(c => c.IsKey).ToList();
 
             HasNullableKey = KeyColumns.Count == columns.Count;
+
+            Engine = options?.Engine ?? ClickHouseTableEngine.ReplacingMergeTree;
+            PartitionBy = string.IsNullOrWhiteSpace(options?.PartitionBy) ? null : options!.PartitionBy;
+            OrderByColumns = GetOrderByColumns(tableName, options?.OrderBy);
+
+            if (Engine == ClickHouseTableEngine.Null && (options?.OrderBy != null || PartitionBy != null))
+            {
+                throw new Exception($"Table {tableName}: a table with the Null engine has no ORDER BY and no PARTITION BY");
+            }
+
+            if (PartitionBy != null && KeyColumns.Count > 0)
+            {
+                var others = Identifiers(PartitionBy).Intersect(columns.Where(c => !c.IsKey).Select(c => c.Name)).ToList();
+
+                if (others.Count > 0)
+                {
+                    throw new Exception($"Table {tableName}: the PARTITION BY uses {string.Join(", ", others)}, which is not a key column. " +
+                        "ClickHouse replaces rows only within a partition, and the row of a delete has only the key columns. " +
+                        "To partition by it, make it part of the replica identity (REPLICA IDENTITY USING INDEX on a unique index).");
+                }
+            }
 
             UpsertQuery = $"INSERT INTO {QuotedName} ({string.Join(", ", columns.Select(c => c.QuotedName))}, {VersionColumn}, {DeletedColumn}) FORMAT JSONCompactEachRow";
             DeleteQuery = $"INSERT INTO {QuotedName} ({string.Join(", ", KeyColumns.Select(c => c.QuotedName))}, {VersionColumn}, {DeletedColumn}) FORMAT JSONCompactEachRow";
@@ -78,6 +114,47 @@ namespace PgOutput2Json.ClickHouse
             return column.IsKey && !HasNullableKey ? column.Type : $"Nullable({column.Type})";
         }
 
+        private IReadOnlyList<ClickHouseColumn> GetOrderByColumns(string tableName, IReadOnlyList<string>? orderBy)
+        {
+            if (orderBy == null) return KeyColumns;
+
+            var result = new List<ClickHouseColumn>();
+
+            foreach (var name in orderBy)
+            {
+                var column = Columns.FirstOrDefault(c => c.Name == name)
+                    ?? throw new Exception($"Table {tableName}: the ORDER BY column {name} is not a column of the table");
+
+                if (result.Contains(column)) throw new Exception($"Table {tableName}: the ORDER BY has {name} twice");
+
+                result.Add(column);
+            }
+
+            // ClickHouse replaces and deletes the rows by the ORDER BY: every key column, and no other
+            if (KeyColumns.Count > 0 && (result.Count != KeyColumns.Count || result.Any(c => !c.IsKey)))
+            {
+                throw new Exception($"Table {tableName}: the ORDER BY must have exactly the key columns ({string.Join(", ", KeyColumns.Select(c => c.Name))}), " +
+                    "because ClickHouse replaces and deletes the rows by it. To sort by another column, make it part of the replica identity " +
+                    "(REPLICA IDENTITY USING INDEX on a unique index).");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// The names in an expression: plain and quoted identifiers, but not what is in string literals.
+        /// </summary>
+        internal static IEnumerable<string> Identifiers(string expression)
+        {
+            foreach (Match match in Regex.Matches(expression, @"'(?:[^'\\]|\\.)*'|`((?:[^`\\]|\\.)*)`|""((?:[^""\\]|\\.)*)""|([A-Za-z_][A-Za-z0-9_]*)"))
+            {
+                for (var group = 1; group <= 3; group++)
+                {
+                    if (match.Groups[group].Success) yield return match.Groups[group].Value;
+                }
+            }
+        }
+
         public string GetCreateStatement(TimeSpan? cleanUpDeletedRowsAfter)
         {
             var sql = new StringBuilder($"CREATE TABLE IF NOT EXISTS {QuotedName} (");
@@ -89,22 +166,28 @@ namespace PgOutput2Json.ClickHouse
 
             sql.Append($"{VersionColumn} UInt128, {DeletedColumn} UInt8, {SyncedAtColumn} DateTime64(6, 'UTC') DEFAULT now64(6)) ");
 
-            if (KeyColumns.Count == 0)
+            if (Engine == ClickHouseTableEngine.Null)
             {
-                // without a key PostgreSQL publishes only inserts, and there is nothing to replace a row by
-                sql.Append("ENGINE = MergeTree ORDER BY tuple()");
+                return sql.Append("ENGINE = Null").ToString();
             }
-            else
-            {
-                sql.Append($"ENGINE = ReplacingMergeTree({VersionColumn}, {DeletedColumn}) ORDER BY ({string.Join(", ", KeyColumns.Select(c => c.QuotedName))})");
 
-                var settings = new List<string>();
+            // without a key PostgreSQL publishes only inserts, and there is nothing to replace a row by
+            var replacing = Engine == ClickHouseTableEngine.ReplacingMergeTree && KeyColumns.Count > 0;
 
-                if (HasNullableKey) settings.Add("allow_nullable_key = 1");
-                if (cleanUpDeletedRowsAfter is { } after) settings.Add(GetCleanupSettings(after));
+            sql.Append(replacing ? $"ENGINE = ReplacingMergeTree({VersionColumn}, {DeletedColumn})" : "ENGINE = MergeTree");
 
-                if (settings.Count > 0) sql.Append(" SETTINGS ").Append(string.Join(", ", settings));
-            }
+            if (PartitionBy != null) sql.Append(" PARTITION BY ").Append(PartitionBy);
+
+            sql.Append(OrderByColumns.Count == 0 ? " ORDER BY tuple()" : $" ORDER BY ({string.Join(", ", OrderByColumns.Select(c => c.QuotedName))})");
+
+            var settings = new List<string>();
+
+            // the columns of a table without a key, and all of them with REPLICA IDENTITY FULL, are Nullable
+            if (HasNullableKey || (KeyColumns.Count == 0 && (OrderByColumns.Count > 0 || PartitionBy != null))) settings.Add("allow_nullable_key = 1");
+
+            if (replacing && cleanUpDeletedRowsAfter is { } after) settings.Add(GetCleanupSettings(after));
+
+            if (settings.Count > 0) sql.Append(" SETTINGS ").Append(string.Join(", ", settings));
 
             return sql.ToString();
         }
@@ -114,7 +197,7 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public string? GetCleanupStatement(TimeSpan? cleanUpDeletedRowsAfter)
         {
-            if (cleanUpDeletedRowsAfter is not { } after || KeyColumns.Count == 0) return null;
+            if (cleanUpDeletedRowsAfter is not { } after || KeyColumns.Count == 0 || Engine != ClickHouseTableEngine.ReplacingMergeTree) return null;
 
             return $"ALTER TABLE {QuotedName} MODIFY SETTING {GetCleanupSettings(after)}";
         }
@@ -149,7 +232,7 @@ namespace PgOutput2Json.ClickHouse
         /// <summary>
         /// Reads the schema of the compact write mode: the table name, then [name, isKey, type oid, type modifier] per column.
         /// </summary>
-        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType)
+        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType, ClickHouseTableOptions? options = null)
         {
             if (schemaElement.ValueKind != JsonValueKind.Array) throw new Exception("Invalid schema - expected array");
 
@@ -189,7 +272,7 @@ namespace PgOutput2Json.ClickHouse
                 });
             }
 
-            return new ClickHouseTable(tableName, columns);
+            return new ClickHouseTable(tableName, columns, options);
         }
 
         /// <summary>
