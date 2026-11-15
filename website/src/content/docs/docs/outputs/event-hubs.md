@@ -27,13 +27,11 @@ Make sure to create the Event Hub in your namespace before running the applicati
 
 ## Partitioning Strategy
 
-Event Hubs uses the partition key (derived from table name) to distribute messages across partitions. This ensures:
+The publisher chooses the partition of every event itself (murmur2, as the Kafka output does). By default it hashes the table name, so all the rows of a table go to one partition, in the order of the changes, and the tables are spread over the partitions. With partition-key columns configured for a table (`WithPartitionKeyFields`), it hashes the values of those columns instead, so the rows of the table are spread over the partitions.
 
-- Messages from the same table are processed in order
-- Load is distributed across multiple partitions for better throughput
-- Parallel processing capabilities for consumers
+At the end of every batch the events are sent once per partition, and the partitions are sent at the same time. Each partition gets its events in WAL order, also the events of different tables.
 
-With partition-key columns configured for a table (`WithPartitionKeyFields`), its rows are routed by those columns instead, and the partition is chosen client-side (murmur2 over the column values).
+Up to version 2.0.1, the partition of a table without partition-key columns was chosen by Event Hubs, from the table name as the partition key. After an upgrade, a table can therefore move to another partition. A consumer that keeps a watermark per table and partition must take the watermark of the table from its old partition.
 
 ## Create a .NET Worker Service
 

@@ -23,6 +23,8 @@ namespace PgOutput2Json.AzureEventHubs
 
         private readonly List<BufferEntry> _buffer = [];
 
+        private string? _tableName;
+
         public EventHubsPublisher(EventHubsPublisherOptions options, ILogger<EventHubsPublisher>? logger)
         {
             _options = options;
@@ -36,29 +38,31 @@ namespace PgOutput2Json.AzureEventHubs
 
         public async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
-            var tableName = msg.TableName.ToString();
+            // the table name of the previous message, so that the rows of a table do not each make a string of it
+            if (_tableName == null || !msg.TableName.Equals(_tableName.AsSpan()))
+            {
+                _tableName = msg.TableName.ToString();
+            }
+
             var keyColValue = msg.KeyKolValue.ToString();
 
-            var eventData = new EventData(msg.Json.ToString())
+            var eventData = new EventData(Utf8Buffer.ToArray(msg.Json))
             {
-                MessageId = string.Join("", tableName, keyColValue)
+                MessageId = string.Concat(_tableName, keyColValue)
             };
 
-            eventData.Properties["table"] = tableName;
+            eventData.Properties["table"] = _tableName;
             eventData.Properties["keyValue"] = keyColValue;
             eventData.Properties["txFinalLsn"] = msg.TxFinalLsn;
             eventData.Properties["messageNo"] = msg.MessageNo;
 
-            // the user-configured partition key columns route the row client-side - without them the
-            // events keep the table-name partition key and the partition is chosen by the service
-            string? partitionId = null;
+            // the partition is chosen here, by the partition key columns or else by the table name: one send per
+            // partition then keeps the WAL order of every partition
+            var routingKey = msg.PartitionKolValue.Length > 0 ? msg.PartitionKolValue.ToString() : _tableName;
 
-            if (msg.PartitionKolValue.Length > 0)
-            {
-                partitionId = await ResolvePartitionIdAsync(msg.PartitionKolValue.ToString(), token).ConfigureAwait(false);
-            }
+            var partitionId = await ResolvePartitionIdAsync(routingKey, token).ConfigureAwait(false);
 
-            _buffer.Add(new BufferEntry(eventData, partitionId, tableName));
+            _buffer.Add(new BufferEntry(eventData, partitionId));
         }
 
         public async Task ConfirmAsync(CancellationToken token)
@@ -70,19 +74,12 @@ namespace PgOutput2Json.AzureEventHubs
 
             try
             {
-                foreach (var group in GetSendGroups(_buffer))
-                {
-                    var partitionId = group[0].PartitionId;
-
-                    var batchOptions = partitionId != null
-                        ? new CreateBatchOptions { PartitionId = partitionId }
-                        : new CreateBatchOptions { PartitionKey = group[0].PartitionKey };
-
-                    var events = group.Select(x => x.EventData).ToList();
-
-                    await SendEventsInBatchesAsync(client, events, batchOptions, token)
-                        .ConfigureAwait(false);
-                }
+                // the partitions are independent, so they are sent at the same time
+                await Task.WhenAll(GetSendGroups(_buffer).Select(group => SendEventsInBatchesAsync(
+                    client,
+                    group.Select(x => x.EventData).ToList(),
+                    new CreateBatchOptions { PartitionId = group[0].PartitionId },
+                    token))).ConfigureAwait(false);
 
                 _buffer.Clear();
             }
@@ -94,43 +91,11 @@ namespace PgOutput2Json.AzureEventHubs
         }
 
         /// <summary>
-        /// Splits the buffer into groups that are sent one after another, so that every partition
-        /// receives its events in WAL order.
+        /// One group per partition, with the events in buffer (WAL) order.
         /// </summary>
         internal static IEnumerable<List<BufferEntry>> GetSendGroups(List<BufferEntry> buffer)
         {
-            // all the events have a client-resolved partition - one group per partition keeps the order
-            if (buffer.TrueForAll(x => x.PartitionId != null))
-            {
-                return buffer.GroupBy(x => x.PartitionId).Select(x => x.ToList());
-            }
-
-            // events routed by the table-name partition key land in a partition chosen by the service, and several
-            // tables can share one - the order is kept only by sending in buffer order, with a new group
-            // whenever the target changes
-            var groups = new List<List<BufferEntry>>();
-
-            foreach (var entry in buffer)
-            {
-                var last = groups.Count > 0 ? groups[^1] : null;
-
-                if (last == null || !HasSameTarget(last[0], entry))
-                {
-                    groups.Add(last = []);
-                }
-
-                last.Add(entry);
-            }
-
-            return groups;
-        }
-
-        private static bool HasSameTarget(BufferEntry a, BufferEntry b)
-        {
-            // the table-name partition key is used only without a client-resolved partition
-            return a.PartitionId != null || b.PartitionId != null
-                ? a.PartitionId == b.PartitionId
-                : a.PartitionKey == b.PartitionKey;
+            return buffer.GroupBy(x => x.PartitionId).Select(x => x.ToList());
         }
 
         public async ValueTask DisposeAsync()
@@ -185,11 +150,9 @@ namespace PgOutput2Json.AzureEventHubs
             }
         }
 
-        private async Task<string?> ResolvePartitionIdAsync(string routingKey, CancellationToken token)
+        private async Task<string> ResolvePartitionIdAsync(string routingKey, CancellationToken token)
         {
             var partitionIds = await EnsurePartitionIdsAsync(token).ConfigureAwait(false);
-
-            if (partitionIds.Count == 0) return null;
 
             // murmur2, the same routing the Kafka adapter uses for partition key columns
             var index = (MurmurHash2.Hash(routingKey) & 0x7fffffff) % partitionIds.Count;
@@ -213,11 +176,11 @@ namespace PgOutput2Json.AzureEventHubs
 
             _partitionIds = [.. partitionIds.OrderBy(int.Parse)];
 
-            _logger?.LogInformation("Partitions: {PartitionIds}", _partitionIds.Aggregate("", (acc, x) => acc + x + ","));
+            _logger?.LogInformation("Partitions: {PartitionIds}", string.Join(",", _partitionIds));
 
             return _partitionIds;
         }
 
-        internal readonly record struct BufferEntry(EventData EventData, string? PartitionId, string PartitionKey);
+        internal readonly record struct BufferEntry(EventData EventData, string PartitionId);
     }
 }
