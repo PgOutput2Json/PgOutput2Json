@@ -43,19 +43,25 @@ namespace PgOutput2Json.Tests
                 "Int32", "Nullable(Int16)", "Nullable(Decimal(76, 38))", "Decimal(12, 4)", "Nullable(DateTime64(6))", "Nullable(DateTime64(6, 'UTC'))",
                 "Array(Nullable(Int32))", "Nullable(JSON)", "JSON(max_dynamic_paths = 100)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
                 "UInt128", "UInt8", "Nullable(UUID)", "Nullable(Date32)", "DateTime64(3, 'Europe/Berlin')",
+                "Date", "DateTime", "Nullable(DateTime('UTC'))", "Enum8('a' = 1, 'b c' = -2)", "Enum16('\\'q\\'' = 300)", "FixedString(4)",
+                "LowCardinality(FixedString(2))", "IPv4", "Nullable(IPv6)",
             })
             {
                 Assert.IsNotNull(ClickHouseBinaryType.Parse(type, TimeZoneInfo.Utc), type);
             }
 
             // another type, more dimensions, a Nullable array, a time zone this system does not know
-            foreach (var type in new[] { "DateTime", "Date", "Enum8('a' = 1)", "Array(Array(Int32))", "Nullable(Array(Int32))", "Map(String, String)", "DateTime64(6, 'Nowhere/Land')" })
+            foreach (var type in new[] { "Int128", "Tuple(Int32, String)", "Array(Array(Int32))", "Nullable(Array(Int32))", "Map(String, String)", "DateTime64(6, 'Nowhere/Land')", "Enum8()" })
             {
                 Assert.IsNull(ClickHouseBinaryType.Parse(type, TimeZoneInfo.Utc), type);
             }
 
-            // a DateTime64 without a time zone needs the one of the server
+            // a DateTime64 or a DateTime without a time zone needs the one of the server
             Assert.IsNull(ClickHouseBinaryType.Parse("DateTime64(6)", null));
+            Assert.IsNull(ClickHouseBinaryType.Parse("DateTime", null));
+
+            CollectionAssert.AreEquivalent(new Dictionary<string, short> { ["a"] = 1, ["b, c"] = -2, ["'q'"] = 300 },
+                ClickHouseBinaryType.ParseEnumValues("'a' = 1, 'b, c' = -2, '\\'q\\'' = 300"));
         }
 
         [TestMethod]
@@ -128,6 +134,40 @@ namespace PgOutput2Json.Tests
             var milliseconds = ClickHouseBinaryType.Parse("DateTime64(3, 'UTC')", null)!;
             Assert.AreEqual(1709202896789, RowBinaryValues.GetDateTime64(Column(), "2024-02-29 10:34:56.789999+00", milliseconds, Server));
             Assert.AreEqual(-1, RowBinaryValues.GetDateTime64(Column(), "1969-12-31 23:59:59.999500+00", milliseconds, Server));
+        }
+
+        [TestMethod]
+        public void Date_DateTime_Enum_FixedString_and_addresses_should_be_as_ClickHouse_writes_them()
+        {
+            // as ClickHouse wrote them: 10.0.0.1, 10.0.0.2 in an IPv6 column, 2024-02-29 12:34:56+02, 2024-02-29, 'happy', 'ab' in FixedString(4)
+            Assert.AreEqual("0100000a", Write("IPv4", "\"10.0.0.1\""));
+            Assert.AreEqual("00000000000000000000ffff0a000002", Write("IPv6", "\"10.0.0.2\""));
+            Assert.AreEqual("00000000000000000000000000000001", Write("IPv6", "\"::1\""));
+            Assert.AreEqual("d05de065", Write("DateTime('UTC')", "\"2024-02-29 12:34:56.789+02\""));
+            Assert.AreEqual("464d", Write("Date", "\"2024-02-29\""));
+            Assert.AreEqual("02", Write("Enum8('sad' = 1, 'happy' = 2)", "\"happy\""));
+            Assert.AreEqual("2c01", Write("Enum16('a' = 300)", "\"a\""));
+            Assert.AreEqual("61620000", Write("FixedString(4)", "\"ab\""));
+
+            // read back from ClickHouse, a FixedString has its zero bytes
+            Assert.AreEqual("61620000", Write("FixedString(4)", "\"ab\\u0000\\u0000\""));
+
+            // out of the range of a DateTime (1970 to 2106) and a Date (1970 to 2149): its first or its last one, as ClickHouse does with the text
+            Assert.AreEqual("00000000", Write("DateTime('UTC')", "\"1900-01-01 00:00:00+00\""));
+            Assert.AreEqual("ffffffff", Write("DateTime('UTC')", "\"9999-12-31 23:59:59+00\""));
+            Assert.AreEqual("ffffffff", Write("DateTime('UTC')", "\"infinity\""));
+            Assert.AreEqual("0000", Write("Date", "\"1900-01-01\""));
+            Assert.AreEqual("ffff", Write("Date", "\"9999-12-31\""));
+
+            // what ClickHouse rejects as text too
+            StringAssert.Contains(Assert.ThrowsExactly<FormatException>(() => Write("IPv4", "\"10.0.0.0/8\"")).Message, "netmask");
+            StringAssert.Contains(Assert.ThrowsExactly<FormatException>(() => Write("IPv4", "\"::1\"")).Message, "not an IPv4");
+            StringAssert.Contains(Assert.ThrowsExactly<FormatException>(() => Write("Enum8('a' = 1)", "\"b\"")).Message, "not a value");
+            StringAssert.Contains(Assert.ThrowsExactly<FormatException>(() => Write("Enum8('a' = 1)", "null")).Message, "no value 0");
+            StringAssert.Contains(Assert.ThrowsExactly<FormatException>(() => Write("FixedString(2)", "\"é\u00e9\"")).Message, "4 bytes");
+
+            // a null for an enum with a 0 is that value
+            Assert.AreEqual("00", Write("Enum8('none' = 0, 'a' = 1)", "null"));
         }
 
         [TestMethod]

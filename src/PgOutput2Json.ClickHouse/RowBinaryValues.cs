@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
@@ -152,6 +153,30 @@ namespace PgOutput2Json.ClickHouse
                     writer.WriteInt64(GetDateTime64(column, GetText(value), type, server));
                     break;
 
+                case BinaryBase.Date:
+                    writer.WriteUInt16(GetDate(column, GetText(value)));
+                    break;
+
+                case BinaryBase.DateTime:
+                    writer.WriteUInt32(GetDateTime(column, GetText(value), type));
+                    break;
+
+                case BinaryBase.Enum8:
+                    writer.WriteByte(unchecked((byte)checked((sbyte)GetEnumValue(type, column, value))));
+                    break;
+
+                case BinaryBase.Enum16:
+                    writer.WriteInt16(GetEnumValue(type, column, value));
+                    break;
+
+                case BinaryBase.FixedString:
+                    WriteFixedString(writer, type, column, GetText(value));
+                    break;
+
+                case BinaryBase.IPv4 or BinaryBase.IPv6:
+                    WriteAddress(writer, type, column, GetText(value));
+                    break;
+
                 case BinaryBase.String:
                     if (value.ValueKind == JsonValueKind.String)
                     {
@@ -198,6 +223,16 @@ namespace PgOutput2Json.ClickHouse
                 case BinaryBase.Decimal: WriteUnscaled(writer, type, BigInteger.Zero); break;
                 case BinaryBase.String: writer.WriteVarUInt(0); break;
                 case BinaryBase.Json: writer.WriteString("{}".AsSpan()); break;
+                case BinaryBase.Date: writer.WriteUInt16(0); break;
+                case BinaryBase.DateTime or BinaryBase.IPv4: writer.WriteUInt32(0); break;
+                case BinaryBase.IPv6: writer.WriteUInt64(0); writer.WriteUInt64(0); break;
+                case BinaryBase.FixedString: for (var i = 0; i < type.Length; i++) writer.WriteByte(0); break;
+                // ClickHouse rejects the 0 that a null is, unless the enum has it
+                case BinaryBase.Enum8 or BinaryBase.Enum16 when type.EnumValues!.Values.Contains((short)0):
+                    if (type.Base == BinaryBase.Enum8) writer.WriteByte(0); else writer.WriteInt16(0);
+                    break;
+                case BinaryBase.Enum8 or BinaryBase.Enum16:
+                    throw new FormatException("A null for an Enum column that is not Nullable, and the enum has no value 0");
                 default: throw new NotSupportedException($"RowBinary of {type.Base}");
             }
         }
@@ -407,6 +442,94 @@ namespace PgOutput2Json.ClickHouse
             var factor = (long)Math.Pow(10, type.Precision - 6);
 
             return Math.Clamp(micros, long.MinValue / factor, long.MaxValue / factor) * factor;
+        }
+
+        /// <summary>
+        /// The days since 1970-01-01 in a UInt16: ClickHouse stores a Date from 1970 to 2149, and moves the others there.
+        /// </summary>
+        internal static ushort GetDate(ClickHouseColumn column, string text)
+        {
+            if (IsMinimum(text)) return 0;
+            if (IsMaximum(text)) return ushort.MaxValue;
+
+            var span = text.AsSpan();
+
+            if (!TryParseDate(ref span, out var date)) throw new FormatException($"Column {column.Name}: {text} is not a date");
+
+            return (ushort)Math.Clamp(date.DayNumber - UnixEpochDay, 0, ushort.MaxValue);
+        }
+
+        /// <summary>
+        /// The seconds since 1970-01-01 00:00 UTC in a UInt32: ClickHouse stores a DateTime from 1970 to 2106, and moves the others there.
+        /// A fraction of a second is cut off.
+        /// </summary>
+        internal static uint GetDateTime(ClickHouseColumn column, string text, ClickHouseBinaryType type)
+        {
+            if (IsMinimum(text)) return 0;
+            if (IsMaximum(text)) return uint.MaxValue;
+
+            var micros = ParseMicros(column, text, type.TimeZone ?? TimeZoneInfo.Utc);
+
+            var seconds = micros >= 0 ? micros / 1_000_000 : (micros - 999_999) / 1_000_000;
+
+            return (uint)Math.Clamp(seconds, 0, uint.MaxValue);
+        }
+
+        private static short GetEnumValue(ClickHouseBinaryType type, ClickHouseColumn column, JsonElement value)
+        {
+            // a number is the value itself
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt16(out var number)) return number;
+
+            var name = GetText(value);
+
+            return type.EnumValues!.TryGetValue(name, out number)
+                ? number
+                : throw new FormatException($"Column {column.Name}: '{name}' is not a value of its Enum");
+        }
+
+        /// <summary>
+        /// Exactly the bytes of the type: the UTF-8 of the value, filled up with zero bytes.
+        /// </summary>
+        private static void WriteFixedString(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, string text)
+        {
+            var length = System.Text.Encoding.UTF8.GetByteCount(text);
+
+            if (length > type.Length) throw new FormatException($"Column {column.Name}: '{text}' has {length} bytes, too many for FixedString({type.Length})");
+
+            var bytes = new byte[type.Length];
+
+            System.Text.Encoding.UTF8.GetBytes(text, bytes);
+
+            writer.WriteBytes(bytes);
+        }
+
+        /// <summary>
+        /// An IPv4 is a UInt32 with its lowest byte first, an IPv6 its 16 bytes as in the network. An IPv4 address
+        /// in an IPv6 column is ::ffff:a.b.c.d. A netmask (inet 10.0.0.0/8, cidr) cannot be stored, as with the text.
+        /// </summary>
+        private static void WriteAddress(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, string text)
+        {
+            if (text.Contains('/')) throw new FormatException($"Column {column.Name}: {text} has a netmask, which {type.Base} cannot store: change the ClickHouse column to String");
+
+            if (!System.Net.IPAddress.TryParse(text, out var address)) throw new FormatException($"Column {column.Name}: {text} is not an IP address");
+
+            Span<byte> bytes = stackalloc byte[16];
+
+            if (type.Base == BinaryBase.IPv4)
+            {
+                if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) throw new FormatException($"Column {column.Name}: {text} is not an IPv4 address");
+
+                address.TryWriteBytes(bytes, out _);
+
+                writer.WriteUInt32(System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes));
+                return;
+            }
+
+            if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) address = address.MapToIPv6();
+
+            address.TryWriteBytes(bytes, out _);
+
+            writer.WriteFixed(bytes);
         }
 
         private static bool IsMinimum(string text) => text == "-infinity" || text.EndsWith(" BC", StringComparison.Ordinal);

@@ -42,8 +42,8 @@ namespace PgOutput2Json.ClickHouse
         public bool UseArrayTypes { get; set; } = true;
 
         /// <summary>
-        /// Sends the rows in the RowBinary format, which ClickHouse reads several times faster than JSON. A table with
-        /// a column of a type the output does not create gets JSON, which ClickHouse converts to the type of the column.
+        /// Sends the rows in the RowBinary format, which ClickHouse reads two to three times faster than JSON. A table with
+        /// a column of a type RowBinary does not cover (e.g. Int128, Map, Tuple) gets JSON, which ClickHouse converts to the type of the column.
         /// With false, every table gets JSON (JSONCompactEachRow). Default is true.
         /// </summary>
         public bool UseRowBinary { get; set; } = true;

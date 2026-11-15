@@ -53,6 +53,8 @@ namespace PgOutput2Json.ClickHouse
 
         public void WriteInt16(short value) => BinaryPrimitives.WriteInt16LittleEndian(GetSpan(2), value);
 
+        public void WriteUInt16(ushort value) => BinaryPrimitives.WriteUInt16LittleEndian(GetSpan(2), value);
+
         public void WriteInt32(int value) => BinaryPrimitives.WriteInt32LittleEndian(GetSpan(4), value);
 
         public void WriteUInt32(uint value) => BinaryPrimitives.WriteUInt32LittleEndian(GetSpan(4), value);

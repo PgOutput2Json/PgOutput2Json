@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace PgOutput2Json.ClickHouse
@@ -20,12 +21,20 @@ namespace PgOutput2Json.ClickHouse
         DateTime64,
         String,
         Json,
+        Date,
+        DateTime,
+        Enum8,
+        Enum16,
+        FixedString,
+        IPv4,
+        IPv6,
     }
 
     /// <summary>
     /// How a value of a ClickHouse column is written in the RowBinary format. ClickHouse does not convert the values
     /// of RowBinary to the type of the column, so this is made from the type the column really has in ClickHouse.
-    /// Only the types the output creates are covered, and LowCardinality of them: a table with another type gets JSON.
+    /// The types the output creates are covered, and Date, DateTime, Enum8, Enum16, FixedString, IPv4, IPv6 and LowCardinality:
+    /// a table with another type (Map, Tuple...) gets JSON.
     /// </summary>
     internal sealed class ClickHouseBinaryType
     {
@@ -40,8 +49,14 @@ namespace PgOutput2Json.ClickHouse
         public int Precision { get; private init; }
         public int Scale { get; private init; }
 
-        /// <summary>The time zone of a DateTime64: the one of the column, or else the one of the server.</summary>
+        /// <summary>The time zone of a DateTime or a DateTime64: the one of the column, or else the one of the server.</summary>
         public TimeZoneInfo? TimeZone { get; private init; }
+
+        /// <summary>The bytes of a FixedString.</summary>
+        public int Length { get; private init; }
+
+        /// <summary>The values of an Enum8 or an Enum16, by name.</summary>
+        public IReadOnlyDictionary<string, short>? EnumValues { get; private init; }
 
         /// <summary>
         /// The type, or null if the RowBinary of it is not covered. <paramref name="serverTimeZone"/> is the one
@@ -67,6 +82,8 @@ namespace PgOutput2Json.ClickHouse
                     Precision = nullable.Precision,
                     Scale = nullable.Scale,
                     TimeZone = nullable.TimeZone,
+                    Length = nullable.Length,
+                    EnumValues = nullable.EnumValues,
                 };
             }
 
@@ -93,6 +110,31 @@ namespace PgOutput2Json.ClickHouse
                 case "Date32": return new() { Base = BinaryBase.Date32 };
                 case "String": return new() { Base = BinaryBase.String };
                 case "JSON": return new() { Base = BinaryBase.Json };
+                case "Date": return new() { Base = BinaryBase.Date };
+                case "IPv4": return new() { Base = BinaryBase.IPv4 };
+                case "IPv6": return new() { Base = BinaryBase.IPv6 };
+                case "DateTime": return serverTimeZone == null ? null : new() { Base = BinaryBase.DateTime, TimeZone = serverTimeZone };
+            }
+
+            if (Unwrap(type, "DateTime(", out inner))
+            {
+                var timeZone = ParseTimeZoneName(inner);
+
+                return timeZone == null ? null : new() { Base = BinaryBase.DateTime, TimeZone = timeZone };
+            }
+
+            if (Unwrap(type, "FixedString(", out inner))
+            {
+                return int.TryParse(inner, NumberStyles.None, CultureInfo.InvariantCulture, out var length) && length > 0
+                    ? new() { Base = BinaryBase.FixedString, Length = length }
+                    : null;
+            }
+
+            if (Unwrap(type, "Enum8(", out inner) || Unwrap(type, "Enum16(", out inner))
+            {
+                var values = ParseEnumValues(inner);
+
+                return values == null ? null : new() { Base = type.StartsWith("Enum8", StringComparison.Ordinal) ? BinaryBase.Enum8 : BinaryBase.Enum16, EnumValues = values };
             }
 
             // JSON with parameters, e.g. JSON(max_dynamic_paths = 100)
@@ -122,21 +164,74 @@ namespace PgOutput2Json.ClickHouse
                     return null;
                 }
 
-                var timeZone = serverTimeZone;
-
-                if (comma >= 0)
-                {
-                    var name = inner[(comma + 1)..].Trim();
-
-                    if (name.Length < 2 || name[0] != '\'' || name[^1] != '\'') return null;
-
-                    timeZone = FindTimeZone(name[1..^1]);
-                }
+                var timeZone = comma >= 0 ? ParseTimeZoneName(inner[(comma + 1)..]) : serverTimeZone;
 
                 return timeZone == null ? null : new() { Base = BinaryBase.DateTime64, Precision = precision, TimeZone = timeZone };
             }
 
             return null;
+        }
+
+        // 'Europe/Berlin'
+        private static TimeZoneInfo? ParseTimeZoneName(string text)
+        {
+            var name = text.Trim();
+
+            return name.Length >= 2 && name[0] == '\'' && name[^1] == '\'' ? FindTimeZone(name[1..^1]) : null;
+        }
+
+        /// <summary>
+        /// 'a' = 1, 'b c' = 2, '\'quoted\'' = -3: the names in quotes, with backslash escapes, and their numbers.
+        /// </summary>
+        internal static Dictionary<string, short>? ParseEnumValues(string text)
+        {
+            var values = new Dictionary<string, short>(StringComparer.Ordinal);
+
+            var i = 0;
+
+            while (i < text.Length)
+            {
+                while (i < text.Length && text[i] is ' ' or ',') i++;
+
+                if (i == text.Length) break;
+
+                if (text[i] != '\'') return null;
+
+                var name = new System.Text.StringBuilder();
+
+                for (i++; ; i++)
+                {
+                    if (i >= text.Length) return null;
+
+                    if (text[i] == '\\' && i + 1 < text.Length)
+                    {
+                        name.Append(text[++i]);
+                    }
+                    else if (text[i] == '\'')
+                    {
+                        i++;
+                        break;
+                    }
+                    else
+                    {
+                        name.Append(text[i]);
+                    }
+                }
+
+                while (i < text.Length && text[i] == ' ') i++;
+
+                if (i == text.Length || text[i] != '=') return null;
+
+                var start = ++i;
+
+                while (i < text.Length && text[i] != ',') i++;
+
+                if (!short.TryParse(text.AsSpan(start, i - start).Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var number)) return null;
+
+                values[name.ToString()] = number;
+            }
+
+            return values.Count > 0 ? values : null;
         }
 
         /// <summary>
