@@ -29,6 +29,9 @@ namespace PgOutput2Json.ClickHouse
         public required string QuotedName { get; init; }
         public required bool IsKey { get; init; }
 
+        /// <summary>The PostgreSQL type, for the values of the rows that come as text.</summary>
+        public uint TypeId { get; init; }
+
         /// <summary>
         /// The ClickHouse type without Nullable.
         /// </summary>
@@ -59,6 +62,9 @@ namespace PgOutput2Json.ClickHouse
 
         public string Name { get; }
         public string QuotedName { get; }
+
+        /// <summary>The <see cref="RowTable"/> the table was made from, for the rows of an <see cref="IRowPublisher"/>.</summary>
+        public RowTable? Source { get; set; }
 
         public IReadOnlyList<ClickHouseColumn> Columns { get; }
         public IReadOnlyList<ClickHouseColumn> KeyColumns { get; }
@@ -328,7 +334,7 @@ namespace PgOutput2Json.ClickHouse
         {
             if (schemaElement.ValueKind != JsonValueKind.Array) throw new Exception("Invalid schema - expected array");
 
-            var columns = new List<ClickHouseColumn>();
+            var schema = new List<(string, bool, uint, int, string?)>();
 
             var length = schemaElement.GetArrayLength();
 
@@ -341,14 +347,42 @@ namespace PgOutput2Json.ClickHouse
                     throw new Exception("Invalid schema - expected name, key flag and type for column " + i);
                 }
 
-                var name = columnElement[0].GetString() ?? string.Empty;
-                var oid = columnElement[2].GetUInt32();
+                schema.Add((columnElement[0].GetString() ?? string.Empty,
+                            columnElement[1].GetInt32() == 1,
+                            columnElement[2].GetUInt32(),
+                            columnElement.GetArrayLength() > 3 && columnElement[3].TryGetInt32(out var modifier) ? modifier : -1,
+                            columnElement.GetArrayLength() > 4 ? columnElement[4].GetString() : null));
+            }
 
-                var isKey = columnElement[1].GetInt32() == 1;
+            return FromColumns(tableName, schema, useJsonType, useArrayTypes, options);
+        }
 
-                var typeModifier = columnElement.GetArrayLength() > 3 && columnElement[3].TryGetInt32(out var modifier) ? modifier : -1;
+        /// <summary>
+        /// The table of the columns of a <see cref="RowTable"/>, as <see cref="FromSchema"/> makes it from the same columns in JSON.
+        /// </summary>
+        public static ClickHouseTable FromRowTable(string tableName, RowTable rowTable, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null)
+        {
+            var table = FromColumns(tableName,
+                                    rowTable.Columns.Select(c => (c.Name, c.IsKey, c.TypeId, c.TypeModifier, c.TypeName)),
+                                    useJsonType,
+                                    useArrayTypes,
+                                    options);
 
-                var typeName = columnElement.GetArrayLength() > 4 ? columnElement[4].GetString() : null;
+            table.Source = rowTable;
+
+            return table;
+        }
+
+        private static ClickHouseTable FromColumns(string tableName,
+                                                   IEnumerable<(string Name, bool IsKey, uint Oid, int TypeModifier, string? TypeName)> schema,
+                                                   bool useJsonType,
+                                                   bool useArrayTypes,
+                                                   ClickHouseTableOptions? options)
+        {
+            var columns = new List<ClickHouseColumn>();
+
+            foreach (var (name, isKey, oid, typeModifier, typeName) in schema)
+            {
 
                 // a table cannot be ordered by a JSON column, so a json column of the key stays a String
                 var isJson = useJsonType && !isKey && oid is (uint)PgOid.JSONOID or (uint)PgOid.JSONBOID;
@@ -367,6 +401,7 @@ namespace PgOutput2Json.ClickHouse
                     Name = name,
                     QuotedName = Quote(name),
                     IsKey = isKey,
+                    TypeId = oid,
                     IsJsonb = oid == (uint)PgOid.JSONBOID,
                     Type = isJson ? "JSON" : elementType != null ? $"Array(Nullable({elementType}))" : GetType(oid, typeModifier),
                     Kind = isTextArray ? ColumnKind.TextArray
@@ -388,6 +423,9 @@ namespace PgOutput2Json.ClickHouse
         /// the library sends the arrays of other types (enums, user types) as their PostgreSQL text.
         /// The type modifier of an array column is that of its elements.
         /// </summary>
+        /// <summary>An array type of PostgreSQL that the library writes as a JSON array.</summary>
+        internal static bool IsArray(PgOid oid) => oid.IsArrayOfNumber() || oid.IsArrayOfByte() || oid.IsArrayOfBoolean() || oid.IsArrayOfText();
+
         internal static string? GetArrayElementType(uint oid, int typeModifier)
         {
             switch ((PgOid)oid)

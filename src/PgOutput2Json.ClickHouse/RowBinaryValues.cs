@@ -16,6 +16,71 @@ namespace PgOutput2Json.ClickHouse
     /// Writes the values of a row, as they come in the JSON of the library or from a read of ClickHouse,
     /// in the RowBinary format of the type the column has in ClickHouse.
     /// </summary>
+    /// <summary>
+    /// A value for RowBinary: a JSON value, or the text PostgreSQL sends, which then has the kind of the JSON value the library would write for it.
+    /// </summary>
+    internal readonly struct BinaryInput
+    {
+        private readonly JsonElement _element;
+        private readonly string? _text;
+        private readonly bool _isText;
+
+        public JsonValueKind ValueKind { get; }
+
+        public BinaryInput(JsonElement element)
+        {
+            _element = element;
+            ValueKind = element.ValueKind;
+        }
+
+        private BinaryInput(string? text, JsonValueKind kind)
+        {
+            _text = text;
+            _isText = true;
+            ValueKind = kind;
+        }
+
+        public static BinaryInput Null => new(null, JsonValueKind.Null);
+
+        /// <summary>The text of a scalar (not an array, not a bytea).</summary>
+        public static BinaryInput FromText(string text, PgOid oid)
+        {
+            if (oid.IsNumber())
+            {
+                // JSON has no NaN and no infinity: the library writes them as null
+                foreach (var c in text)
+                {
+                    if (!(c is >= '0' and <= '9' or '+' or '-' or 'e' or 'E' or '.')) return Null;
+                }
+
+                return new(text, JsonValueKind.Number);
+            }
+
+            if (oid.IsBoolean())
+            {
+                return text.Length > 0 && text[0] == 't' ? new("true", JsonValueKind.True) : new("false", JsonValueKind.False);
+            }
+
+            return new(text, JsonValueKind.String);
+        }
+
+        public JsonElement Element => _isText ? throw new InvalidOperationException("A value of text is not an array") : _element;
+
+        public string? GetString() => _isText ? _text : _element.GetString();
+
+        public string GetRawText() => _isText ? _text! : _element.GetRawText();
+
+        public bool TryGetInt64(out long value) => _isText
+            ? long.TryParse(_text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value)
+            : _element.TryGetInt64(out value);
+
+        public bool TryGetInt16(out short value) => _isText
+            ? short.TryParse(_text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value)
+            : _element.TryGetInt16(out value);
+
+        public double GetDouble() => _isText ? double.Parse(_text!, NumberStyles.Float, CultureInfo.InvariantCulture) : _element.GetDouble();
+    }
+
     internal static class RowBinaryValues
     {
         private static readonly long UnixEpochTicks = DateTime.UnixEpoch.Ticks;
@@ -24,16 +89,62 @@ namespace PgOutput2Json.ClickHouse
 
         public static void Write(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, JsonElement value, ClickHouseServerInfo server)
         {
+            Write(writer, type, column, new BinaryInput(value), server);
+        }
+
+        // the JSON of a value that is read through its JSON
+        [ThreadStatic] private static System.Text.StringBuilder? t_json;
+
+        /// <summary>
+        /// A value of a row of the library: PostgreSQL's text, read as the code of the JSON reads the value the library writes for it.
+        /// An array and a bytea go through their JSON.
+        /// </summary>
+        public static void Write(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, RowValue value, ClickHouseServerInfo server)
+        {
+            var oid = (PgOid)column.TypeId;
+
+            if (value.Kind == RowValueKind.Null)
+            {
+                Write(writer, type, column, BinaryInput.Null, server);
+                return;
+            }
+
+            var text = value.Text!;
+
+            if (type.Element != null || oid.IsByte() || ClickHouseTable.IsArray(oid))
+            {
+                var json = (t_json ??= new System.Text.StringBuilder()).Clear();
+
+                JsonUtils.WriteValue(json, oid, text);
+
+                using var doc = JsonDocument.Parse(json.ToString());
+
+                Write(writer, type, column, new BinaryInput(doc.RootElement), server);
+                return;
+            }
+
+            Write(writer, type, column, BinaryInput.FromText(text, oid), server);
+        }
+
+        private static void Write(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, BinaryInput value, ClickHouseServerInfo server)
+        {
             if (type.Element != null)
             {
-                WriteArray(writer, type.Element, column, value, server);
+                // a null array is an empty one, since ClickHouse arrays are not Nullable
+                if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                {
+                    writer.WriteVarUInt(0);
+                    return;
+                }
+
+                WriteArray(writer, type.Element, column, value.Element, server);
                 return;
             }
 
             WriteNullable(writer, type, column, value, server);
         }
 
-        private static void WriteNullable(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, JsonElement value, ClickHouseServerInfo server)
+        private static void WriteNullable(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, BinaryInput value, ClickHouseServerInfo server)
         {
             if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             {
@@ -91,11 +202,11 @@ namespace PgOutput2Json.ClickHouse
                         "Change the ClickHouse column to String (ALTER TABLE ... MODIFY COLUMN ... String), or set UseArrayTypes to false for new tables.");
                 }
 
-                WriteNullable(writer, element, column, item, server);
+                WriteNullable(writer, element, column, new BinaryInput(item), server);
             }
         }
 
-        private static void WriteValue(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, JsonElement value, ClickHouseServerInfo server)
+        private static void WriteValue(RowBinaryWriter writer, ClickHouseBinaryType type, ClickHouseColumn column, BinaryInput value, ClickHouseServerInfo server)
         {
             switch (type.Base)
             {
@@ -250,9 +361,9 @@ namespace PgOutput2Json.ClickHouse
         /// <summary>
         /// The text of a value: a string as it is, anything else as its JSON (a number as written, e.g. 1.50).
         /// </summary>
-        private static string GetText(JsonElement value) => value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
+        private static string GetText(BinaryInput value) => value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
 
-        private static bool GetBoolean(ClickHouseColumn column, JsonElement value)
+        private static bool GetBoolean(ClickHouseColumn column, BinaryInput value)
         {
             switch (value.ValueKind)
             {
@@ -269,7 +380,7 @@ namespace PgOutput2Json.ClickHouse
             };
         }
 
-        private static long GetInt64(ClickHouseColumn column, JsonElement value)
+        private static long GetInt64(ClickHouseColumn column, BinaryInput value)
         {
             if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)) return number;
 
@@ -315,7 +426,7 @@ namespace PgOutput2Json.ClickHouse
             writer.WriteFixed(buffer[..bytes]);
         }
 
-        private static double GetDouble(ClickHouseColumn column, JsonElement value)
+        private static double GetDouble(ClickHouseColumn column, BinaryInput value)
         {
             if (value.ValueKind == JsonValueKind.Number) return value.GetDouble();
 
@@ -520,7 +631,7 @@ namespace PgOutput2Json.ClickHouse
             return (uint)Math.Clamp(seconds, 0, uint.MaxValue);
         }
 
-        private static short GetEnumValue(ClickHouseBinaryType type, ClickHouseColumn column, JsonElement value)
+        private static short GetEnumValue(ClickHouseBinaryType type, ClickHouseColumn column, BinaryInput value)
         {
             // a number is the value itself
             if (value.ValueKind == JsonValueKind.Number && value.TryGetInt16(out var number)) return number;

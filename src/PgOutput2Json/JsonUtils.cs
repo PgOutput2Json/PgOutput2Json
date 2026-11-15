@@ -5,6 +5,21 @@ namespace PgOutput2Json
 {
     public static class JsonUtils
     {
+        /// <summary>
+        /// A value of a column, from the text PostgreSQL sends, as the library writes it in the JSON of a row.
+        /// </summary>
+        internal static void WriteValue(StringBuilder jsonBuilder, PgOid pgOid, string value)
+        {
+            if (pgOid.IsNumber()) WriteNumber(jsonBuilder, value);
+            else if (pgOid.IsBoolean()) WriteBoolean(jsonBuilder, value);
+            else if (pgOid.IsByte()) WriteByte(jsonBuilder, value);
+            else if (pgOid.IsArrayOfNumber()) WriteArrayOfNumber(jsonBuilder, value);
+            else if (pgOid.IsArrayOfByte()) WriteArrayOfByte(jsonBuilder, value);
+            else if (pgOid.IsArrayOfBoolean()) WriteArrayOfBoolean(jsonBuilder, value);
+            else if (pgOid.IsArrayOfText()) WriteArrayOfText(jsonBuilder, value);
+            else WriteText(jsonBuilder, value);
+        }
+
         public static int WriteText(StringBuilder jsonBuilder, ReadOnlySpan<char> value)
         {
             jsonBuilder.Append('"');

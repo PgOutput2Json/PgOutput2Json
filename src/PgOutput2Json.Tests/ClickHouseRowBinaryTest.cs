@@ -239,5 +239,58 @@ namespace PgOutput2Json.Tests
 
             CollectionAssert.AreEqual(new byte[] { 7 }, Bytes(writer));
         }
+
+        /// <summary>
+        /// A value of a row of the library (PostgreSQL's text) gives the RowBinary of the JSON the library writes for it.
+        /// </summary>
+        [TestMethod]
+        [DataRow("Int32", PgOid.INT4OID, "-2")]
+        [DataRow("Nullable(Int64)", PgOid.INT8OID, "9223372036854775807")]
+        [DataRow("Nullable(Decimal(76, 38))", PgOid.NUMERICOID, "12345678901234567890.123456789")]
+        [DataRow("Nullable(Decimal(76, 38))", PgOid.NUMERICOID, "NaN")]
+        [DataRow("Nullable(Decimal(12, 4))", PgOid.NUMERICOID, "1.5000")]
+        [DataRow("Nullable(Float32)", PgOid.FLOAT4OID, "1.5")]
+        [DataRow("Nullable(Float64)", PgOid.FLOAT8OID, "1e+300")]
+        [DataRow("Nullable(Float64)", PgOid.FLOAT8OID, "-Infinity")]
+        [DataRow("Nullable(Bool)", PgOid.BOOLOID, "t")]
+        [DataRow("Nullable(Bool)", PgOid.BOOLOID, "f")]
+        [DataRow("Nullable(String)", PgOid.BYTEAOID, "\\xdeadbeef")]
+        [DataRow("Nullable(String)", PgOid.TEXTOID, "quote\" back\\ nl\n tab\t unié 😀")]
+        [DataRow("Nullable(UUID)", PgOid.UUIDOID, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")]
+        [DataRow("Nullable(Date32)", PgOid.DATEOID, "2024-02-29")]
+        [DataRow("Nullable(Date32)", PgOid.DATEOID, "infinity")]
+        [DataRow("Nullable(DateTime64(6))", PgOid.TIMESTAMPOID, "2024-02-29 12:34:56.789")]
+        [DataRow("Nullable(DateTime64(6, 'UTC'))", PgOid.TIMESTAMPTZOID, "2024-02-29 12:34:56.789+02")]
+        [DataRow("Nullable(String)", PgOid.TIMEOID, "12:34:56")]
+        [DataRow("Nullable(JSON)", PgOid.JSONBOID, "{\"a\": 1}")]
+        [DataRow("Nullable(String)", PgOid.JSONBOID, "{\"a\": 1}")]
+        [DataRow("Array(Nullable(Int32))", PgOid.A_INT4OID, "{1,NULL,3}")]
+        [DataRow("Nullable(String)", PgOid.A_INT4OID, "{1,NULL,3}")]
+        [DataRow("Array(Nullable(String))", PgOid.A_TEXTOID, "{a,\"b c\"}")]
+        [DataRow("Nullable(String)", (PgOid)50000, "happy")]
+        [DataRow("Enum8('happy' = 1, 'sad' = 2)", (PgOid)50000, "happy")]
+        [DataRow("Nullable(Int32)", PgOid.INT4OID, null)]
+        [DataRow("Array(Nullable(Int32))", PgOid.A_INT4OID, null)]
+        public void Text_should_give_the_RowBinary_of_its_JSON(string type, PgOid oid, string? text)
+        {
+            var kind = type.StartsWith("Array(", StringComparison.Ordinal) ? ColumnKind.Array : type.Contains("JSON") ? ColumnKind.Json : ColumnKind.Other;
+            var column = new ClickHouseColumn { Name = "c", QuotedName = "`c`", IsKey = false, Type = "", Kind = kind, TypeId = (uint)oid };
+
+            var binaryType = ClickHouseBinaryType.Parse(type, Server.TimeZone)!;
+
+            var json = new System.Text.StringBuilder();
+
+            if (text == null) json.Append("null"); else JsonUtils.WriteValue(json, oid, text);
+
+            using var doc = JsonDocument.Parse(json.ToString());
+
+            var fromJson = new RowBinaryWriter();
+            RowBinaryValues.Write(fromJson, binaryType, column, doc.RootElement, Server);
+
+            var fromText = new RowBinaryWriter();
+            RowBinaryValues.Write(fromText, binaryType, column, text == null ? RowValue.Null : RowValue.FromText(text), Server);
+
+            Assert.AreEqual(Convert.ToHexString(Bytes(fromJson)), Convert.ToHexString(Bytes(fromText)), $"{type} {oid} {text}");
+        }
     }
 }
