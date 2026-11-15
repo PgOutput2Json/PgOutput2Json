@@ -23,7 +23,10 @@ namespace PgOutput2Json.Benchmark
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new Publisher(this, inner?.CreateMessagePublisher(listenerOptions, slotName, loggerFactory));
+            var publisher = inner?.CreateMessagePublisher(listenerOptions, slotName, loggerFactory);
+
+            // an output that takes the rows gets them through the wrapper too
+            return publisher is IRowPublisher rowPublisher ? new RowPublisher(this, rowPublisher) : new Publisher(this, publisher);
         }
 
         private void AddConfirmed(long rows)
@@ -31,8 +34,22 @@ namespace PgOutput2Json.Benchmark
             if (Interlocked.Add(ref _confirmed, rows) >= expectedRows) Done.TrySetResult();
         }
 
-        private sealed class Publisher(CountingPublisherFactory owner, IMessagePublisher? inner) : MessagePublisher
+        private sealed class RowPublisher(CountingPublisherFactory owner, IRowPublisher inner) : Publisher(owner, inner), IRowPublisher
         {
+            public async Task PublishRowAsync(ChangeRow row, CancellationToken token)
+            {
+                await inner.PublishRowAsync(row, token).ConfigureAwait(false);
+
+                if (row.Table.Name == Owner._tableName) Unconfirmed++;
+            }
+        }
+
+        private class Publisher(CountingPublisherFactory owner, IMessagePublisher? inner) : MessagePublisher
+        {
+            protected CountingPublisherFactory Owner => owner;
+
+            protected long Unconfirmed { get => _unconfirmed; set => _unconfirmed = value; }
+
             private long _unconfirmed;
 
             public override async Task PublishAsync(JsonMessage jsonMessage, CancellationToken token)
