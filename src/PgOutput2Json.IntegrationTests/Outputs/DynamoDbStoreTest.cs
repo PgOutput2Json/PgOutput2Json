@@ -16,7 +16,8 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         {
             if (value.NULL == true) return "NULL";
             if (value.BOOL != null) return value.BOOL.Value ? "true" : "false";
-            if (value.N != null) return value.N;
+            // DynamoDB keeps a number without its trailing zeros; DynamoDB Local does so in a batch write only
+            if (value.N != null) return value.N.Contains('.') ? value.N.TrimEnd('0').TrimEnd('.') : value.N;
             if (value.B != null) return "x" + Convert.ToHexString(value.B.ToArray());
             if (value.S != null) return value.S.Length > 100 ? $"{value.S[0]}*{value.S.Length}" : $"'{value.S}'";
 

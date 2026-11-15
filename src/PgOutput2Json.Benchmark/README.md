@@ -3,7 +3,7 @@
 Measures how fast PgOutput2Json copies and streams rows from PostgreSQL to an output, end to end, on your machine.
 
 ```
-dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --rows 1000000 --output null,clickhouse,sqlite,mongodb,rabbitmq,rabbitmqstreams,kafka,webhooks
+dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --rows 1000000 --output null,clickhouse,sqlite,mongodb,dynamodb,rabbitmq,rabbitmqstreams,kafka,webhooks
 ```
 
 A shared or virtual machine gives noisy times: `--runs 3` runs each scenario three times and reports the fastest and the median. To compare two versions, run them one after the other, more than once.
@@ -23,6 +23,7 @@ Each scenario gets a fresh table, publication and replication slot, with rows of
 - **clickhouse**: the ClickHouse output, into a database that is dropped and created again for every run.
 - **sqlite**: the SQLite output, into a file that is deleted before every run (`--sqlite`, `--sqlite-wal`).
 - **mongodb**: the MongoDB output, into a database that is dropped before every run (`--mongodb`).
+- **dynamodb**: the DynamoDB output, into a DynamoDB Local container whose tables are all deleted before every run (`--dynamodb URL` for another endpoint, `--dynamodb-parallel`). DynamoDB Local is not DynamoDB: its numbers say little about AWS.
 - **rabbitmq**: the RabbitMQ output, into a topic exchange with a durable queue bound to it, both created again for every run (`--rabbitmq-amqp`, `--rabbitmq-transient`).
 - **rabbitmqstreams**: the RabbitMQ Streams output, into a stream that is created again for every run (`--rabbitmq`, `--rabbitmq-buffer`).
 - **webhooks**: the webhooks output, to a receiver in the process of the benchmark that reads every batch and answers 200 (`--webhook URL` for another one, `--webhook-secret`).

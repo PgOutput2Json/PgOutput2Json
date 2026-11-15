@@ -10,7 +10,7 @@ namespace PgOutput2Json.Benchmark
             dotnet run -c Release --project src/PgOutput2Json.Benchmark -- [options]
 
               --scenario copy,stream     The initial copy of a table, and catching up with rows already in the WAL (default: both)
-              --output null,clickhouse,sqlite,mongodb,rabbitmq,rabbitmqstreams,kafka,webhooks
+              --output null,clickhouse,sqlite,mongodb,dynamodb,rabbitmq,rabbitmqstreams,kafka,webhooks
                                          null: only counts the rows, which measures the library itself (default: null)
               --rows N                   Rows per scenario (default: 1000000)
               --workers N                Copy workers per table (default: 1)
@@ -29,6 +29,8 @@ namespace PgOutput2Json.Benchmark
               --sqlite FILE              The SQLite database, deleted before every run (default: pg2j_bench.db in the temp directory)
               --sqlite-wal               The WAL journal mode for SQLite (UseWal)
               --mongodb URL              A MongoDB connection string, instead of a container (database pg2j_bench, dropped for every run)
+              --dynamodb URL             A DynamoDB endpoint, instead of a DynamoDB Local container (all its tables are deleted for every run)
+              --dynamodb-parallel N      Batch writes in flight (MaxParallelBatchWrites, default: that of the output)
               --webhook URL              A webhook that answers 2xx, instead of the receiver of the benchmark, which reads the batch and answers 200
               --webhook-secret SECRET    Signs the batches (WebhookSecret)
               --rabbitmq HOST:PORT       A RabbitMQ stream endpoint, instead of a container (stream pg2j_bench, created again for every run)
@@ -61,6 +63,8 @@ namespace PgOutput2Json.Benchmark
         public string SqliteFile { get; private set; } = Path.Combine(Path.GetTempPath(), "pg2j_bench.db");
         public bool SqliteWal { get; private set; }
         public string? MongoDbConnectionString { get; private set; }
+        public string? DynamoDbUrl { get; private set; }
+        public int? DynamoDbParallel { get; private set; }
         public string? WebhookUrl { get; private set; }
         public string WebhookSecret { get; private set; } = "";
         public string? RabbitMqEndpoint { get; private set; }
@@ -105,6 +109,8 @@ namespace PgOutput2Json.Benchmark
                     case "--sqlite": options.SqliteFile = Value(); break;
                     case "--sqlite-wal": options.SqliteWal = true; break;
                     case "--mongodb": options.MongoDbConnectionString = Value(); break;
+                    case "--dynamodb": options.DynamoDbUrl = Value(); break;
+                    case "--dynamodb-parallel": options.DynamoDbParallel = (int)Number(); break;
                     case "--webhook": options.WebhookUrl = Value(); break;
                     case "--webhook-secret": options.WebhookSecret = Value(); break;
                     case "--rabbitmq": options.RabbitMqEndpoint = Value(); break;
@@ -130,7 +136,7 @@ namespace PgOutput2Json.Benchmark
             }
 
             if (options.Scenarios.Any(s => s is not ("copy" or "stream"))) return null;
-            if (options.Outputs.Any(o => o is not ("null" or "clickhouse" or "sqlite" or "mongodb" or "rabbitmq" or "rabbitmqstreams" or "kafka" or "webhooks"))) return null;
+            if (options.Outputs.Any(o => o is not ("null" or "clickhouse" or "sqlite" or "mongodb" or "dynamodb" or "rabbitmq" or "rabbitmqstreams" or "kafka" or "webhooks"))) return null;
 
             return options.Rows > 0 && options.Workers > 0 && options.TxRows > 0 && options.Runs > 0 ? options : null;
         }

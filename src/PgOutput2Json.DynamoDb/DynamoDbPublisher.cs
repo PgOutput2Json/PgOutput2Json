@@ -23,11 +23,21 @@ namespace PgOutput2Json.DynamoDb
         // Table schemas stored in memory
         private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = [];
 
-        // Batch write items buffer
-        private readonly List<(string TableName, WriteRequest WriteRequest)> _batch = new(25); // DynamoDB batch write limit
+        // the items of the next batch write (25 at most, the limit of DynamoDB)
+        private readonly List<(string TableName, WriteRequest WriteRequest)> _batch = new(25);
 
-        // the items in the batch: a batch write must not contain the same item twice
+        // the items of the next batch write and of those in flight: a second change of one of them waits for them
         private readonly HashSet<string> _batchKeys = [];
+
+        private readonly List<Task> _inFlight = [];
+
+        private readonly Utf8Buffer _utf8 = new();
+
+        private string _tableName = "";
+
+        // the values of the row and of the key of the change being written
+        private JsonElement[] _row = [];
+        private JsonElement[] _key = [];
 
         /// <summary>
         /// The sort key attribute of a table with more than one key column: the other key values, joined with "|".
@@ -48,9 +58,12 @@ namespace PgOutput2Json.DynamoDb
         {
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
-            var tableName = msg.TableName.ToString();
+            // the rows of a batch are mostly of one table: its name is not made again for each of them
+            if (!msg.TableName.Equals(_tableName.AsSpan())) _tableName = msg.TableName.ToString();
 
-            using var doc = JsonDocument.Parse(msg.Json.ToString());
+            var tableName = _tableName;
+
+            using var doc = JsonDocument.Parse(_utf8.Encode(msg.Json));
 
             await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
@@ -68,32 +81,8 @@ namespace PgOutput2Json.DynamoDb
         {
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
-            if (_batch.Count > 0)
-            {
-                var batchRequest = new BatchWriteItemRequest { RequestItems = [] };
-
-                // convert batch list to dictionary per table name
-                foreach (var (tableName, req) in _batch)
-                {
-                    if (!batchRequest.RequestItems.TryGetValue(tableName, out var list))
-                    {
-                        list = batchRequest.RequestItems[tableName] = [];
-                    }
-
-                    list.Add(req);
-                }
-
-                var response = await client.BatchWriteItemAsync(batchRequest, token)
-                    .ConfigureAwait(false);
-
-                if (response.UnprocessedItems?.Count > 0)
-                {
-                    throw new Exception($"Some items {response.UnprocessedItems.Count} were unprocessed in batch write.");
-                }
-
-                _batch.Clear();
-                _batchKeys.Clear();
-            }
+            // every item first, then the position: it is never ahead of them
+            await WriteAllAsync(client, token).ConfigureAwait(false);
 
             // _lastWal has no value only if nothing has been published since the last confirm (or ever);
             // it may still need persisting here even with an empty _batch, e.g. a transaction with only
@@ -152,10 +141,11 @@ namespace PgOutput2Json.DynamoDb
                 _tableColumns[tableName] = columns;
             }
 
-            doc.RootElement.TryGetProperty("k", out var keyElement);
-            doc.RootElement.TryGetProperty("r", out var rowElement);
+            // read once: indexing a JSON array walks it from the start when it has arrays or objects in it
+            var keyElement = doc.RootElement.TryGetProperty("k", out var key) && key.ValueKind == JsonValueKind.Array ? ReadValues(key, ref _key) : null;
+            var rowElement = doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array ? ReadValues(row, ref _row) : [];
 
-            if (keyElement.ValueKind != JsonValueKind.Undefined)
+            if (keyElement != null)
             {
                 // Key element is present only for deletes or if the PK has changed (or if replica identity is all).
                 // Changing PK is not supported - we must delete the old, and create a new item.
@@ -167,7 +157,7 @@ namespace PgOutput2Json.DynamoDb
                     DeleteRequest = new DeleteRequest { Key = keyAttributes }
                 };
 
-                await AddToBatchAsync(tableName, request, keyAttributes, token)
+                await AddToBatchAsync(client, tableName, request, keyAttributes, token)
                     .ConfigureAwait(false);
             }
 
@@ -178,8 +168,8 @@ namespace PgOutput2Json.DynamoDb
                 // if we have toasted values we must update, which is not supported in a batch
                 if (hasToastedValues)
                 {
-                    // flush the current batch
-                    await ConfirmAsync(token)
+                    // the items before it are written first
+                    await WriteAllAsync(client, token)
                         .ConfigureAwait(false);
 
                     var keyAttributes = ComposeKeyAttributes(columns, rowElement, isKeyRow: false);
@@ -212,33 +202,113 @@ namespace PgOutput2Json.DynamoDb
                         PutRequest = new PutRequest { Item = itemAttributes },
                     };
 
-                    await AddToBatchAsync(tableName, request, keyAttributes, token)
+                    await AddToBatchAsync(client, tableName, request, keyAttributes, token)
                         .ConfigureAwait(false);
                 }
             }
         }
 
-        private async Task AddToBatchAsync(string tableName, WriteRequest request, Dictionary<string, AttributeValue> key, CancellationToken token)
+        private async Task AddToBatchAsync(AmazonDynamoDBClient client, string tableName, WriteRequest request, Dictionary<string, AttributeValue> key, CancellationToken token)
         {
             var batchKey = tableName + "|" + string.Join("|", key.OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => $"{a.Key}={a.Value.S ?? a.Value.N ?? a.Value.BOOL?.ToString()}"));
 
-            // a second change of the same item goes into the next batch, after this one is written
+            // a second change of an item waits until its first one is written: a batch write must not have an item twice,
+            // and the writes in flight can end in any order
             if (_batchKeys.Contains(batchKey))
             {
-                await ConfirmAsync(token)
+                await WriteAllAsync(client, token)
                     .ConfigureAwait(false);
             }
 
             _batch.Add((tableName, request));
             _batchKeys.Add(batchKey);
 
-            // DynamoDB batch write max 25 items, flush if exceeded
-
+            // DynamoDB takes 25 items in a batch write
             if (_batch.Count >= 25)
             {
-                await ConfirmAsync(token)
+                await SendBatchAsync(client, token)
                     .ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// Sends the items of the next batch write, without waiting for it unless MaxParallelBatchWrites are in flight.
+        /// </summary>
+        private async Task SendBatchAsync(AmazonDynamoDBClient client, CancellationToken token)
+        {
+            if (_batch.Count == 0) return;
+
+            var batchRequest = new BatchWriteItemRequest { RequestItems = [] };
+
+            foreach (var (tableName, req) in _batch)
+            {
+                if (!batchRequest.RequestItems.TryGetValue(tableName, out var list))
+                {
+                    list = batchRequest.RequestItems[tableName] = [];
+                }
+
+                list.Add(req);
+            }
+
+            _batch.Clear();
+
+            _inFlight.Add(WriteBatchAsync(client, batchRequest, token));
+
+            if (_inFlight.Count >= Math.Max(1, _options.MaxParallelBatchWrites))
+            {
+                // the oldest one: its items stay in _batchKeys until all of them are written
+                var oldest = _inFlight[0];
+
+                _inFlight.RemoveAt(0);
+
+                await oldest.ConfigureAwait(false);
+            }
+        }
+
+        private static async Task WriteBatchAsync(AmazonDynamoDBClient client, BatchWriteItemRequest batchRequest, CancellationToken token)
+        {
+            var response = await client.BatchWriteItemAsync(batchRequest, token)
+                .ConfigureAwait(false);
+
+            if (response.UnprocessedItems?.Count > 0)
+            {
+                throw new Exception($"Some items {response.UnprocessedItems.Count} were unprocessed in batch write.");
+            }
+        }
+
+        /// <summary>
+        /// Writes every item: the next batch write, and waits for all of them in flight.
+        /// </summary>
+        private async Task WriteAllAsync(AmazonDynamoDBClient client, CancellationToken token)
+        {
+            await SendBatchAsync(client, token).ConfigureAwait(false);
+
+            try
+            {
+                await Task.WhenAll(_inFlight).ConfigureAwait(false);
+            }
+            finally
+            {
+                _inFlight.Clear();
+            }
+
+            _batchKeys.Clear();
+        }
+
+        /// <summary>
+        /// The values of a JSON array, in an array of exactly their number, reused while that number stays.
+        /// </summary>
+        private static JsonElement[] ReadValues(JsonElement array, ref JsonElement[] values)
+        {
+            var length = array.GetArrayLength();
+
+            if (values.Length != length) values = new JsonElement[length];
+
+            var i = 0;
+
+            foreach (var value in array.EnumerateArray()) values[i++] = value;
+
+            return values;
         }
 
         private static UpdateItemRequest BuildUpdateItemRequest(string tableName, Dictionary<string, AttributeValue> key, Dictionary<string, AttributeValue> attributesToUpdate)
@@ -273,7 +343,7 @@ namespace PgOutput2Json.DynamoDb
         /// The key of an item: the first key column is the partition key, the other key columns are joined
         /// into the sort key. A key row ("k") has the key columns only, a row ("r") has all the columns.
         /// </summary>
-        private static Dictionary<string, AttributeValue> ComposeKeyAttributes(List<ColumnInfo> columns, JsonElement element, bool isKeyRow)
+        private static Dictionary<string, AttributeValue> ComposeKeyAttributes(List<ColumnInfo> columns, JsonElement[] element, bool isKeyRow)
         {
             var keyAttributes = new Dictionary<string, AttributeValue>();
 
@@ -326,7 +396,7 @@ namespace PgOutput2Json.DynamoDb
             return keyAttributes;
         }
 
-        private static Dictionary<string, AttributeValue> ComposeItemAttributes(List<ColumnInfo> columns, JsonElement rowElement, out bool hasToastedValues)
+        private static Dictionary<string, AttributeValue> ComposeItemAttributes(List<ColumnInfo> columns, JsonElement[] rowElement, out bool hasToastedValues)
         {
             hasToastedValues = false;
 
@@ -335,7 +405,7 @@ namespace PgOutput2Json.DynamoDb
             var i = 0;
             foreach (var col in columns)
             {
-                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == "__TOAST__")
+                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].ValueEquals("__TOAST__"))
                 {
                     hasToastedValues = true;
                     i++;
@@ -357,11 +427,9 @@ namespace PgOutput2Json.DynamoDb
                 case JsonValueKind.String:
                     return new AttributeValue { S = element.GetString() };
                 case JsonValueKind.Number:
-                    if (element.TryGetInt64(out var longVal))
-                        return new AttributeValue { N = longVal.ToString() };
-                    if (element.TryGetDouble(out var doubleVal))
-                        return new AttributeValue { N = doubleVal.ToString(CultureInfo.InvariantCulture) };
-                    break;
+                    // the text of the number, as PostgreSQL wrote it: a double would lose the digits of a numeric
+                    // beyond about 15, and DynamoDB keeps 38
+                    return new AttributeValue { N = element.GetRawText() };
                 case JsonValueKind.True:
                 case JsonValueKind.False:
                     return new AttributeValue { BOOL = element.GetBoolean() };
