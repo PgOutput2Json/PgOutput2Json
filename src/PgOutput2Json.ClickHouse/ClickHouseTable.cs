@@ -36,6 +36,11 @@ namespace PgOutput2Json.ClickHouse
 
         public required ColumnKind Kind { get; set; }
 
+        /// <summary>
+        /// A jsonb column: PostgreSQL keeps one value per key, so its objects have no key twice.
+        /// </summary>
+        public bool IsJsonb { get; init; }
+
         public bool IsArray => Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray or ColumnKind.TextArray;
     }
 
@@ -308,6 +313,7 @@ namespace PgOutput2Json.ClickHouse
                     Name = name,
                     QuotedName = Quote(name),
                     IsKey = isKey,
+                    IsJsonb = oid == (uint)PgOid.JSONBOID,
                     Type = isJson ? "JSON" : elementType != null ? $"Array(Nullable({elementType}))" : GetType(oid, typeModifier),
                     Kind = isTextArray ? ColumnKind.TextArray
                         : elementType != null ? (oid == (uint)PgOid.A_DATEOID ? ColumnKind.DateArray

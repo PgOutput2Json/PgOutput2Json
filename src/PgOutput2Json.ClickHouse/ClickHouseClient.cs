@@ -51,7 +51,7 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         /// <param name="query">The statement. An insert ends with its FORMAT, and its rows are in <paramref name="data"/>.</param>
         /// <param name="parameters">Values of the query parameters ({name:Type} in the statement).</param>
-        public async Task<string> ExecuteAsync(string query, string? data, IEnumerable<KeyValuePair<string, string>>? parameters, CancellationToken token)
+        public async Task<string> ExecuteAsync(string query, StringBuilder? data, IEnumerable<KeyValuePair<string, string>>? parameters, CancellationToken token)
         {
             var url = new StringBuilder(_baseUrl);
 
@@ -61,7 +61,7 @@ namespace PgOutput2Json.ClickHouse
             {
                 url.Append("&query=").Append(Uri.EscapeDataString(query));
 
-                content = new StringContent(data, Encoding.UTF8);
+                content = new StringBuilderContent(data);
             }
             else
             {

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -25,6 +26,37 @@ namespace PgOutput2Json.ClickHouse
 
         private readonly Dictionary<string, ClickHouseTable> _tables = [];
 
+        private readonly Utf8Buffer _utf8 = new();
+
+        private string _tableName = "";
+
+        // the values of the row being written
+        private JsonElement[] _row = new JsonElement[16];
+
+        private int ReadValues(JsonElement rowElement)
+        {
+            var length = 0;
+
+            foreach (var value in rowElement.EnumerateArray())
+            {
+                if (length == _row.Length) Array.Resize(ref _row, _row.Length * 2);
+
+                _row[length++] = value;
+            }
+
+            return length;
+        }
+
+        private static bool HasUnchangedValue(ReadOnlySpan<JsonElement> row)
+        {
+            foreach (var value in row)
+            {
+                if (IsUnchanged(value)) return true;
+            }
+
+            return false;
+        }
+
         internal ClickHousePublisher(ClickHousePublisherOptions options, ClickHouseClient client, ILogger<ClickHousePublisher>? logger)
         {
             _options = options;
@@ -34,7 +66,7 @@ namespace PgOutput2Json.ClickHouse
 
         public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
-            using var doc = JsonDocument.Parse(msg.Json.ToString());
+            using var doc = JsonDocument.Parse(_utf8.Encode(msg.Json));
 
             var root = doc.RootElement;
 
@@ -42,7 +74,10 @@ namespace PgOutput2Json.ClickHouse
 
             if (changeType == "M") return; // logical decoding message - carries no table and no row
 
-            var tableName = msg.TableName.ToString();
+            // the rows of a batch are mostly of one table: its name is not made again for each of them
+            if (!msg.TableName.Equals(_tableName.AsSpan())) _tableName = msg.TableName.ToString();
+
+            var tableName = _tableName;
 
             if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
 
@@ -65,15 +100,22 @@ namespace PgOutput2Json.ClickHouse
 
             if (!root.TryGetProperty("r", out var rowElement)) throw new Exception($"Missing row in a change of {tableName}");
 
-            if (rowElement.GetArrayLength() != table.Columns.Count)
+            // read once: indexing a JSON array walks it from the start when it has arrays or objects in it
+            var rowLength = ReadValues(rowElement);
+
+            if (rowLength != table.Columns.Count)
             {
-                throw new Exception($"The row of {tableName} has {rowElement.GetArrayLength()} values, the schema has {table.Columns.Count} columns");
+                throw new Exception($"The row of {tableName} has {rowLength} values, the schema has {table.Columns.Count} columns");
             }
 
-            var unchanged = await GetUnchangedValuesAsync(table, rowElement, hasKey ? keyElement : null, token).ConfigureAwait(false);
+            var hasUnchangedValue = HasUnchangedValue(_row.AsSpan(0, rowLength));
+
+            var unchanged = hasUnchangedValue
+                ? await GetUnchangedValuesAsync(table, _row, hasKey ? keyElement : null, token).ConfigureAwait(false)
+                : null;
 
             // an update of the key comes with the old key: the row with the old key is deleted
-            if (hasKey && table.KeyColumns.Count > 0 && !IsSameKey(table, keyElement, rowElement))
+            if (hasKey && table.KeyColumns.Count > 0 && !IsSameKey(table, keyElement, _row))
             {
                 AppendDelete(table, keyElement, version);
             }
@@ -90,7 +132,7 @@ namespace PgOutput2Json.ClickHouse
                 }
                 else
                 {
-                    AppendValue(line, table.Columns[i], rowElement[i]);
+                    AppendValue(line, table.Columns[i], _row[i]);
                 }
             }
 
@@ -117,14 +159,14 @@ namespace PgOutput2Json.ClickHouse
             // the deletes go first: when a row is deleted and inserted with the same version, the last insert wins
             if (table.Deletes.Length > 0)
             {
-                await _client.ExecuteAsync(table.DeleteQuery, table.Deletes.ToString(), null, token).ConfigureAwait(false);
+                await _client.ExecuteAsync(table.DeleteQuery, table.Deletes, null, token).ConfigureAwait(false);
 
                 table.Deletes.Clear();
             }
 
             if (table.Upserts.Length > 0)
             {
-                await _client.ExecuteAsync(table.UpsertQuery, table.Upserts.ToString(), null, token).ConfigureAwait(false);
+                await _client.ExecuteAsync(table.UpsertQuery, table.Upserts, null, token).ConfigureAwait(false);
 
                 table.Upserts.Clear();
             }
@@ -226,7 +268,7 @@ namespace PgOutput2Json.ClickHouse
             }
             else if (column.Kind == ColumnKind.Json && value.ValueKind == JsonValueKind.String)
             {
-                AppendJson(line, value.GetString()!);
+                AppendJson(line, value.GetString()!, checkDuplicateKeys: !column.IsJsonb);
             }
             else if (column.Kind is ColumnKind.Date or ColumnKind.Timestamp && value.ValueKind == JsonValueKind.String)
             {
@@ -272,11 +314,16 @@ namespace PgOutput2Json.ClickHouse
             line.Append(']');
         }
 
+        // reused by the json values of a thread, one at a time
+        [ThreadStatic] private static ArrayBufferWriter<byte>? t_jsonBuffer;
+        [ThreadStatic] private static Utf8JsonWriter? t_jsonWriter;
+        [ThreadStatic] private static char[]? t_jsonChars;
+
         /// <summary>
         /// The value of a json column comes as a string with the JSON text. The JSON type of ClickHouse takes it as it is,
-        /// but holds only objects: any other value is stored as {"v": value}.
+        /// but holds only objects: any other value is stored as {"v": value}. A jsonb value has no key twice.
         /// </summary>
-        internal static void AppendJson(StringBuilder line, string json)
+        internal static void AppendJson(StringBuilder line, string json, bool checkDuplicateKeys = true)
         {
             using var doc = JsonDocument.Parse(json);
 
@@ -284,16 +331,24 @@ namespace PgOutput2Json.ClickHouse
 
             if (!isObject) line.Append("{\"v\":");
 
-            // the text of a json column can have line breaks, and a row must be one line
-            using (var stream = new System.IO.MemoryStream())
-            {
-                using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
-                {
-                    WriteJson(writer, doc.RootElement);
-                }
+            var buffer = t_jsonBuffer ??= new ArrayBufferWriter<byte>(1024);
 
-                line.Append(Encoding.UTF8.GetString(stream.GetBuffer(), 0, (int)stream.Length));
-            }
+            buffer.ResetWrittenCount();
+
+            var writer = t_jsonWriter ??= new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+
+            writer.Reset(buffer);
+
+            // the text of a json column can have line breaks, and a row must be one line
+            WriteJson(writer, doc.RootElement, checkDuplicateKeys);
+
+            writer.Flush();
+
+            var bytes = buffer.WrittenSpan;
+
+            var chars = t_jsonChars is { } cached && cached.Length >= bytes.Length ? cached : t_jsonChars = new char[Math.Max(bytes.Length, 1024)];
+
+            line.Append(chars, 0, Encoding.UTF8.GetChars(bytes, chars));
 
             if (!isObject) line.Append('}');
         }
@@ -302,7 +357,7 @@ namespace PgOutput2Json.ClickHouse
         /// Writes the value without what ClickHouse rejects in a JSON column: a key that is twice in an object
         /// (the last one wins, as in jsonb) and a number too large for a double (written as a string).
         /// </summary>
-        private static void WriteJson(Utf8JsonWriter writer, JsonElement element)
+        private static void WriteJson(Utf8JsonWriter writer, JsonElement element, bool checkDuplicateKeys)
         {
             switch (element.ValueKind)
             {
@@ -312,9 +367,12 @@ namespace PgOutput2Json.ClickHouse
                     HashSet<string>? names = null;
                     var hasDuplicates = false;
 
-                    foreach (var property in element.EnumerateObject())
+                    if (checkDuplicateKeys)
                     {
-                        if (!(names ??= []).Add(property.Name)) hasDuplicates = true;
+                        foreach (var property in element.EnumerateObject())
+                        {
+                            if (!(names ??= []).Add(property.Name)) hasDuplicates = true;
+                        }
                     }
 
                     var index = 0;
@@ -327,7 +385,7 @@ namespace PgOutput2Json.ClickHouse
 
                         writer.WritePropertyName(property.Name);
 
-                        WriteJson(writer, property.Value);
+                        WriteJson(writer, property.Value, checkDuplicateKeys);
                     }
 
                     writer.WriteEndObject();
@@ -338,7 +396,7 @@ namespace PgOutput2Json.ClickHouse
 
                     foreach (var item in element.EnumerateArray())
                     {
-                        WriteJson(writer, item);
+                        WriteJson(writer, item, checkDuplicateKeys);
                     }
 
                     writer.WriteEndArray();
@@ -390,7 +448,7 @@ namespace PgOutput2Json.ClickHouse
             return value.ValueKind == JsonValueKind.String && value.ValueEquals(ToastMarker);
         }
 
-        private static bool IsSameKey(ClickHouseTable table, JsonElement keyElement, JsonElement rowElement)
+        private static bool IsSameKey(ClickHouseTable table, JsonElement keyElement, JsonElement[] rowElement)
         {
             var keyIndex = 0;
 
@@ -413,7 +471,7 @@ namespace PgOutput2Json.ClickHouse
         /// PostgreSQL does not send a large value (TOAST) that an update did not change, and the new row in ClickHouse
         /// needs it. Returns the JSON of those values by the index of the column, or null if the row has them all.
         /// </summary>
-        private async Task<Dictionary<int, string>?> GetUnchangedValuesAsync(ClickHouseTable table, JsonElement rowElement, JsonElement? keyElement, CancellationToken token)
+        private async Task<Dictionary<int, string>?> GetUnchangedValuesAsync(ClickHouseTable table, JsonElement[] rowElement, JsonElement? keyElement, CancellationToken token)
         {
             Dictionary<int, string>? values = null;
             List<int>? missing = null;

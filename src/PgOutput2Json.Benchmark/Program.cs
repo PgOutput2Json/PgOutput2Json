@@ -65,28 +65,40 @@ try
             : $"http://{clickHouse.Hostname}:{clickHouse.GetMappedPublicPort(8123)}";
     }
 
-    var results = new List<Result>();
+    var results = new List<(Result Best, Result Median)>();
 
     foreach (var scenario in options.Scenarios)
     {
         foreach (var output in options.Outputs)
         {
-            Console.WriteLine($"Running {scenario} with {output}, {options.Rows:N0} rows...");
+            var runs = new List<Result>();
 
-            results.Add(await RunAsync(scenario, output));
+            for (var run = 1; run <= options.Runs; run++)
+            {
+                Console.WriteLine($"Running {scenario} with {output}, {options.Rows:N0} rows{(options.Runs > 1 ? $", run {run} of {options.Runs}" : "")}...");
+
+                runs.Add(await RunAsync(scenario, output));
+            }
+
+            runs.Sort((a, b) => a.Elapsed.CompareTo(b.Elapsed));
+
+            results.Add((runs[0], runs[runs.Count / 2]));
         }
     }
 
     Console.WriteLine();
-    Console.WriteLine($"{options.Rows:N0} rows, {options.Workers} copy worker(s) per table, PostgreSQL {await ServerVersionAsync(pgConnectionString)}, .NET {Environment.Version}, {Environment.ProcessorCount} CPUs");
+    Console.WriteLine($"{options.Rows:N0} rows, {options.Workers} copy worker(s) per table, {(options.Runs > 1 ? $"fastest of {options.Runs} runs (median in brackets), " : "")} PostgreSQL {await ServerVersionAsync(pgConnectionString)}, .NET {Environment.Version}, {Environment.ProcessorCount} CPUs");
     Console.WriteLine();
     Console.WriteLine("| Scenario | Output | Seconds | Rows/s | CPU seconds | Allocated MB | Bytes/row | GC 0/1/2 |");
     Console.WriteLine("|---|---|---:|---:|---:|---:|---:|---|");
 
-    foreach (var r in results)
+    foreach (var (r, median) in results)
     {
+        var m = options.Runs > 1 ? string.Create(CultureInfo.InvariantCulture, $" ({median.Elapsed.TotalSeconds:F1})") : "";
+        var mRate = options.Runs > 1 ? string.Create(CultureInfo.InvariantCulture, $" ({options.Rows / median.Elapsed.TotalSeconds:N0})") : "";
+
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"| {r.Scenario} | {r.Output} | {r.Elapsed.TotalSeconds:F1} | {options.Rows / r.Elapsed.TotalSeconds:N0} | {r.Cpu.TotalSeconds:F1} | {r.AllocatedBytes / 1048576.0:N0} | {r.AllocatedBytes / (double)options.Rows:N0} | {r.Gc0}/{r.Gc1}/{r.Gc2} |"));
+            $"| {r.Scenario} | {r.Output} | {r.Elapsed.TotalSeconds:F1}{m} | {options.Rows / r.Elapsed.TotalSeconds:N0}{mRate} | {r.Cpu.TotalSeconds:F1} | {r.AllocatedBytes / 1048576.0:N0} | {r.AllocatedBytes / (double)options.Rows:N0} | {r.Gc0}/{r.Gc1}/{r.Gc2} |"));
     }
 
     return 0;
