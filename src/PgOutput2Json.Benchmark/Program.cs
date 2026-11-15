@@ -127,6 +127,7 @@ try
                 o.Database = options.ClickHouseDatabase;
                 o.Username = options.ClickHouseUsername;
                 o.Password = options.ClickHousePassword;
+                o.UseRowBinary = options.ClickHouseRowBinary;
             });
         }
         else if (options.Compact)

@@ -22,6 +22,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             options.Database = Containers.ClickHouseDatabase;
             options.Username = Containers.ClickHouseUsername;
             options.Password = Containers.ClickHousePassword;
+
+            // CLICKHOUSE_ROWBINARY=true runs the tests with RowBinary instead of JSON, the default
+            options.UseRowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") == "true";
         }
 
         /// <summary>
@@ -148,6 +151,58 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             {
                 Assert.AreEqual(expected, actual, table);
             }
+        }
+
+        [TestMethod]
+        public async Task Existing_table_should_get_RowBinary_for_the_types_it_covers_and_JSON_for_others()
+        {
+            var endpoint = await Containers.GetClickHouseEndpointAsync();
+
+            // made before the first row, with other types than the output creates: covered by RowBinary, and not (Map)
+            await QueryAsync(endpoint, "CREATE TABLE clk_own_bin (id Int64, name LowCardinality(String), at DateTime64(3, 'UTC'), at_s DateTime('UTC'), d Date, " +
+                "mood Nullable(Enum8('sad' = 1, 'happy' = 2)), code FixedString(4), ip4 IPv4, ip6 IPv6, _version UInt128, _deleted UInt8, " +
+                "_synced_at DateTime64(6, 'UTC') DEFAULT now64(6)) ENGINE = ReplacingMergeTree(_version, _deleted) ORDER BY id");
+            await QueryAsync(endpoint, "CREATE TABLE clk_own_json (id Int32, name String, n Int128, tags Map(String, String), _version UInt128, _deleted UInt8, " +
+                "_synced_at DateTime64(6, 'UTC') DEFAULT now64(6)) ENGINE = ReplacingMergeTree(_version, _deleted) ORDER BY id");
+
+            await Db.ExecuteAsync(@"
+                CREATE TYPE clk_own_mood AS ENUM ('sad', 'happy');
+                CREATE TABLE clk_own_bin (id int PRIMARY KEY, name text, at timestamptz, at_s timestamptz, d date, mood clk_own_mood, code char(4), ip4 inet, ip6 inet);
+                CREATE TABLE clk_own_json (id int PRIMARY KEY, name text, n bigint, tags jsonb);");
+
+            await RunAsync("clk_own", "clk_own_bin, clk_own_json", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_own_bin VALUES
+                        (1, 'a', '2024-02-29 12:34:56.789+02', '2024-02-29 12:34:56.789+02', '2024-02-29', 'happy', 'ab', '10.0.0.1', '2001:db8::1'),
+                        (2, NULL, '1999-01-01 00:00:00+00', '1900-01-01 00:00:00+00', '9999-12-31', 'sad', 'abcd', '192.168.1.2', '10.0.0.2'),
+                        (3, 'x', NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+                    UPDATE clk_own_bin SET name = 'b' WHERE id = 2;
+                    DELETE FROM clk_own_bin WHERE id = 3;
+                    INSERT INTO clk_own_json VALUES (1, 'a', 9223372036854775807, '{""k"": ""v""}'), (2, 'b', 2, '{}');
+                    DELETE FROM clk_own_json WHERE id = 2;");
+
+                // a null for a column that is not Nullable is the default, as with JSON; a date out of range is the first or the last one;
+                // char(4) is padded with spaces by PostgreSQL; an IPv4 address in an IPv6 column is ::ffff:a.b.c.d
+                await WaitForAsync(endpoint, "clk_own_bin",
+                    """
+                    [1,"a","2024-02-29 10:34:56.789","2024-02-29 10:34:56","2024-02-29","happy","ab  ","10.0.0.1","2001:db8::1"]
+                    [2,"b","1999-01-01 00:00:00.000","1970-01-01 00:00:00","2149-06-06","sad","abcd","192.168.1.2","::ffff:10.0.0.2"]
+                    """);
+
+                await WaitForAsync(endpoint, "clk_own_json", """[1,"a",9223372036854775807,{"k":"v"}]""");
+            });
+
+            await QueryAsync(endpoint, "SYSTEM FLUSH LOGS");
+
+            async Task<string> FormatsAsync(string table) => await QueryAsync(endpoint,
+                "SELECT arrayStringConcat(groupUniqArray(extract(query, 'FORMAT (\\w+)')), ',') FROM system.query_log " +
+                $"WHERE type = 'QueryFinish' AND query_kind = 'Insert' AND query LIKE '%`{table}`%' FORMAT TSVRaw");
+
+            var rowBinary = Environment.GetEnvironmentVariable("CLICKHOUSE_ROWBINARY") == "true";
+
+            Assert.AreEqual(rowBinary ? "RowBinary" : "JSONCompactEachRow", await FormatsAsync("clk_own_bin"));
+            Assert.AreEqual("JSONCompactEachRow", await FormatsAsync("clk_own_json"));
         }
 
         [TestMethod]

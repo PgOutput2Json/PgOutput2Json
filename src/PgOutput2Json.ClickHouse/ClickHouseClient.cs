@@ -29,13 +29,14 @@ namespace PgOutput2Json.ClickHouse
             // timestamptz values come with the offset ("+00"), which the default parser does not read
             url.Append("&date_time_input_format=best_effort");
 
-            // set either way: the default of the server depends on its version
-            url.Append(options.UseAsyncInserts ? "&async_insert=1&wait_for_async_insert=1" : "&async_insert=0");
 
             // two keys of a json value can lead to the same path ("a.b" and "b" inside "a"): one of them is kept, instead of the row rejected
             if (options.UseJsonType)
             {
                 url.Append("&type_json_skip_duplicated_paths=1");
+
+                // a JSON column in RowBinary is its JSON text, as in the text formats
+                url.Append("&input_format_binary_read_json_as_string=1");
             }
 
             foreach (var setting in options.Settings)
@@ -50,10 +51,15 @@ namespace PgOutput2Json.ClickHouse
         /// Runs a statement and returns what ClickHouse answered.
         /// </summary>
         /// <param name="query">The statement. An insert ends with its FORMAT, and its rows are in <paramref name="data"/>.</param>
+        /// <param name="data">The rows of an insert, in the format of the statement.</param>
         /// <param name="parameters">Values of the query parameters ({name:Type} in the statement).</param>
-        public async Task<string> ExecuteAsync(string query, StringBuilder? data, IEnumerable<KeyValuePair<string, string>>? parameters, CancellationToken token)
+        /// <param name="asyncInsert">An asynchronous insert, which ClickHouse collects with others before it writes them.</param>
+        public async Task<string> ExecuteAsync(string query, HttpContent? data, IEnumerable<KeyValuePair<string, string>>? parameters, CancellationToken token, bool asyncInsert = false)
         {
             var url = new StringBuilder(_baseUrl);
+
+            // set either way: the default of the server depends on its version
+            url.Append(asyncInsert ? "&async_insert=1&wait_for_async_insert=1" : "&async_insert=0");
 
             HttpContent content;
 
@@ -61,7 +67,7 @@ namespace PgOutput2Json.ClickHouse
             {
                 url.Append("&query=").Append(Uri.EscapeDataString(query));
 
-                content = new StringBuilderContent(data);
+                content = data;
             }
             else
             {

@@ -42,6 +42,14 @@ namespace PgOutput2Json.ClickHouse
         public bool UseArrayTypes { get; set; } = true;
 
         /// <summary>
+        /// Sends the rows in the RowBinary format, which ClickHouse reads two to three times faster than JSON. The output then
+        /// writes the values as ClickHouse would parse their text (time zones, dates out of range, decimal digits). A table with
+        /// a column of a type RowBinary does not cover (e.g. Map, Tuple) still gets JSON. Default is false: every table gets
+        /// JSON (JSONCompactEachRow), which ClickHouse parses itself.
+        /// </summary>
+        public bool UseRowBinary { get; set; }
+
+        /// <summary>
         /// Removes the rows of deleted PostgreSQL rows from ClickHouse when no new rows have arrived in a table for this
         /// long. Without it a deleted row is kept as a row marked deleted, which FINAL hides but which still takes
         /// space. It uses the cleanup merges of ReplacingMergeTree, which ClickHouse still marks experimental.
