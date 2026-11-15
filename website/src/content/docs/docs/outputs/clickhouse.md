@@ -47,9 +47,43 @@ The row of a delete stays in the table, marked deleted. `FINAL` hides it, but it
 ## Tables
 
 - A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself.
-- A table that already exists is used as it is. To choose the engine (for example a replicated one), the partitioning or the column types, create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`.
+- A table that already exists is used as it is. To choose the column types or an engine the options do not offer (for example a replicated one), create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`.
 - A column added in PostgreSQL is added in ClickHouse. A column dropped in PostgreSQL stays. A changed column type is not followed: change the ClickHouse table yourself. Neither is a changed primary key definition (other key columns), because ClickHouse cannot change the order of an existing table: drop the ClickHouse table and copy it again. An update that changes the key value of a row is followed.
 - The database must exist.
+
+## Order, partitions and engine
+
+`options.Tables` sets them per PostgreSQL table:
+
+```csharp
+.UseClickHouse(options =>
+{
+    options.Tables["public.orders"] = new ClickHouseTableOptions
+    {
+        OrderBy = ["tenant_id", "id"],
+        PartitionBy = "intDiv(tenant_id, 1000)",
+    };
+    options.Tables["public.events"] = new ClickHouseTableOptions { Engine = ClickHouseTableEngine.MergeTree };
+})
+```
+
+- `OrderBy`: the key columns, in the order you want. The default is the order of the table.
+- `PartitionBy`: a `PARTITION BY` expression. The default is no partitions. The cleanup of [deleted rows](#deleted-rows) works per partition: a partition that has had no new rows (inserts, updates or deletes) for that long is cleaned up, even while other partitions of the table get new rows.
+- `Engine`:
+  - `ReplacingMergeTree` (the default) keeps the latest version of every row.
+  - `MergeTree` keeps every version, deletes included: the history of the table, in the order of `_version`. Read it without `FINAL`. A change that PostgreSQL replays after a reconnect is there twice, with the same `_version`.
+  - `Null` keeps nothing: only the materialized views on the table get the rows. An update that did not change a large value has `null` for it, because there is no row to take it from, unless the table has `REPLICA IDENTITY FULL`.
+
+ClickHouse replaces and deletes the rows by the `ORDER BY`, and only within a partition. The row of a delete has only the key columns. So `OrderBy` must have exactly the key columns, and `PartitionBy` may use only key columns; otherwise the output stops with an error when it creates the table. The key columns are those of the replica identity. To sort or partition by another column, make it part of the replica identity, for example:
+
+```sql
+CREATE UNIQUE INDEX orders_tenant_id ON orders (tenant_id, id);
+ALTER TABLE orders REPLICA IDENTITY USING INDEX orders_tenant_id;
+```
+
+A table without a key gets only inserts, so it can be ordered and partitioned by any of its columns.
+
+The options are used only when the output creates the table: ClickHouse cannot change the order, the partitions or the engine of an existing table. To change them, drop the ClickHouse table and copy it again.
 
 ## Column types
 
@@ -155,6 +189,7 @@ public class Worker : BackgroundService
 | `UseAsyncInserts` | `true` | See [Batch size](#batch-size). |
 | `UseJsonType` | `true` | See [JSON columns](#json-columns). |
 | `CleanUpDeletedRowsAfter` | none | Removes the deleted rows. See [Deleted rows](#deleted-rows). |
+| `Tables` | empty | The order, partitions and engine per table. See [Order, partitions and engine](#order-partitions-and-engine). |
 | `Settings` | empty | ClickHouse settings sent with every request, e.g. `options.Settings["insert_quorum"] = "2"`. |
 | `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table (`schema.table`). |
 | `HttpClient` | none | Your own `HttpClient`, e.g. with a proxy or a client certificate. |
