@@ -479,6 +479,92 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
+        [DataRow("ts_chunk", @"
+            CREATE TABLE ts_chunk (id int PRIMARY KEY, v text) WITH (fillfactor = 10);
+            CREATE PUBLICATION ts_chunk_pub FOR TABLE ts_chunk;")]
+        [DataRow("ts_chunkp", @"
+            CREATE TABLE ts_chunkp (id int PRIMARY KEY, v text) PARTITION BY RANGE (id);
+            CREATE TABLE ts_chunkp_a PARTITION OF ts_chunkp FOR VALUES FROM (1) TO (2001) PARTITION BY RANGE (id);
+            CREATE TABLE ts_chunkp_a1 PARTITION OF ts_chunkp_a FOR VALUES FROM (1) TO (1001) WITH (fillfactor = 10);
+            CREATE TABLE ts_chunkp_a2 PARTITION OF ts_chunkp_a FOR VALUES FROM (1001) TO (2001) WITH (fillfactor = 10);
+            CREATE TABLE ts_chunkp_b PARTITION OF ts_chunkp FOR VALUES FROM (2001) TO (3001) WITH (fillfactor = 10);
+            CREATE PUBLICATION ts_chunkp_pub FOR TABLE ts_chunkp WITH (publish_via_partition_root = true);")]
+        public async Task Failed_output_during_the_copy_should_continue_from_the_chunk_it_was_in(string name, string setupSql)
+        {
+            // a low fill factor spreads the rows over many pages: about 20 a page, 200 a chunk of 10 pages;
+            // a table published through its root is copied partition by partition, also below a partition
+            await Db.ExecuteAsync(setupSql + $"INSERT INTO {name} SELECT i, 'copy' FROM generate_series(1, 3000) i;");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+
+            var copied = 0;
+
+            // the output fails once, in the middle of the copy
+            var publisher = new CollectingPublisherFactory
+            {
+                OnPublish = message =>
+                {
+                    if (message.IsTableSync && Interlocked.Increment(ref copied) == 1500) throw new Exception("the output is down");
+                },
+            };
+
+            var pagesPerChunk = TableCopy.PagesPerChunk;
+
+            TableCopy.PagesPerChunk = 10;
+
+            try
+            {
+                await using (new RunningListener(CreateBuilder(name, publisher).WithReconnectDelay(TimeSpan.FromMilliseconds(200))))
+                {
+                    await Wait.UntilAsync(async () => await Db.TableStatesAsync($"{name}_slot") == $"public.{name}:ready", "the table ready");
+                }
+            }
+            finally
+            {
+                TableCopy.PagesPerChunk = pagesPerChunk;
+            }
+
+            Assert.IsTrue(publisher.Messages.All(m => m.Table == $"public.{name}"), "the rows are published under the published name");
+
+            var keys = publisher.Messages.Select(m => m.Key).ToList();
+
+            Assert.AreEqual(3000, keys.Distinct().Count());
+
+            // only the rows of the chunk it was in are published again, not the 1499 before the error
+            var again = keys.Count - 3000;
+
+            Assert.IsTrue(again > 0 && again < 300, $"{again} rows were published again");
+
+            // the new publisher gets the schema again
+            Assert.AreEqual(2, publisher.Messages.Count(m => m.Json.Contains("\"schema\":")));
+        }
+
+        [TestMethod]
+        public async Task Child_of_an_inheritance_tree_should_be_copied_only_as_its_own_table()
+        {
+            // a publication of the parent publishes the child as a table of its own
+            await Db.ExecuteAsync(@"
+                CREATE TABLE ts_inh (id int PRIMARY KEY, v text);
+                CREATE TABLE ts_inh_child (x int) INHERITS (ts_inh);
+                INSERT INTO ts_inh VALUES (1, 'parent');
+                INSERT INTO ts_inh_child VALUES (2, 'child', 0);
+                CREATE PUBLICATION ts_inh_pub FOR TABLE ts_inh;");
+
+            await Db.CreateSlotAsync("ts_inh_slot");
+
+            var publisher = new CollectingPublisherFactory();
+
+            await using (new RunningListener(CreateBuilder("ts_inh", publisher)))
+            {
+                await Wait.UntilAsync(async () => await Db.TableStatesAsync("ts_inh_slot") == "public.ts_inh:ready,public.ts_inh_child:ready", "the tables ready");
+            }
+
+            // the child does not inherit the primary key, so it has no key
+            CollectionAssert.AreEquivalent(new[] { "public.ts_inh:parent", "public.ts_inh_child:child" },
+                publisher.Messages.Select(m => $"{m.Table}:{JsonDocument.Parse(m.Json).RootElement.GetProperty("r").GetProperty("v").GetString()}").ToArray());
+        }
+
+        [TestMethod]
         public async Task Sync_stopped_during_the_copy_should_copy_again_from_zero()
         {
             var publisher = await PrepareStoppedSyncAsync("ts_copying", "copying");

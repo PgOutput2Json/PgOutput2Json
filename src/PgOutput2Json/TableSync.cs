@@ -296,9 +296,8 @@ namespace PgOutput2Json
 
             await using var connectionScope = connection.ConfigureAwait(false);
 
+            // replaced after an error in the copy
             var publisher = _publisherFactory.CreateMessagePublisher(_options, _mainSlotName, _loggerFactory);
-
-            await using var publisherScope = publisher.ConfigureAwait(false);
 
             try
             {
@@ -334,8 +333,34 @@ namespace PgOutput2Json
 
                     _logger?.LogInformation("Copying table {Table}, RowFilter: {RowFilter}", table.TableName, table.RowFilter);
 
-                    var rows = await TableCopy.CopyAsync(publisher, _options, _dataSource, _jsonOptions, table, created.SnapshotName!, _logger, token)
-                        .ConfigureAwait(false);
+                    var progress = new CopyProgress();
+
+                    long rows;
+
+                    while (true)
+                    {
+                        try
+                        {
+                            rows = await TableCopy.CopyAsync(publisher, _options, _dataSource, _jsonOptions, table, created.SnapshotName!, progress, _logger, token)
+                                .ConfigureAwait(false);
+                            break;
+                        }
+                        catch (Exception ex) when (ex is not SnapshotUnavailableException && !token.IsCancellationRequested)
+                        {
+                            // the snapshot lives while this connection is open and idle: the copy continues
+                            // with the chunk it was in, with a new publisher, as long as it can be imported
+                            MetricsHelper.IncrementErrorCounter();
+
+                            _logger.SafeLogError(ex, "Error copying table {Table} after {Rows} rows. Continuing from there in {Seconds} seconds...",
+                                table.TableName, progress.Rows, _options.ReconnectDelay.TotalSeconds);
+
+                            await Task.Delay(_options.ReconnectDelay, token).ConfigureAwait(false);
+
+                            await publisher.DisposeAsync().ConfigureAwait(false);
+
+                            publisher = _publisherFactory.CreateMessagePublisher(_options, _mainSlotName, _loggerFactory);
+                        }
+                    }
 
                     _logger?.LogInformation("Copied {Rows} rows of table {Table}", rows, table.TableName);
 
@@ -500,6 +525,8 @@ namespace PgOutput2Json
             finally
             {
                 handover?.Done.TrySetResult();
+
+                await publisher.DisposeAsync().ConfigureAwait(false);
             }
 
             // closing the connection is the quick way out of a replication stream, and it frees the slot

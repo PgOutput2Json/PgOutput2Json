@@ -56,7 +56,7 @@ namespace PgOutput2Json.IntegrationTests
             Environment.SetEnvironmentVariable("AWS_SECRET_ACCESS_KEY", Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY") ?? "test");
 
             _postgres = new PostgreSqlBuilder(PgImage)
-                .WithCommand("-c", "wal_level=logical", "-c", "max_replication_slots=100", "-c", "max_wal_senders=100")
+                .WithCommand("-c", "wal_level=logical", "-c", "max_replication_slots=200", "-c", "max_wal_senders=200")
                 .Build();
 
             await StartWithRetryAsync(_postgres);

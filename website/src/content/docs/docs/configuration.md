@@ -65,8 +65,10 @@ What to know:
 
 - **Copied rows.** They have `"c":"C"` and no position (`"w"` and `"n"` are 0). Upsert them by key, and leave them out of [deduplication](../deduplication/).
 - **Other tables are ahead.** While a table is synced, its changes are published later than the changes of the tables that are already streamed. Consumers that keep a deduplication watermark must keep it per table.
-- **A failed copy starts again from zero**, and its rows are published again. The copy only adds and replaces rows: a row published by the failed attempt and deleted before the second one stays at the output.
+- **An error at the output during the copy** does not start it again. The table is copied in chunks of 1000 pages (8 MB), and after the reconnect delay the copy continues with the chunk it was in, from the same snapshot: only the rows of that chunk are published again. This works while the sync slot's connection to PostgreSQL lives, which keeps the snapshot.
+- **A copy that loses its snapshot starts again from zero**: after a lost connection to PostgreSQL, or a restart of the listener. Its rows are published again. The copy only adds and replaces rows: a row published by the failed attempt and deleted before the second one stays at the output.
 - **A table published while the listener runs** is synced without a restart. The listener learns about it from its first change.
+- **Inheritance.** A publication of a parent table publishes its children as tables of their own, so the copy of the parent has only the parent's own rows. A partitioned table published through its root is copied partition by partition, under the root's name.
 - **Row filters and column lists** of the publications apply to the copy. A table in several publications is copied once; a row is copied if the row filter of any of those publications accepts it.
 - **Resources.** Each table being synced uses one replication slot and two connections, on top of the main stream. Size `max_replication_slots` and `max_wal_senders` for that. A long copy keeps its snapshot open, which holds back vacuum.
 - **Sync slots.** They are named `<slot>_sync_<table oid>` and are dropped when the table is synced. Slots left behind by a crash are dropped on the next start. If you drop the main slot for good, drop its sync slots too.
