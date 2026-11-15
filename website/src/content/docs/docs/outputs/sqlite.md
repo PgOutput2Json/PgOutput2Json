@@ -8,6 +8,8 @@ Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` wh
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.
 
+The output writes through a connection of its own, opened without pooling, so it neither gets nor leaves connection settings in the pool your application uses (for example `PRAGMA query_only`). On that connection it turns off the foreign key checks, like PostgreSQL's own logical replication: the rows arrive in the order of the table syncs and the batches, not in the order of the foreign keys, so a child row can come before its parent. Your application's connections still check them. To check them on the output's connection too, run `PRAGMA foreign_keys = ON` in `options.PostConnectionSetup`.
+
 > **Important:** First set up PostgreSQL as described in [Getting started](../../getting-started/).
 
 ## Create a .NET Worker Service

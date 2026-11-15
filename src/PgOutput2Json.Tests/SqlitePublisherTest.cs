@@ -131,6 +131,99 @@ namespace PgOutput2Json.Tests
             }
         }
 
+        /// <summary>
+        /// A file database with pooled connections, as an application has them, and a parent and a child table
+        /// with a foreign key, created by the application.
+        /// </summary>
+        private static async Task WithApplicationDatabaseAsync(System.Func<string, Task> test)
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pg2j_{System.Guid.NewGuid():N}.db");
+
+            var connectionString = $"Data Source={path}";
+
+            try
+            {
+                await ExecuteAsync(connectionString, @"
+                    CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                    CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent (id));");
+
+                await test(connectionString);
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+                System.IO.File.Delete(path);
+            }
+        }
+
+        private static async Task<object?> ExecuteAsync(string connectionString, string sql)
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync();
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+
+            return await command.ExecuteScalarAsync();
+        }
+
+        private static JsonMessage CreateTableMessage(string table, string json)
+        {
+            var msg = new JsonMessage { TxFinalLsn = 100, MessageNo = 1 };
+
+            msg.TableName.Append(table);
+            msg.Json.Append(json);
+
+            return msg;
+        }
+
+        [TestMethod]
+        public async Task Foreign_keys_should_not_be_checked_on_the_rows_of_the_replication()
+        {
+            await WithApplicationDatabaseAsync(async connectionString =>
+            {
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+
+                // a child copied before its parent, as the syncs of two tables can do
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    await publisher.PublishAsync(CreateTableMessage("child", "{\"c\":\"C\",\"s\":[\"child\",[\"id\",1,23],[\"parent_id\",0,23]],\"r\":[1,7]}"), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+
+                    await publisher.PublishAsync(CreateTableMessage("parent", "{\"c\":\"C\",\"s\":[\"parent\",[\"id\",1,23]],\"r\":[7]}"), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+                }
+
+                Assert.AreEqual("1:7", await ExecuteAsync(connectionString, "SELECT id || ':' || parent_id FROM child"));
+
+                // the application's own connections still check them
+                Assert.AreEqual(1L, await ExecuteAsync(connectionString, "PRAGMA foreign_keys"));
+            });
+        }
+
+        [TestMethod]
+        public async Task Writer_should_not_share_the_pooled_connections_of_the_application()
+        {
+            await WithApplicationDatabaseAsync(async connectionString =>
+            {
+                // a read-only connection of the application, back in the pool
+                await ExecuteAsync(connectionString, "PRAGMA query_only = true");
+
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    await publisher.PublishAsync(CreateTableMessage("parent", "{\"c\":\"I\",\"s\":[\"parent\",[\"id\",1,23]],\"r\":[1]}"), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+                }
+
+                Assert.AreEqual(1L, await ExecuteAsync(connectionString, "SELECT count(*) FROM parent"));
+
+                // and the writer's settings do not end up in the application's connections
+                Assert.AreEqual(1L, await ExecuteAsync(connectionString, "PRAGMA foreign_keys"));
+            });
+        }
+
         private static JsonMessage CreateMessage(string json, ulong txFinalLsn = 0, ulong messageNo = 0, bool isTableSync = false)
         {
             var msg = new JsonMessage { TxFinalLsn = txFinalLsn, MessageNo = messageNo, IsTableSync = isTableSync };
