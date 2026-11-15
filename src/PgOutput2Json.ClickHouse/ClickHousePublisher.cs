@@ -146,7 +146,13 @@ namespace PgOutput2Json.ClickHouse
 
             var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType);
 
-            await _client.ExecuteAsync(table.GetCreateStatement(), null, null, token).ConfigureAwait(false);
+            await _client.ExecuteAsync(table.GetCreateStatement(_options.CleanUpDeletedRowsAfter), null, null, token).ConfigureAwait(false);
+
+            // a table created before the option was set gets the settings now
+            if (table.GetCleanupStatement(_options.CleanUpDeletedRowsAfter) is { } cleanupStatement)
+            {
+                await _client.ExecuteAsync(cleanupStatement, null, null, token).ConfigureAwait(false);
+            }
 
             if (table.Columns.Count > table.KeyColumns.Count)
             {

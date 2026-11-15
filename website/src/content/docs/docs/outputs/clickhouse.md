@@ -14,10 +14,11 @@ The output uses the HTTP interface of ClickHouse and needs no ClickHouse client 
 
 A table is created the first time one of its rows arrives, as a `ReplacingMergeTree` ordered by the key columns of the PostgreSQL table.
 
-ClickHouse is slow at updating and deleting rows, so the output never does either. Every change is inserted as a new row, with two extra columns:
+ClickHouse is slow at updating and deleting rows, so the output never does either. Every change is inserted as a new row, with three extra columns:
 
 - `_version`: the position of the change in the PostgreSQL WAL (`w * 2^64 + n` of the [deduplication key](../../deduplication/)). A copied row has version 0.
 - `_deleted`: 1 if the change is a delete.
+- `_synced_at`: when ClickHouse wrote the row, in UTC. It shows how far behind the copy is, and lets a materialized view process only the new rows. A change that PostgreSQL replays is written again, with a new time.
 
 ClickHouse keeps the row with the highest version per key when it merges the parts of a table, which happens in the background at a time you cannot predict. Until then the older versions are still there, so **read the tables with `FINAL`**:
 
@@ -29,7 +30,19 @@ This returns the current rows, without the deleted ones.
 
 A change that PostgreSQL replays after a reconnect has the same key and version as the first time, so it changes nothing. This is why the output does not save its position.
 
-The row of a delete stays in the table as a marker. ClickHouse can remove the markers: see `OPTIMIZE ... FINAL CLEANUP` in the ClickHouse documentation of `ReplacingMergeTree`.
+Tables created before version 2.1 have no `_synced_at`, and the output does not add it: ClickHouse would show the time of the query for the rows written before. Add it yourself if that is fine for you:
+
+```sql
+ALTER TABLE orders ADD COLUMN _synced_at DateTime64(6, 'UTC') DEFAULT now64(6)
+```
+
+## Deleted rows
+
+The row of a delete stays in the table, marked deleted. `FINAL` hides it, but it takes space. With `options.CleanUpDeletedRowsAfter = TimeSpan.FromHours(1)` the output sets the cleanup settings of `ReplacingMergeTree` on its tables (a new table when it is created, an existing one on the next start), and ClickHouse removes the deleted rows in a merge once no new rows have arrived in a table for that long. ClickHouse still marks this feature experimental.
+
+- A table that gets new rows all the time never waits that long. Run `OPTIMIZE TABLE orders FINAL CLEANUP` instead, for example at night: the settings allow it. It rewrites the whole table.
+- Once a deleted row is removed, nothing hides an older version of it. When PostgreSQL replays changes after a reconnect, a deleted row can show up again until the replayed delete arrives.
+- Setting the option back to null does not remove the settings from the tables.
 
 ## Tables
 
@@ -141,6 +154,7 @@ public class Worker : BackgroundService
 | `Username`, `Password` | `default`, empty | |
 | `UseAsyncInserts` | `true` | See [Batch size](#batch-size). |
 | `UseJsonType` | `true` | See [JSON columns](#json-columns). |
+| `CleanUpDeletedRowsAfter` | none | Removes the deleted rows. See [Deleted rows](#deleted-rows). |
 | `Settings` | empty | ClickHouse settings sent with every request, e.g. `options.Settings["insert_quorum"] = "2"`. |
 | `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table (`schema.table`). |
 | `HttpClient` | none | Your own `HttpClient`, e.g. with a proxy or a client certificate. |

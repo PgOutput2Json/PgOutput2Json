@@ -50,12 +50,12 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         /// <summary>
-        /// The current rows of the table as JSON arrays, without the version and the deleted flag, ordered by <paramref name="orderBy"/>.
+        /// The current rows of the table as JSON arrays, without the version, the deleted flag and the sync time, ordered by <paramref name="orderBy"/>.
         /// A long run of x is shortened to x and its length.
         /// </summary>
         public static async Task<string> ReadAsync(string endpoint, string table, string orderBy = "id", bool final = true)
         {
-            var result = await QueryAsync(endpoint, $"SELECT * EXCEPT (_version, _deleted) FROM `{table}`{(final ? " FINAL" : "")} ORDER BY {orderBy} FORMAT JSONCompactEachRow");
+            var result = await QueryAsync(endpoint, $"SELECT * EXCEPT (_version, _deleted, _synced_at) FROM `{table}`{(final ? " FINAL" : "")} ORDER BY {orderBy} FORMAT JSONCompactEachRow");
 
             if (result.Length == 0 || result == "(no table)") return result;
 
@@ -180,7 +180,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 "id Int32, i2 Nullable(Int16), i8 Nullable(Int64), num Nullable(Decimal(76, 38)), n2 Nullable(Decimal(12, 4)), f4 Nullable(Float32), " +
                 "f8 Nullable(Float64), b Nullable(Bool), by Nullable(String), t Nullable(String), u Nullable(UUID), d Nullable(Date32), " +
                 "ts Nullable(DateTime64(6)), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
-                "a Nullable(String), mood Nullable(String), _version UInt128, _deleted UInt8",
+                "a Nullable(String), mood Nullable(String), _version UInt128, _deleted UInt8, _synced_at DateTime64(6, 'UTC')",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_types' ORDER BY position) FORMAT TSVRaw"));
         }
 
@@ -239,6 +239,56 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             Assert.AreEqual("clk_nokey MergeTree, clk_s_items ReplacingMergeTree",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', engine)), ', ') FROM (SELECT name, engine FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name IN ('clk_nokey', 'clk_s_items') ORDER BY name)"));
+        }
+
+        [TestMethod]
+        public async Task Deleted_rows_should_be_removed_with_the_cleanup_and_every_row_should_have_its_sync_time()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE clk_clean (id int PRIMARY KEY, v text);
+                CREATE TABLE clk_clean_new (id int PRIMARY KEY, v text);");
+
+            // without the cleanup the table is created as before, and a deleted row stays as a row marked deleted
+            var endpoint = await RunAsync("clk_clean_a", "clk_clean", async endpoint =>
+            {
+                await Db.ExecuteAsync("INSERT INTO clk_clean VALUES (1, 'a'), (2, 'b'), (3, 'c'); DELETE FROM clk_clean WHERE id = 1;");
+
+                await WaitForAsync(endpoint, "clk_clean",
+                    """
+                    [2,"b"]
+                    [3,"c"]
+                    """);
+            });
+
+            Assert.AreEqual("0", await QueryAsync(endpoint, $"SELECT position(create_table_query, 'allow_experimental_replacing_merge_with_cleanup') FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name = 'clk_clean'"));
+
+            // with it, the existing table gets the settings on the next start, and a new table when it is created
+            await RunAsync("clk_clean_b", "clk_clean, clk_clean_new", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    DELETE FROM clk_clean WHERE id = 2;
+                    INSERT INTO clk_clean_new VALUES (1, 'a'), (2, 'b');
+                    DELETE FROM clk_clean_new WHERE id = 1;");
+
+                await WaitForAsync(endpoint, "clk_clean", """[3,"c"]""");
+                await WaitForAsync(endpoint, "clk_clean_new", """[2,"b"]""");
+
+                // no new rows for a second: a merge removes the rows marked deleted
+                foreach (var table in new[] { "clk_clean", "clk_clean_new" })
+                {
+                    await Wait.UntilAsync(async () => await QueryAsync(endpoint, $"SELECT count() FROM `{table}` WHERE _deleted = 1") == "0", $"the cleanup of {table}", 60);
+                }
+            }, options => options.CleanUpDeletedRowsAfter = TimeSpan.FromSeconds(1));
+
+            foreach (var table in new[] { "clk_clean", "clk_clean_new" })
+            {
+                StringAssert.Contains(await QueryAsync(endpoint, $"SELECT create_table_query FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name = '{table}'"),
+                    "allow_experimental_replacing_merge_with_cleanup = 1", table);
+            }
+
+            // every row has the time ClickHouse wrote it
+            Assert.AreEqual("1", await QueryAsync(endpoint, "SELECT min(_synced_at) > now64(6) - INTERVAL 10 MINUTE AND max(_synced_at) <= now64(6) FROM clk_clean"));
+            Assert.AreEqual("DateTime64(6, 'UTC')", await QueryAsync(endpoint, "SELECT toTypeName(_synced_at) FROM clk_clean LIMIT 1 FORMAT TSVRaw"));
         }
 
         [TestMethod]
