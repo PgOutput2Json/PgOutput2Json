@@ -230,6 +230,45 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
+        public async Task Copied_rows_should_have_the_key_of_the_replica_identity_like_the_streamed_ones()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE ts_ri_full (id int PRIMARY KEY, v text);
+                ALTER TABLE ts_ri_full REPLICA IDENTITY FULL;
+                CREATE TABLE ts_ri_index (id int PRIMARY KEY, code text NOT NULL, v text);
+                CREATE UNIQUE INDEX ts_ri_index_code ON ts_ri_index (code);
+                ALTER TABLE ts_ri_index REPLICA IDENTITY USING INDEX ts_ri_index_code;
+                CREATE TABLE ts_ri_none (id int, v text);
+                INSERT INTO ts_ri_full VALUES (1, 'a');
+                INSERT INTO ts_ri_index VALUES (1, 'x', 'a');
+                INSERT INTO ts_ri_none VALUES (1, 'a');
+                CREATE PUBLICATION ts_ri_pub FOR TABLE ts_ri_full, ts_ri_index, ts_ri_none WITH (publish = 'insert');");
+
+            await Db.CreateSlotAsync("ts_ri_slot");
+
+            var publisher = new CollectingPublisherFactory();
+
+            await using (new RunningListener(CreateBuilder("ts_ri", publisher)))
+            {
+                await Wait.UntilAsync(async () => await Db.TableStatesAsync("ts_ri_slot") == "public.ts_ri_full:ready,public.ts_ri_index:ready,public.ts_ri_none:ready", "the tables ready");
+
+                await Db.ExecuteAsync(@"
+                    INSERT INTO ts_ri_full VALUES (2, 'b');
+                    INSERT INTO ts_ri_index VALUES (2, 'y', 'b');
+                    INSERT INTO ts_ri_none VALUES (2, 'b');");
+
+                await Wait.UntilAsync(() => publisher.Messages.Count >= 6, "the streamed rows");
+            }
+
+            string Keys(string table) => Describe(publisher.Messages.Where(m => m.Table == table));
+
+            // FULL: every column, USING INDEX: the index columns, no primary key: none
+            Assert.AreEqual("C[1,\"a\"] I[2,\"b\"]", Keys("public.ts_ri_full"));
+            Assert.AreEqual("C[\"x\"] I[\"y\"]", Keys("public.ts_ri_index"));
+            Assert.AreEqual("C I", Keys("public.ts_ri_none"));
+        }
+
+        [TestMethod]
         public async Task Copy_should_apply_the_row_filter_and_the_column_list()
         {
             Containers.RequirePg(15, "Row filters and column lists");

@@ -70,7 +70,7 @@ The key columns are the **replica identity** columns PostgreSQL sends with the c
 - `REPLICA IDENTITY FULL`: **all columns**, so the key changes with every update. Kafka log compaction, and routing by key, then treat each version of a row as a different row. Partition-key columns (`WithPartitionKeyFields`) keep the routing stable, but the Kafka message key still changes.
 - `REPLICA IDENTITY NOTHING`: empty.
 
-If the message key matters, use `DEFAULT`, or `USING INDEX` on a stable unique key. The initial data copy reads the primary key from the catalog, so for `FULL`, `NOTHING` and `USING INDEX` tables its keys differ from those of the streamed changes.
+If the message key matters, use `DEFAULT`, or `USING INDEX` on a stable unique key. The rows of the initial data copy have the same key columns as the streamed changes.
 
 ### Values
 
