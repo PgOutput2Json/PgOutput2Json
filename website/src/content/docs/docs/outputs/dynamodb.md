@@ -13,6 +13,10 @@ The first PK column is used as partition key. The other PK columns are joined wi
 
 > **Important:** First set up PostgreSQL as described in [Getting started](../../getting-started/).
 
+## Batch size
+
+Every batch of changes is written with `BatchWriteItem` requests of up to 25 items, and `MaxParallelBatchWrites` of them (8 by default) are in flight at a time. Two changes of the same row are never in flight together, so they are applied in order. The position is saved once per batch, after its rows. `UseDynamoDb` sets the batch size to 1,000 changes (the default of the library is 100), so that the parallel requests have work. In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark), against DynamoDB Local, 8 parallel requests were about 2.5 times faster than one (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and DynamoDB Local in Docker on the same machine). DynamoDB Local is not DynamoDB: on AWS the throughput depends on the network and on the capacity of the tables, so measure it with your own tables (`--dynamodb URL`). To use another size, call `WithBatchSize` after `UseDynamoDb`. A batch that is not full is still written after the batch wait time (100 ms by default).
+
 ## Create a .NET Worker Service
 
 Set up a new **.NET Worker Service** and add the following package reference:

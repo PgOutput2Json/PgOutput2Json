@@ -8,7 +8,9 @@ namespace PgOutput2Json
     {
         public static PgOutput2JsonBuilder UseDynamoDb(this PgOutput2JsonBuilder builder, Action<DynamoDbPublisherOptions>? configureAction = null)
         {
-            builder.WithBatchSize(25); // max for DynamoDB
+            // the items go in batch writes of 25 (the maximum of DynamoDB), several of them at the same time,
+            // and the position is saved once a batch. WithBatchSize after UseDynamoDb changes it
+            builder.WithBatchSize(1000);
 
             var options = new DynamoDbPublisherOptions
             {

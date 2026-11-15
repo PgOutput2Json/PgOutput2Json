@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
     <PackageReference Include="Testcontainers.ClickHouse" Version="4.16.0" />
+    <PackageReference Include="Testcontainers.DynamoDb" Version="4.16.0" />
     <PackageReference Include="Testcontainers.Kafka" Version="4.16.0" />
     <PackageReference Include="Testcontainers.MongoDb" Version="4.16.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" />
@@ -26,6 +27,7 @@
     <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
     <ProjectReference Include="..\PgOutput2Json.MongoDb\PgOutput2Json.MongoDb.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Webhooks\PgOutput2Json.Webhooks.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.DynamoDb\PgOutput2Json.DynamoDb.csproj" />
   </ItemGroup>
 
 </Project>

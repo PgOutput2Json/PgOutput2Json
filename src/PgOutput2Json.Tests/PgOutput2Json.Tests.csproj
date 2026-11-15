@@ -23,6 +23,7 @@
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.ClickHouse\PgOutput2Json.ClickHouse.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Sqlite\PgOutput2Json.Sqlite.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.DynamoDb\PgOutput2Json.DynamoDb.csproj" />
   </ItemGroup>
 
 </Project>

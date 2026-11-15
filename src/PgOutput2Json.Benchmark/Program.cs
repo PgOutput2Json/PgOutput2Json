@@ -15,6 +15,9 @@ using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
 using Testcontainers.Kafka;
 using Testcontainers.MongoDb;
+using Testcontainers.DynamoDb;
+
+using Amazon.DynamoDBv2;
 
 using MongoDB.Driver;
 
@@ -41,6 +44,7 @@ ClickHouseContainer? clickHouse = null;
 RabbitMqContainer? rabbitMq = null;
 IContainer? kafka = null;
 MongoDbContainer? mongo = null;
+DynamoDbContainer? dynamo = null;
 
 try
 {
@@ -130,6 +134,26 @@ try
         mongoConnectionString = OperatingSystem.IsLinux()
             ? new MongoUrlBuilder(mongo.GetConnectionString()) { Server = new MongoServerAddress(mongo.IpAddress, 27017) }.ToString()
             : mongo.GetConnectionString();
+    }
+
+    var dynamoDbUrl = options.DynamoDbUrl;
+
+    if (options.Outputs.Contains("dynamodb") && dynamoDbUrl == null)
+    {
+        Console.WriteLine("Starting amazon/dynamodb-local...");
+
+        dynamo = new DynamoDbBuilder("amazon/dynamodb-local:latest").Build();
+
+        await dynamo.StartAsync();
+
+        dynamoDbUrl = OperatingSystem.IsLinux() ? $"http://{dynamo.IpAddress}:8000" : dynamo.GetConnectionString();
+
+        // DynamoDB Local takes any credentials, and the client of the output looks for them in the environment
+        if (Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID") == null)
+        {
+            Environment.SetEnvironmentVariable("AWS_ACCESS_KEY_ID", "bench");
+            Environment.SetEnvironmentVariable("AWS_SECRET_ACCESS_KEY", "bench");
+        }
     }
 
     var webhookUrl = options.WebhookUrl;
@@ -304,6 +328,19 @@ try
         {
             builder.UseWebhook(webhookUrl!, o => o.WebhookSecret = options.WebhookSecret);
         }
+        else if (output == "dynamodb")
+        {
+            var config = new AmazonDynamoDBConfig { ServiceURL = dynamoDbUrl, MaxErrorRetry = 3 };
+
+            await DeleteTablesAsync(config);
+
+            builder.UseDynamoDb(o =>
+            {
+                o.ClientConfig = config;
+
+                if (options.DynamoDbParallel != null) o.MaxParallelBatchWrites = options.DynamoDbParallel.Value;
+            });
+        }
         else if (output == "sqlite")
         {
             foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" }) File.Delete(options.SqliteFile + suffix);
@@ -384,6 +421,7 @@ finally
     if (rabbitMq != null) await rabbitMq.DisposeAsync();
     if (kafka != null) await kafka.DisposeAsync();
     if (mongo != null) await mongo.DisposeAsync();
+    if (dynamo != null) await dynamo.DisposeAsync();
 }
 
 /// <summary>
@@ -485,6 +523,20 @@ static async Task RecreateExchangeAsync(RabbitMQ.Client.ConnectionFactory factor
     await channel.ExchangeDeclareAsync(BenchmarkStream, RabbitMQ.Client.ExchangeType.Topic, durable: true, autoDelete: false);
     await channel.QueueDeclareAsync(BenchmarkStream, durable: true, exclusive: false, autoDelete: false);
     await channel.QueueBindAsync(BenchmarkStream, BenchmarkStream, "#");
+}
+
+/// <summary>
+/// No tables: the output creates its own, and its config table with the position.
+/// </summary>
+static async Task DeleteTablesAsync(AmazonDynamoDBConfig config)
+{
+    // DynamoDB Local takes any credentials
+    using var client = new AmazonDynamoDBClient(new Amazon.Runtime.BasicAWSCredentials("bench", "bench"), config);
+
+    foreach (var table in (await client.ListTablesAsync()).TableNames)
+    {
+        await client.DeleteTableAsync(table);
+    }
 }
 
 /// <summary>
