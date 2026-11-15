@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,9 +24,8 @@ namespace PgOutput2Json.RabbitMqStreams
 
         public async override Task PublishAsync(JsonMessage jsonMsg, CancellationToken token)
         {
-            var json = jsonMsg.Json.ToString();
-
-            var msg = new Message(Encoding.UTF8.GetBytes(json))
+            // the message keeps its bytes until it is confirmed, so they are its own; made without a string of the JSON
+            var msg = new Message(GetUtf8(jsonMsg.Json))
             {
                 Properties = new RabbitMQ.Stream.Client.AMQP.Properties
                 {
@@ -62,16 +62,68 @@ namespace PgOutput2Json.RabbitMqStreams
                 }
             }
 
-            await producer.Send(msg).ConfigureAwait(false);
+            if (_options.IsSuperStream)
+            {
+                // a super stream routes each message to its partition
+                await producer.Send(msg).ConfigureAwait(false);
+            }
+            else
+            {
+                // sent in lists of MessageBufferSize: the client sends what it has as soon as it can, so messages that come
+                // a little slower than it sends would go a few in a frame, with a write and a wake-up of a thread for each
+                _pending.Add(msg);
+
+                if (_pending.Count >= _options.MessageBufferSize) await SendPendingAsync(producer).ConfigureAwait(false);
+            }
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug("Published to {StreamName}: {Body}", _options.StreamName, json);
+                _logger.LogDebug("Published to {StreamName}: {Body}", _options.StreamName, jsonMsg.Json.ToString());
             }
+        }
+
+        private readonly Encoder _encoder = Encoding.UTF8.GetEncoder();
+
+        private byte[] GetUtf8(StringBuilder text)
+        {
+            // an encoder, because a chunk of the StringBuilder can end in the middle of a surrogate pair
+            _encoder.Reset();
+
+            var length = 0;
+
+            foreach (var chunk in text.GetChunks()) length += _encoder.GetByteCount(chunk.Span, flush: false);
+
+            length += _encoder.GetByteCount(System.ReadOnlySpan<char>.Empty, flush: true);
+
+            var bytes = new byte[length];
+
+            _encoder.Reset();
+
+            var written = 0;
+
+            foreach (var chunk in text.GetChunks()) written += _encoder.GetBytes(chunk.Span, bytes.AsSpan(written), flush: false);
+
+            _encoder.GetBytes(System.ReadOnlySpan<char>.Empty, bytes.AsSpan(written), flush: true);
+
+            return bytes;
+        }
+
+        private async Task SendPendingAsync(Producer producer)
+        {
+            // the client keeps the list, so the next messages go in a new one
+            var messages = _pending;
+
+            _pending = new List<Message>(_options.MessageBufferSize);
+
+            await producer.Send(messages).ConfigureAwait(false);
         }
 
         public async override Task ConfirmAsync(CancellationToken token)
         {
+            _checkProducer = true;
+
+            if (_pending.Count > 0 && _producer != null) await SendPendingAsync(_producer).ConfigureAwait(false);
+
             // only PublishAsync can create the source, ConfirmAsync is never called in parallel
             if (_confirmationTaskCompletionSource != null)
             {
@@ -134,7 +186,15 @@ namespace PgOutput2Json.RabbitMqStreams
 
         private async Task<Producer> EnsureProducerAsync()
         {
-            if (_producer != null && _producer.IsOpen()) return _producer;
+            // IsOpen is not cheap, so it is asked once a batch: a producer that closes in a batch fails its sends or
+            // its confirmations, which fails the batch, and the listener connects again with a new publisher
+            if (_producer != null && (!_checkProducer || _producer.IsOpen()))
+            {
+                _checkProducer = false;
+                return _producer;
+            }
+
+            _checkProducer = false;
 
             var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
@@ -194,6 +254,9 @@ namespace PgOutput2Json.RabbitMqStreams
 
         private StreamSystem? _streamSystem;
         private Producer? _producer;
+        private bool _checkProducer = true;
+
+        private List<Message> _pending = [];
 
         private int _unconfirmedCount = 0;
         private TaskCompletionSource? _confirmationTaskCompletionSource;

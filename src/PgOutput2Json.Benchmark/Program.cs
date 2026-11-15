@@ -1,3 +1,4 @@
+using System.Net;
 using System.Diagnostics;
 using System.Globalization;
 
@@ -11,6 +12,9 @@ using PgOutput2Json.ClickHouse;
 
 using Testcontainers.ClickHouse;
 using Testcontainers.PostgreSql;
+using Testcontainers.RabbitMq;
+
+using RabbitMQ.Stream.Client;
 
 var options = BenchmarkOptions.Parse(args);
 
@@ -24,6 +28,7 @@ using var loggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.Si
 
 PostgreSqlContainer? postgres = null;
 ClickHouseContainer? clickHouse = null;
+RabbitMqContainer? rabbitMq = null;
 
 try
 {
@@ -64,6 +69,34 @@ try
             ? $"http://{clickHouse.IpAddress}:8123"
             : $"http://{clickHouse.Hostname}:{clickHouse.GetMappedPublicPort(8123)}";
     }
+
+    IPEndPoint? rabbitMqEndpoint = options.RabbitMqEndpoint != null ? IPEndPoint.Parse(options.RabbitMqEndpoint) : null;
+
+    if (options.Outputs.Contains("rabbitmqstreams") && rabbitMqEndpoint == null)
+    {
+        Console.WriteLine("Starting rabbitmq:4-management...");
+
+        rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithPortBinding(5552, true).Build();
+
+        await rabbitMq.StartAsync();
+
+        var plugin = await rabbitMq.ExecAsync(["rabbitmq-plugins", "enable", "rabbitmq_stream"]);
+
+        if (plugin.ExitCode != 0) throw new Exception($"Could not enable the stream plugin: {plugin.Stderr}");
+
+        rabbitMqEndpoint = OperatingSystem.IsLinux()
+            ? new IPEndPoint(IPAddress.Parse(rabbitMq.IpAddress), 5552)
+            : new IPEndPoint(IPAddress.Loopback, rabbitMq.GetMappedPublicPort(5552));
+    }
+
+    // the server advertises its own host name to the clients, which the resolver replaces with the endpoint
+    StreamSystemConfig RabbitMqConfig() => new()
+    {
+        UserName = options.RabbitMqUsername,
+        Password = options.RabbitMqPassword,
+        Endpoints = [rabbitMqEndpoint!],
+        AddressResolver = new AddressResolver(rabbitMqEndpoint!),
+    };
 
     var results = new List<(Result Best, Result Median)>();
 
@@ -128,6 +161,18 @@ try
                 o.Username = options.ClickHouseUsername;
                 o.Password = options.ClickHousePassword;
                 o.UseRowBinary = options.ClickHouseRowBinary;
+            });
+        }
+        else if (output == "rabbitmqstreams")
+        {
+            await RecreateStreamAsync(RabbitMqConfig());
+
+            builder.UseRabbitMqStreams(o =>
+            {
+                o.StreamName = BenchmarkStream;
+                o.StreamSystemConfig = RabbitMqConfig();
+
+                if (options.RabbitMqBufferSize != null) o.MessageBufferSize = options.RabbitMqBufferSize.Value;
             });
         }
         else if (output == "sqlite")
@@ -207,6 +252,7 @@ finally
 {
     if (postgres != null) await postgres.DisposeAsync();
     if (clickHouse != null) await clickHouse.DisposeAsync();
+    if (rabbitMq != null) await rabbitMq.DisposeAsync();
 }
 
 /// <summary>
@@ -264,6 +310,36 @@ static async Task PrepareAsync(string connectionString, string table, string slo
     }
 }
 
+/// <summary>
+/// A new, empty stream; the stream plugin may still be starting.
+/// </summary>
+static async Task RecreateStreamAsync(StreamSystemConfig config)
+{
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            var system = await StreamSystem.Create(config);
+
+            try
+            {
+                if (await system.StreamExists(BenchmarkStream)) await system.DeleteStream(BenchmarkStream);
+
+                await system.CreateStream(new StreamSpec(BenchmarkStream));
+                return;
+            }
+            finally
+            {
+                await system.Close();
+            }
+        }
+        catch (Exception) when (attempt < 30)
+        {
+            await Task.Delay(1000);
+        }
+    }
+}
+
 static async Task ClickHouseAsync(string endpoint, BenchmarkOptions options, string sql)
 {
     using var http = new HttpClient();
@@ -287,6 +363,11 @@ static async Task<string> ServerVersionAsync(string connectionString)
     await connection.OpenAsync();
 
     return connection.ServerVersion;
+}
+
+internal sealed partial class Program
+{
+    private const string BenchmarkStream = "pg2j_bench";
 }
 
 internal sealed record Result(string Scenario, string Output, TimeSpan Elapsed, TimeSpan Cpu, long AllocatedBytes, int Gc0, int Gc1, int Gc2);

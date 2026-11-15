@@ -247,6 +247,12 @@ In compact mode (`JsonWriteMode.Compact`), row values are sent without column na
 
 With compact mode on a super stream, consumers must therefore share the last schema per table across all partitions, for example in a common store. A single (non-super) stream has no such limitation.
 
+### Batch size
+
+The producer has up to one batch of messages in flight, and the listener waits for their confirmations at the end of the batch. `UseRabbitMqStreams` therefore sets the batch size to 10,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 170,000 rows per second and the stream at about 100,000 with batches of 10,000, and at about 68,000 and 42,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and RabbitMQ in Docker on the same machine). To use another size, call `WithBatchSize` after `UseRabbitMqStreams`. A batch that is not full is still confirmed after the batch wait time (100 ms by default). After an error, the unconfirmed messages of the batch are sent again.
+
+The messages go to the client in lists of `options.MessageBufferSize` (100 by default), each of which is one frame. A super stream gets them one by one, since it routes each message to its partition.
+
 ## Working with Permanent Replication Slots
 
 If you want to capture changes made while the worker is stopped, you need a permanent replication slot. 
