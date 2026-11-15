@@ -65,6 +65,7 @@ namespace PgOutput2Json
         private readonly JsonOptions _jsonOptions;
 
         private readonly JsonWriter _writer;
+        private readonly RowReader _rowReader;
 
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
@@ -79,6 +80,7 @@ namespace PgOutput2Json
             _options = options;
             _jsonOptions = jsonOptions;
             _writer = new JsonWriter(jsonOptions, options);
+            _rowReader = new RowReader(options);
 
             _loggerFactory = loggerFactory;
             _logger = loggerFactory?.CreateLogger<ReplicationListener>();
@@ -201,6 +203,7 @@ namespace PgOutput2Json
                             if (message is TypeMessage typeMsg)
                             {
                                 _writer.AddType(typeMsg);
+                                _rowReader.AddType(typeMsg);
                                 continue;
                             }
 
@@ -280,11 +283,22 @@ namespace PgOutput2Json
                                 {
                                     replicationMessage.HasRelationChanged = relation != null && changedRelations.Remove(relation.RelationId);
 
-                                    var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
-                                        .ConfigureAwait(false);
+                                    if (relation != null && state.MessagePublisher is IRowPublisher rowPublisher)
+                                    {
+                                        var row = await _rowReader.ReadAsync(replicationMessage, cancellationToken)
+                                            .ConfigureAwait(false);
 
-                                    await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
-                                        .ConfigureAwait(false);
+                                        await rowPublisher.PublishRowAsync(row, cancellationToken)
+                                            .ConfigureAwait(false);
+                                    }
+                                    else
+                                    {
+                                        var jsonMessage = await _writer.WriteMessageAsync(replicationMessage, cancellationToken)
+                                            .ConfigureAwait(false);
+
+                                        await state.MessagePublisher.PublishAsync(jsonMessage, cancellationToken)
+                                            .ConfigureAwait(false);
+                                    }
 
                                     MetricsHelper.IncrementPublishCounter();
                                 }
