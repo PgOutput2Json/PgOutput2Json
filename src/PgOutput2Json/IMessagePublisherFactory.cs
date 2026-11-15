@@ -11,5 +11,11 @@ namespace PgOutput2Json
         /// whatever <see cref="JsonOptions.WriteMode"/> was configured.
         /// </summary>
         public JsonWriteMode? RequiredWriteMode => null;
+
+        /// <summary>
+        /// False if publishers of the output must not write at the same time, e.g. to one file. The initial copy of
+        /// a table then uses one worker, whatever <see cref="ReplicationListenerOptions.CopyWorkersPerTable"/> says.
+        /// </summary>
+        public bool SupportsParallelCopy => true;
     }
 }

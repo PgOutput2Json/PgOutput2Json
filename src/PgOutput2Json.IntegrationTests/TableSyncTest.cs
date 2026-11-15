@@ -478,25 +478,82 @@ namespace PgOutput2Json.IntegrationTests
             Assert.IsFalse(publisher.Messages[1].IsTableSync);
         }
 
-        [TestMethod]
-        [DataRow("ts_chunk", @"
-            CREATE TABLE ts_chunk (id int PRIMARY KEY, v text) WITH (fillfactor = 10);
-            CREATE PUBLICATION ts_chunk_pub FOR TABLE ts_chunk;")]
-        [DataRow("ts_chunkp", @"
-            CREATE TABLE ts_chunkp (id int PRIMARY KEY, v text) PARTITION BY RANGE (id);
-            CREATE TABLE ts_chunkp_a PARTITION OF ts_chunkp FOR VALUES FROM (1) TO (2001) PARTITION BY RANGE (id);
-            CREATE TABLE ts_chunkp_a1 PARTITION OF ts_chunkp_a FOR VALUES FROM (1) TO (1001) WITH (fillfactor = 10);
-            CREATE TABLE ts_chunkp_a2 PARTITION OF ts_chunkp_a FOR VALUES FROM (1001) TO (2001) WITH (fillfactor = 10);
-            CREATE TABLE ts_chunkp_b PARTITION OF ts_chunkp FOR VALUES FROM (2001) TO (3001) WITH (fillfactor = 10);
-            CREATE PUBLICATION ts_chunkp_pub FOR TABLE ts_chunkp WITH (publish_via_partition_root = true);")]
-        public async Task Failed_output_during_the_copy_should_continue_from_the_chunk_it_was_in(string name, string setupSql)
+        private const string ChunkTable = @"
+            CREATE TABLE NAME (id int PRIMARY KEY, v text) WITH (fillfactor = 10);
+            CREATE PUBLICATION NAME_pub FOR TABLE NAME;";
+
+        private const string ChunkPartitionedTable = @"
+            CREATE TABLE NAME (id int PRIMARY KEY, v text) PARTITION BY RANGE (id);
+            CREATE TABLE NAME_a PARTITION OF NAME FOR VALUES FROM (1) TO (2001) PARTITION BY RANGE (id);
+            CREATE TABLE NAME_a1 PARTITION OF NAME_a FOR VALUES FROM (1) TO (1001) WITH (fillfactor = 10);
+            CREATE TABLE NAME_a2 PARTITION OF NAME_a FOR VALUES FROM (1001) TO (2001) WITH (fillfactor = 10);
+            CREATE TABLE NAME_b PARTITION OF NAME FOR VALUES FROM (2001) TO (3001) WITH (fillfactor = 10);
+            CREATE PUBLICATION NAME_pub FOR TABLE NAME WITH (publish_via_partition_root = true);";
+
+        /// <summary>
+        /// Copies 3000 rows in chunks of about 200 (10 pages, with a low fill factor) and returns the published messages.
+        /// A table published through its root is copied partition by partition, also below a partition.
+        /// </summary>
+        private static async Task<List<PublishedMessage>> CopyInChunksAsync(string name, string setupSql, int workers, CollectingPublisherFactory publisher)
         {
-            // a low fill factor spreads the rows over many pages: about 20 a page, 200 a chunk of 10 pages;
-            // a table published through its root is copied partition by partition, also below a partition
-            await Db.ExecuteAsync(setupSql + $"INSERT INTO {name} SELECT i, 'copy' FROM generate_series(1, 3000) i;");
+            await Db.ExecuteAsync(setupSql.Replace("NAME", name) + $"INSERT INTO {name} SELECT i, 'copy' FROM generate_series(1, 3000) i;");
 
             await Db.CreateSlotAsync($"{name}_slot");
 
+            var pagesPerChunk = TableCopy.PagesPerChunk;
+
+            TableCopy.PagesPerChunk = 10;
+
+            try
+            {
+                var builder = CreateBuilder(name, publisher)
+                    .WithInitialDataCopy(true, 2, workers)
+                    .WithReconnectDelay(TimeSpan.FromMilliseconds(200));
+
+                await using (new RunningListener(builder))
+                {
+                    await Wait.UntilAsync(async () => await Db.TableStatesAsync($"{name}_slot") == $"public.{name}:ready", "the table ready");
+                }
+            }
+            finally
+            {
+                TableCopy.PagesPerChunk = pagesPerChunk;
+            }
+
+            var messages = publisher.Messages;
+
+            Assert.IsTrue(messages.All(m => m.Table == $"public.{name}"), "the rows are published under the published name");
+            Assert.AreEqual(3000, messages.Select(m => m.Key).Distinct().Count());
+
+            return messages;
+        }
+
+        [TestMethod]
+        [DataRow("ts_par", ChunkTable)]
+        [DataRow("ts_parp", ChunkPartitionedTable)]
+        public async Task Parallel_copy_should_copy_every_row_once_with_a_publisher_per_worker(string name, string setupSql)
+        {
+            // a chunk takes a while, so that every worker gets some
+            var publisher = new CollectingPublisherFactory { SyncConfirmDelay = TimeSpan.FromMilliseconds(50) };
+
+            var messages = await CopyInChunksAsync(name, setupSql, 4, publisher);
+
+            Assert.AreEqual(3000, messages.Count);
+
+            // the main stream, the sync worker, and three more copy workers, which all copy chunks
+            Assert.AreEqual(5, publisher.PublisherCount);
+            Assert.AreEqual(4, messages.Select(m => m.Publisher).Distinct().Count());
+
+            AssertSchemaFirst(messages);
+        }
+
+        [TestMethod]
+        [DataRow("ts_chunk", ChunkTable, 1)]
+        [DataRow("ts_chunkp", ChunkPartitionedTable, 1)]
+        [DataRow("ts_chunk4", ChunkTable, 4)]
+        [DataRow("ts_chunkp4", ChunkPartitionedTable, 4)]
+        public async Task Failed_output_during_the_copy_should_continue_from_the_chunks_it_was_in(string name, string setupSql, int workers)
+        {
             var copied = 0;
 
             // the output fails once, in the middle of the copy
@@ -508,35 +565,28 @@ namespace PgOutput2Json.IntegrationTests
                 },
             };
 
-            var pagesPerChunk = TableCopy.PagesPerChunk;
+            var messages = await CopyInChunksAsync(name, setupSql, workers, publisher);
 
-            TableCopy.PagesPerChunk = 10;
+            // only the rows of the chunks the workers were in are published again, not the 1499 before the error
+            var again = messages.Count - 3000;
 
-            try
+            Assert.IsTrue(again > 0 && again < 300 * workers, $"{again} rows were published again");
+
+            AssertSchemaFirst(messages);
+        }
+
+        /// <summary>
+        /// Every publisher gets the schema with its first row, also a new one after an error. A worker that
+        /// starts when the other ones have taken all the chunks publishes nothing.
+        /// </summary>
+        private static void AssertSchemaFirst(List<PublishedMessage> messages)
+        {
+            foreach (var group in messages.GroupBy(m => m.Publisher))
             {
-                await using (new RunningListener(CreateBuilder(name, publisher).WithReconnectDelay(TimeSpan.FromMilliseconds(200))))
-                {
-                    await Wait.UntilAsync(async () => await Db.TableStatesAsync($"{name}_slot") == $"public.{name}:ready", "the table ready");
-                }
+                var schemas = group.Select((m, i) => (Index: i, HasSchema: m.Json.Contains("\"schema\":"))).Where(m => m.HasSchema).Select(m => m.Index);
+
+                CollectionAssert.AreEqual(new[] { 0 }, schemas.ToArray(), $"the schema of publisher {group.Key}");
             }
-            finally
-            {
-                TableCopy.PagesPerChunk = pagesPerChunk;
-            }
-
-            Assert.IsTrue(publisher.Messages.All(m => m.Table == $"public.{name}"), "the rows are published under the published name");
-
-            var keys = publisher.Messages.Select(m => m.Key).ToList();
-
-            Assert.AreEqual(3000, keys.Distinct().Count());
-
-            // only the rows of the chunk it was in are published again, not the 1499 before the error
-            var again = keys.Count - 3000;
-
-            Assert.IsTrue(again > 0 && again < 300, $"{again} rows were published again");
-
-            // the new publisher gets the schema again
-            Assert.AreEqual(2, publisher.Messages.Count(m => m.Json.Contains("\"schema\":")));
         }
 
         [TestMethod]

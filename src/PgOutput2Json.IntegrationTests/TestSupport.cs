@@ -11,7 +11,7 @@ using Npgsql;
 
 namespace PgOutput2Json.IntegrationTests
 {
-    internal sealed record PublishedMessage(string Json, string Table, string Key, string PartitionKey, ulong TxFinalLsn, ulong MessageNo, bool IsTableSync = false);
+    internal sealed record PublishedMessage(string Json, string Table, string Key, string PartitionKey, ulong TxFinalLsn, ulong MessageNo, bool IsTableSync = false, int Publisher = 0);
 
     internal static class Db
     {
@@ -162,12 +162,10 @@ namespace PgOutput2Json.IntegrationTests
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            Interlocked.Increment(ref _publisherCount);
-
-            return new Publisher(this);
+            return new Publisher(this, Interlocked.Increment(ref _publisherCount));
         }
 
-        private sealed class Publisher(CollectingPublisherFactory owner) : MessagePublisher
+        private sealed class Publisher(CollectingPublisherFactory owner, int number) : MessagePublisher
         {
             private (ulong, ulong) _lastPublished;
             private bool _hasSyncMessages;
@@ -186,7 +184,8 @@ namespace PgOutput2Json.IntegrationTests
                     message.PartitionKolValue.ToString(),
                     message.TxFinalLsn,
                     message.MessageNo,
-                    message.IsTableSync));
+                    message.IsTableSync,
+                    number));
 
                 // the messages of a table sync must not move the position
                 if (message.IsTableSync)

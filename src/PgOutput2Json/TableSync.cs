@@ -341,14 +341,24 @@ namespace PgOutput2Json
                     {
                         try
                         {
-                            rows = await TableCopy.CopyAsync(publisher, _options, _dataSource, _jsonOptions, table, created.SnapshotName!, progress, _logger, token)
+                            rows = await TableCopy.CopyAsync(publisher,
+                                                             () => _publisherFactory.CreateMessagePublisher(_options, _mainSlotName, _loggerFactory),
+                                                             _publisherFactory.SupportsParallelCopy ? _options.CopyWorkersPerTable : 1,
+                                                             _options,
+                                                             _dataSource,
+                                                             _jsonOptions,
+                                                             table,
+                                                             created.SnapshotName!,
+                                                             progress,
+                                                             _logger,
+                                                             token)
                                 .ConfigureAwait(false);
                             break;
                         }
                         catch (Exception ex) when (ex is not SnapshotUnavailableException && !token.IsCancellationRequested)
                         {
                             // the snapshot lives while this connection is open and idle: the copy continues
-                            // with the chunk it was in, with a new publisher, as long as it can be imported
+                            // with the chunks that were not confirmed, with new publishers, as long as it can be imported
                             MetricsHelper.IncrementErrorCounter();
 
                             _logger.SafeLogError(ex, "Error copying table {Table} after {Rows} rows. Continuing from there in {Seconds} seconds...",

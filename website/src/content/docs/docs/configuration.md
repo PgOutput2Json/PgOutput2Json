@@ -51,6 +51,7 @@ Table names are schema-qualified, for example `public.my_table`.
 | Method | What it does |
 |---|---|
 | `WithInitialDataCopy(copyData, maxParallelJobs = 2)` | Publishes the existing rows of the published tables. Each table is copied once per replication slot. `maxParallelJobs` is the number of tables synced at the same time. |
+| `WithInitialDataCopy(copyData, maxParallelJobs, workersPerTable)` | The same, with `workersPerTable` workers copying each table (default 1). See [Parallel copy of a table](#parallel-copy-of-a-table). |
 
 The copy works like the table synchronization of PostgreSQL's own logical replication:
 
@@ -65,13 +66,21 @@ What to know:
 
 - **Copied rows.** They have `"c":"C"` and no position (`"w"` and `"n"` are 0). Upsert them by key, and leave them out of [deduplication](../deduplication/).
 - **Other tables are ahead.** While a table is synced, its changes are published later than the changes of the tables that are already streamed. Consumers that keep a deduplication watermark must keep it per table.
-- **An error at the output during the copy** does not start it again. The table is copied in chunks of 1000 pages (8 MB), and after the reconnect delay the copy continues with the chunk it was in, from the same snapshot: only the rows of that chunk are published again. This works while the sync slot's connection to PostgreSQL lives, which keeps the snapshot.
+- **An error at the output during the copy** does not start it again. The table is copied in chunks of 1000 pages (8 MB), and after the reconnect delay the copy continues with the chunks that were not confirmed, from the same snapshot: only the rows of the chunks it was in are published again (one per worker). This works while the sync slot's connection to PostgreSQL lives, which keeps the snapshot.
 - **A copy that loses its snapshot starts again from zero**: after a lost connection to PostgreSQL, or a restart of the listener. Its rows are published again. The copy only adds and replaces rows: a row published by the failed attempt and deleted before the second one stays at the output.
 - **A table published while the listener runs** is synced without a restart. The listener learns about it from its first change.
 - **Inheritance.** A publication of a parent table publishes its children as tables of their own, so the copy of the parent has only the parent's own rows. A partitioned table published through its root is copied partition by partition, under the root's name.
 - **Row filters and column lists** of the publications apply to the copy. A table in several publications is copied once; a row is copied if the row filter of any of those publications accepts it.
 - **Resources.** Each table being synced uses one replication slot and two connections, on top of the main stream. Size `max_replication_slots` and `max_wal_senders` for that. A long copy keeps its snapshot open, which holds back vacuum.
 - **Sync slots.** They are named `<slot>_sync_<table oid>` and are dropped when the table is synced. Slots left behind by a crash are dropped on the next start. If you drop the main slot for good, drop its sync slots too.
+
+### Parallel copy of a table
+
+With `workersPerTable` above 1, the workers of a table share its chunks: each one takes the next chunk when it is done with one, so a worker that gets light chunks copies more of them. They all read the same snapshot, so the copy is the same as with one worker, and the table's changes still come after all of its copied rows. The copied rows arrive in no particular order.
+
+- **When it helps.** When reading PostgreSQL or an output that takes parallel writes (ClickHouse, DynamoDB, Kafka, Kinesis) is the limit. A table smaller than one chunk per worker uses fewer workers.
+- **Connections.** Each worker after the first uses one more connection to PostgreSQL (not a replication connection) and one more publisher, so up to `maxParallelJobs × workersPerTable` copy connections. They count against `max_connections`.
+- **SQLite** always copies a table with one worker: one file has one writer.
 
 ### Table states
 

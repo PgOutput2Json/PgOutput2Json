@@ -1,8 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
 using Npgsql;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,22 +12,30 @@ using System.Threading.Tasks;
 namespace PgOutput2Json
 {
     /// <summary>
-    /// How far a copy has come: the rows of the chunks the publisher has confirmed. A copy that fails
-    /// continues from here, as long as the snapshot can still be imported.
+    /// How far a copy has come: the chunks the publishers have confirmed. A copy that fails continues
+    /// with the other chunks, as long as the snapshot can still be imported. Shared by the workers of a copy.
     /// </summary>
     internal sealed class CopyProgress
     {
-        /// <summary>
-        /// The relations copied completely: the table, or the leaf partitions of a partitioned table. By oid, because
-        /// the partitions are read from the current catalog, and one can be attached or detached between two attempts.
-        /// </summary>
-        public HashSet<uint> CopiedRelations { get; } = [];
+        // by the oid of the relation, because the partitions are read from the current catalog,
+        // and one can be attached or detached between two attempts
+        private readonly HashSet<(uint Relation, long Page)> _copiedChunks = [];
 
-        /// <summary>The relation being copied, and its first page that is not copied yet.</summary>
-        public uint Relation { get; set; }
-        public long Page { get; set; }
+        private long _rows;
 
-        public long Rows { get; set; }
+        public long Rows => Interlocked.Read(ref _rows);
+
+        public bool IsCopied(uint relation, long page)
+        {
+            lock (_copiedChunks) return _copiedChunks.Contains((relation, page));
+        }
+
+        public void SetCopied(uint relation, long page, long rows)
+        {
+            lock (_copiedChunks) _copiedChunks.Add((relation, page));
+
+            Interlocked.Add(ref _rows, rows);
+        }
     }
 
     /// <summary>
@@ -42,11 +52,39 @@ namespace PgOutput2Json
     {
         /// <summary>
         /// The pages copied by one COPY: 8 MB with the default block size. After an error the copy continues
-        /// with the chunk it was in, so a chunk is what is published twice.
+        /// with the chunks that were not confirmed, so a chunk is what is published twice.
         /// </summary>
         internal static long PagesPerChunk { get; set; } = 1000;
 
+        /// <summary>
+        /// A range of pages of one relation, read directly by a TID range scan. The last one of a relation is open,
+        /// so no row is missed if the relation has grown.
+        /// </summary>
+        private sealed record Chunk(uint Relation, string RelationName, long Page, bool IsLast);
+
+        /// <summary>
+        /// What every worker of a copy needs.
+        /// </summary>
+        private sealed record CopyContext(PublishedTable Table,
+                                          List<PgColumnInfo> Columns,
+                                          string Select,
+                                          string RowFilter,
+                                          IReadOnlyList<string>? IncludedColumns,
+                                          IReadOnlyList<string>? PartitionKeyColumns,
+                                          ReplicationListenerOptions ListenerOptions,
+                                          JsonOptions JsonOptions,
+                                          ConcurrentQueue<Chunk> Chunks,
+                                          CopyProgress Progress,
+                                          ILogger? Logger);
+
+        /// <summary>
+        /// Copies the chunks that are not copied yet, with up to <paramref name="workers"/> workers that take
+        /// the next chunk when they are done with one. The first worker uses <paramref name="publisher"/>,
+        /// each other one a connection and a publisher of its own, in the same snapshot.
+        /// </summary>
         public static async Task<long> CopyAsync(IMessagePublisher publisher,
+                                                 Func<IMessagePublisher> createPublisher,
+                                                 int workers,
                                                  ReplicationListenerOptions listenerOptions,
                                                  NpgsqlDataSource dataSource,
                                                  JsonOptions jsonOptions,
@@ -56,7 +94,99 @@ namespace PgOutput2Json
                                                  ILogger? logger,
                                                  CancellationToken token)
         {
-            using var connection = dataSource.CreateConnection();
+            using var connection = await ImportSnapshotAsync(dataSource, table, snapshotName, token).ConfigureAwait(false);
+
+            listenerOptions.IncludedColumns.TryGetValue(table.TableName, out var includedColumns);
+            listenerOptions.PartitionKeyColumns.TryGetValue(table.TableName, out var partitionKeyCols);
+
+            var columns = await GetColumnsAsync(connection, table, partitionKeyCols, token).ConfigureAwait(false);
+
+            if (columns.Count == 0) throw new Exception($"Table {table.TableName} has no columns to copy");
+
+            var chunks = new ConcurrentQueue<Chunk>();
+
+            foreach (var (oid, relationName, pages) in await GetRelationsAsync(connection, table, token).ConfigureAwait(false))
+            {
+                for (var page = 0L; ; page += PagesPerChunk)
+                {
+                    var isLast = page + PagesPerChunk >= pages;
+
+                    if (!progress.IsCopied(oid, page)) chunks.Enqueue(new Chunk(oid, relationName, page, isLast));
+
+                    if (isLast) break;
+                }
+            }
+
+            // the SELECT form names the columns; ONLY, because a child of an inheritance tree is a table of its own
+            // in the publication, and the leaves of a partitioned table are copied one by one
+            var context = new CopyContext(table,
+                                          columns,
+                                          $"SELECT {string.Join(", ", columns.Select(c => TableSyncState.Quote(c.ColumnName)))} FROM ONLY ",
+                                          string.IsNullOrWhiteSpace(table.RowFilter) ? "" : $" AND ({table.RowFilter})",
+                                          includedColumns,
+                                          partitionKeyCols,
+                                          listenerOptions,
+                                          jsonOptions,
+                                          chunks,
+                                          progress,
+                                          logger);
+
+            // the others stop when one fails: the chunks they did not finish are copied again by the next attempt
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+            async Task RunAsync(Func<Task> work)
+            {
+                try
+                {
+                    await work().ConfigureAwait(false);
+                }
+                catch
+                {
+                    await cts.CancelAsync().ConfigureAwait(false);
+                    throw;
+                }
+            }
+
+            async Task RunOtherWorkerAsync()
+            {
+                using var otherConnection = await ImportSnapshotAsync(dataSource, table, snapshotName, cts.Token).ConfigureAwait(false);
+
+                var otherPublisher = createPublisher();
+
+                await using var publisherScope = otherPublisher.ConfigureAwait(false);
+
+                await CopyChunksAsync(otherConnection, otherPublisher, context, cts.Token).ConfigureAwait(false);
+            }
+
+            var tasks = new List<Task> { RunAsync(() => CopyChunksAsync(connection, publisher, context, cts.Token)) };
+
+            for (var i = 1; i < Math.Min(workers, chunks.Count); i++)
+            {
+                tasks.Add(RunAsync(RunOtherWorkerAsync));
+            }
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch when (!token.IsCancellationRequested)
+            {
+                // the error of the worker that failed, not the cancellation of the others
+                var error = tasks.Where(t => t.IsFaulted)
+                                 .SelectMany(t => t.Exception!.InnerExceptions)
+                                 .FirstOrDefault(e => e is not OperationCanceledException);
+
+                if (error != null) ExceptionDispatchInfo.Capture(error).Throw();
+
+                throw;
+            }
+
+            return progress.Rows;
+        }
+
+        private static async Task<NpgsqlConnection> ImportSnapshotAsync(NpgsqlDataSource dataSource, PublishedTable table, string snapshotName, CancellationToken token)
+        {
+            var connection = dataSource.CreateConnection();
 
             try
             {
@@ -70,134 +200,109 @@ namespace PgOutput2Json
                 // the snapshot of the sync slot: the copy sees exactly the transactions the slot will not send
                 cmd.CommandText = $"BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET TRANSACTION SNAPSHOT '{snapshotName.Replace("'", "''")}'";
                 await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+
+                return connection;
             }
-            catch (Exception ex) when (!token.IsCancellationRequested)
+            catch (Exception ex)
             {
+                await connection.DisposeAsync().ConfigureAwait(false);
+
+                if (token.IsCancellationRequested) throw;
+
                 throw new SnapshotUnavailableException($"Could not import the snapshot of the copy of {table.TableName}", ex);
             }
+        }
 
-            listenerOptions.IncludedColumns.TryGetValue(table.TableName, out var includedColumns);
-            listenerOptions.PartitionKeyColumns.TryGetValue(table.TableName, out var partitionKeyCols);
-
-            var columns = await GetColumnsAsync(connection, table, partitionKeyCols, token).ConfigureAwait(false);
-
-            if (columns.Count == 0) throw new Exception($"Table {table.TableName} has no columns to copy");
-
-            var relations = await GetRelationsAsync(connection, table, token).ConfigureAwait(false);
-
-            // the SELECT form names the columns; ONLY, because a child of an inheritance tree is a table of its own
-            // in the publication, and the leaves of a partitioned table are copied one by one
-            var select = $"SELECT {string.Join(", ", columns.Select(c => TableSyncState.Quote(c.ColumnName)))} FROM ONLY ";
-
-            var rowFilter = string.IsNullOrWhiteSpace(table.RowFilter) ? "" : $" AND ({table.RowFilter})";
-
+        /// <summary>
+        /// Copies chunks until there are none left. A chunk is copied once the publisher has confirmed all of it.
+        /// </summary>
+        private static async Task CopyChunksAsync(NpgsqlConnection connection, IMessagePublisher publisher, CopyContext context, CancellationToken token)
+        {
             var jsonMessage = new JsonMessage { IsTableSync = true };
 
-            jsonMessage.TableName.Append(table.TableName);
+            jsonMessage.TableName.Append(context.Table.TableName);
 
-            // a new publisher after an error needs the schema again
+            // every publisher gets the schema with its first row
             var schemaWritten = false;
 
             var value = new StringBuilder(256);
             var values = new List<string>(100);
 
-            foreach (var (oid, relationName, pages) in relations)
+            while (context.Chunks.TryDequeue(out var chunk))
             {
-                if (progress.CopiedRelations.Contains(oid)) continue;
+                var query = $"{context.Select}{chunk.RelationName} WHERE ctid >= '({chunk.Page},0)'"
+                    + (chunk.IsLast ? "" : $" AND ctid < '({chunk.Page + PagesPerChunk},0)'")
+                    + context.RowFilter;
 
-                if (progress.Relation != oid)
+                var unconfirmed = 0;
+                var chunkRows = 0L;
+
+                using (var reader = await connection.BeginTextExportAsync($"COPY ({query}) TO STDOUT", token).ConfigureAwait(false))
                 {
-                    progress.Relation = oid;
-                    progress.Page = 0;
-                }
-
-                while (true)
-                {
-                    // a range of pages, read directly by a TID range scan; the last one is open, so nothing is missed
-                    var last = progress.Page + PagesPerChunk >= pages;
-
-                    var query = $"{select}{relationName} WHERE ctid >= '({progress.Page},0)'"
-                        + (last ? "" : $" AND ctid < '({progress.Page + PagesPerChunk},0)'")
-                        + rowFilter;
-
-                    var unconfirmed = 0;
-                    var chunkRows = 0L;
-
-                    using (var reader = await connection.BeginTextExportAsync($"COPY ({query}) TO STDOUT", token).ConfigureAwait(false))
+                    string? line;
+                    while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
                     {
-                        string? line;
-                        while ((line = await reader.ReadLineAsync(token).ConfigureAwait(false)) != null)
+                        jsonMessage.Json.Clear();
+                        jsonMessage.KeyKolValue.Clear();
+                        jsonMessage.PartitionKolValue.Clear();
+
+                        GetValues(values, value, line, context.Logger);
+
+                        if (values.Count != context.Columns.Count)
                         {
-                            jsonMessage.Json.Clear();
-                            jsonMessage.KeyKolValue.Clear();
-                            jsonMessage.PartitionKolValue.Clear();
+                            throw new Exception("Inconsistent column count between COPY output and table metadata");
+                        }
 
-                            GetValues(values, value, line, logger);
+                        jsonMessage.Json.Append("{\"c\":\"C\"");
+                        jsonMessage.Json.Append(",\"w\":0");
+                        jsonMessage.Json.Append(",\"n\":0");
 
-                            if (values.Count != columns.Count)
+                        if (context.JsonOptions.WriteTableNames)
+                        {
+                            jsonMessage.Json.Append(",\"t\":\"");
+                            JsonUtils.EscapeText(jsonMessage.Json, context.Table.TableName);
+                            jsonMessage.Json.Append('"');
+                        }
+
+                        if (!schemaWritten)
+                        {
+                            schemaWritten = true;
+
+                            jsonMessage.Json.Append(',');
+                            switch (context.JsonOptions.WriteMode)
                             {
-                                throw new Exception("Inconsistent column count between COPY output and table metadata");
-                            }
-
-                            jsonMessage.Json.Append("{\"c\":\"C\"");
-                            jsonMessage.Json.Append(",\"w\":0");
-                            jsonMessage.Json.Append(",\"n\":0");
-
-                            if (jsonOptions.WriteTableNames)
-                            {
-                                jsonMessage.Json.Append(",\"t\":\"");
-                                JsonUtils.EscapeText(jsonMessage.Json, table.TableName);
-                                jsonMessage.Json.Append('"');
-                            }
-
-                            if (!schemaWritten)
-                            {
-                                schemaWritten = true;
-
-                                jsonMessage.Json.Append(',');
-                                switch (jsonOptions.WriteMode)
-                                {
-                                    case JsonWriteMode.Compact:
-                                        WriteSchemaCompact(jsonMessage.Json, table, columns, includedColumns);
-                                        break;
-                                    default:
-                                        WriteSchemaDefault(jsonMessage.Json, table, columns, includedColumns);
-                                        break;
-                                }
-                            }
-
-                            WriteRow(columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonMessage.PartitionKolValue, jsonOptions, includedColumns, partitionKeyCols);
-
-                            jsonMessage.Json.Append('}');
-
-                            await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
-
-                            MetricsHelper.IncrementPublishCounter();
-
-                            chunkRows++;
-
-                            if (++unconfirmed >= listenerOptions.BatchSize)
-                            {
-                                await publisher.ConfirmAsync(token).ConfigureAwait(false);
-                                unconfirmed = 0;
+                                case JsonWriteMode.Compact:
+                                    WriteSchemaCompact(jsonMessage.Json, context.Table, context.Columns, context.IncludedColumns);
+                                    break;
+                                default:
+                                    WriteSchemaDefault(jsonMessage.Json, context.Table, context.Columns, context.IncludedColumns);
+                                    break;
                             }
                         }
+
+                        WriteRow(context.Columns, values, jsonMessage.Json, jsonMessage.KeyKolValue, jsonMessage.PartitionKolValue,
+                                 context.JsonOptions, context.IncludedColumns, context.PartitionKeyColumns);
+
+                        jsonMessage.Json.Append('}');
+
+                        await publisher.PublishAsync(jsonMessage, token).ConfigureAwait(false);
+
+                        MetricsHelper.IncrementPublishCounter();
+
+                        chunkRows++;
+
+                        if (++unconfirmed >= context.ListenerOptions.BatchSize)
+                        {
+                            await publisher.ConfirmAsync(token).ConfigureAwait(false);
+                            unconfirmed = 0;
+                        }
                     }
-
-                    // the chunk is done once the publisher has confirmed all of it
-                    await publisher.ConfirmAsync(token).ConfigureAwait(false);
-
-                    progress.Rows += chunkRows;
-
-                    if (last) break;
-
-                    progress.Page += PagesPerChunk;
                 }
 
-                progress.CopiedRelations.Add(oid);
-            }
+                await publisher.ConfirmAsync(token).ConfigureAwait(false);
 
-            return progress.Rows;
+                context.Progress.SetCopied(chunk.Relation, chunk.Page, chunkRows);
+            }
         }
 
         /// <summary>
