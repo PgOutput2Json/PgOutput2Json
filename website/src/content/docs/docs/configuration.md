@@ -85,12 +85,32 @@ With a permanent replication slot, the library keeps one row per published table
 - The states are written even when the copy is off: every published table is registered as `ready`. If you enable the copy later, only the tables published since then are copied.
 - If you turn the copy off while tables are not yet `ready`, they are streamed without a copy, and copied if you turn it on again.
 - A table removed from the publications is forgotten on the next start, and so is a table that was dropped and created again. Either is copied again if it comes back.
-- To copy a table again, delete its row and restart.
 - The states know nothing about the output. If you empty the output, or drop the slot and create it again under the same name, delete the slot's rows too.
 
 The schema and the table are created on first use, which needs the `CREATE` privilege on the database. Alternatively, create the `pgoutput2json` schema yourself and grant the replication user `CREATE` and `USAGE` on it. If the states cannot be stored and the copy is off, the library logs a warning and streams as usual. With the copy on, it is an error.
 
 With a temporary slot nothing is stored, the sync slots are temporary too, and every table is copied on every start and every reconnect.
+
+### Copying a table again
+
+With a permanent slot and the copy on, you can copy one table again, for example after the output lost or changed its rows. The other tables are not touched: they keep streaming from where they were. There are two ways.
+
+**Delete the state of the table:**
+
+1. Stop the listener.
+2. Empty the table at the output yourself (see below).
+3. Delete the table's row: `DELETE FROM pgoutput2json.table_sync_state WHERE slot_name = 'my_slot' AND table_name = 'public.my_table';`
+4. Start the listener. It copies the table, then streams it.
+
+**Or, without touching the state table, take the table out of the publication for one start:**
+
+1. Remove the table from the publication: `ALTER PUBLICATION my_publication DROP TABLE my_table;`
+2. Restart the listener. On start it forgets the state of the table, and from then on it publishes nothing for the table.
+3. Empty the table at the output yourself (see below).
+4. Add the table back: `ALTER PUBLICATION my_publication ADD TABLE my_table;`
+5. Restart the listener. It copies the table, then streams it.
+
+Empty the output table because the copy only adds and replaces rows: a row deleted in PostgreSQL would stay. A message output cannot be emptied: its consumers get the copied rows again, with `"c":"C"`. The changes made to the table before the copy are not published as changes. The copy has the rows as they are when it runs.
 
 ### Changes from earlier versions
 
