@@ -13,6 +13,8 @@ namespace PgOutput2Json.MongoDb
 {
     internal static class MongoDbExtensions
     {
+        private const string ToastValue = "__TOAST__";
+
         public static async Task<(ulong, ulong)> GetWalEndAsync(this IMongoDatabase db, CancellationToken token)
         {
             var position = await db.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
@@ -87,30 +89,24 @@ namespace PgOutput2Json.MongoDb
             return nameParts.Length > 1 ? $"{nameParts[0]}__{nameParts[1]}" : nameParts[0];
         }
 
-        public static void UpsertOrDelete(this IMongoDatabase db,
-                                          List<BulkWriteModel> batch,
-                                          string fullTableName,
-                                          IReadOnlyList<ColumnInfo> columns,
-                                          JsonElement changeTypeElement,
-                                          JsonElement keyElement,
-                                          JsonElement rowElement)
+        /// <summary>
+        /// The name of the collection of a table (schema__table), and its namespace in the database (database.collection).
+        /// </summary>
+        public static string GetCollectionNamespace(this IMongoDatabase db, string fullTableName)
         {
-            var collectionName = GetCollectionName(fullTableName);
-            var collectionNamespace = $"{db.DatabaseNamespace.DatabaseName}.{collectionName}";
+            return $"{db.DatabaseNamespace.DatabaseName}.{GetCollectionName(fullTableName)}";
+        }
 
-            var changeType = changeTypeElement.GetString();
-
-
-            BulkWriteModel? model;
-
-            if (changeType == "D")
-            {
-                model = Delete(collectionNamespace, columns, keyElement);
-            }
-            else
-            {
-                model = Upsert(collectionNamespace, columns, keyElement, rowElement);
-            }
+        public static void UpsertOrDelete(List<BulkWriteModel> batch,
+                                          string collectionNamespace,
+                                          IReadOnlyList<ColumnInfo> columns,
+                                          string? changeType,
+                                          JsonElement[]? keyElement,
+                                          JsonElement[] rowElement)
+        {
+            var model = changeType == "D"
+                ? Delete(collectionNamespace, columns, keyElement)
+                : Upsert(collectionNamespace, columns, keyElement, rowElement);
 
             if (model != null)
             {
@@ -139,76 +135,73 @@ namespace PgOutput2Json.MongoDb
             await db.Client.BulkWriteAsync(batch, cancellationToken: token).ConfigureAwait(false);
         }
 
-        public static BulkWriteUpdateOneModel<BsonDocument>? Upsert(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement, JsonElement rowElement)
+        /// <summary>
+        /// A row with all its values replaces its document, or inserts it, which costs MongoDB less than setting every
+        /// field. A row with a large value that an update did not change (TOAST) sets the other fields, and keeps that one.
+        /// The filters and the documents are BsonDocuments: the builders of the driver are rendered again for every row.
+        /// </summary>
+        public static BulkWriteModel? Upsert(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement[]? keyElement, JsonElement[] rowElement)
         {
-            var filters = new List<FilterDefinition<BsonDocument>>();
-            var updates = new List<UpdateDefinition<BsonDocument>>();
+            var filter = new BsonDocument();
 
-            int i;
-
-            if (keyElement.ValueKind != JsonValueKind.Undefined)
+            // an update of the key has the old key, and finds the document by it
+            if (keyElement != null)
             {
-                i = 0;
-                foreach (var column in columns)
-                {
-                    if (!column.IsKey) continue;
+                var keyIndex = 0;
 
-                    filters.Add(Builders<BsonDocument>.Filter.Eq(column.Name, GetColumnValue(keyElement[i], column)));
-                    i++;
+                for (var i = 0; i < columns.Count; i++)
+                {
+                    if (!columns[i].IsKey) continue;
+
+                    filter[columns[i].Name] = GetColumnValue(keyElement[keyIndex++], columns[i]);
                 }
             }
 
-            var hasFilters = filters.Count > 0;
+            var hasFilter = filter.ElementCount > 0;
 
-            i = 0;
-            foreach (var column in columns)
+            var document = new BsonDocument();
+            var hasToast = false;
+
+            for (var i = 0; i < columns.Count; i++)
             {
-                if (column.IsKey && !hasFilters)
-                {
-                    filters.Add(Builders<BsonDocument>.Filter.Eq(column.Name, GetColumnValue(rowElement[i], column)));
-                    i++;
+                var column = columns[i];
+                var value = rowElement[i];
 
-                    continue;
+                // the key is in the filter even when it is a large value that was not sent: never an empty filter
+                if (column.IsKey && !hasFilter) filter[column.Name] = GetColumnValue(value, column);
+
+                if (value.ValueKind == JsonValueKind.String && value.ValueEquals(ToastValue))
+                {
+                    hasToast = true;
+                    continue; // unchanged, so not sent
                 }
 
-                if (rowElement[i].ValueKind == JsonValueKind.String && rowElement[i].GetString() == "__TOAST__")
-                {
-                    i++;
-                    continue; // skip unchanged toasted columns
-                }
-
-                updates.Add(Builders<BsonDocument>.Update.Set(column.Name, BsonValue.Create(GetColumnValue(rowElement[i], column))));
-                i++;
+                document[column.Name] = GetColumnValue(value, column);
             }
 
-            if (updates.Count > 0)
-            {
-                return new BulkWriteUpdateOneModel<BsonDocument>(
-                    collectionName,
-                    Builders<BsonDocument>.Filter.And(filters),
-                    Builders<BsonDocument>.Update.Combine(updates),
-                    isUpsert: true
-                );
-            }
+            if (document.ElementCount == 0) return null;
 
-            return null;
+            return hasToast
+                ? new BulkWriteUpdateOneModel<BsonDocument>(collectionName, filter, new BsonDocument("$set", document), isUpsert: true)
+                : new BulkWriteReplaceOneModel<BsonDocument>(collectionName, filter, document, isUpsert: true);
         }
 
-        public static BulkWriteDeleteOneModel<BsonDocument> Delete(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement keyElement)
+        public static BulkWriteDeleteOneModel<BsonDocument>? Delete(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement[]? keyElement)
         {
-            var filters = new List<FilterDefinition<BsonDocument>>();
+            if (keyElement == null) return null;
 
-            var i = 0;
+            var filter = new BsonDocument();
 
-            foreach (var column in columns)
+            var keyIndex = 0;
+
+            for (var i = 0; i < columns.Count; i++)
             {
-                if (!column.IsKey) continue;
+                if (!columns[i].IsKey) continue;
 
-                filters.Add(Builders<BsonDocument>.Filter.Eq(column.Name, GetColumnValue(keyElement[i], column)));
-                i++;
+                filter[columns[i].Name] = GetColumnValue(keyElement[keyIndex++], columns[i]);
             }
 
-            return new BulkWriteDeleteOneModel<BsonDocument>(collectionName, Builders<BsonDocument>.Filter.And(filters));
+            return new BulkWriteDeleteOneModel<BsonDocument>(collectionName, filter);
         }
 
         private static BsonValue GetColumnValue(JsonElement valElement, ColumnInfo column)

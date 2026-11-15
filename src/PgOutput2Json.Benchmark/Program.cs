@@ -14,6 +14,9 @@ using Testcontainers.ClickHouse;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
 using Testcontainers.Kafka;
+using Testcontainers.MongoDb;
+
+using MongoDB.Driver;
 
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
@@ -37,6 +40,7 @@ PostgreSqlContainer? postgres = null;
 ClickHouseContainer? clickHouse = null;
 RabbitMqContainer? rabbitMq = null;
 IContainer? kafka = null;
+MongoDbContainer? mongo = null;
 
 try
 {
@@ -111,6 +115,22 @@ try
         Endpoints = [rabbitMqEndpoint!],
         AddressResolver = new AddressResolver(rabbitMqEndpoint!),
     };
+
+    var mongoConnectionString = options.MongoDbConnectionString;
+
+    if (options.Outputs.Contains("mongodb") && mongoConnectionString == null)
+    {
+        Console.WriteLine("Starting mongo:8...");
+
+        mongo = new MongoDbBuilder("mongo:8").Build();
+
+        await mongo.StartAsync();
+
+        // the container at its own address, not a mapped port behind Docker's proxy
+        mongoConnectionString = OperatingSystem.IsLinux()
+            ? new MongoUrlBuilder(mongo.GetConnectionString()) { Server = new MongoServerAddress(mongo.IpAddress, 27017) }.ToString()
+            : mongo.GetConnectionString();
+    }
 
     var kafkaBootstrapServers = options.KafkaBootstrapServers;
 
@@ -262,6 +282,18 @@ try
                 o.ProducerConfig = new ProducerConfig(new Dictionary<string, string>(options.KafkaConfig)) { BootstrapServers = kafkaBootstrapServers };
             });
         }
+        else if (output == "mongodb")
+        {
+            var settings = MongoClientSettings.FromConnectionString(mongoConnectionString!);
+
+            using (var client = new MongoClient(settings)) await client.DropDatabaseAsync(BenchmarkStream);
+
+            builder.UseMongoDb(o =>
+            {
+                o.ClientSettings = settings;
+                o.DatabaseName = BenchmarkStream;
+            });
+        }
         else if (output == "sqlite")
         {
             foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" }) File.Delete(options.SqliteFile + suffix);
@@ -341,6 +373,7 @@ finally
     if (clickHouse != null) await clickHouse.DisposeAsync();
     if (rabbitMq != null) await rabbitMq.DisposeAsync();
     if (kafka != null) await kafka.DisposeAsync();
+    if (mongo != null) await mongo.DisposeAsync();
 }
 
 /// <summary>

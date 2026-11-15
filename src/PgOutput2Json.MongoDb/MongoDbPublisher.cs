@@ -22,6 +22,32 @@ namespace PgOutput2Json.MongoDb
         private readonly Dictionary<string, List<ColumnInfo>> _tableColumns = [];
 
         private readonly List<BulkWriteModel> _batch = new(1000);
+
+        private readonly Utf8Buffer _utf8 = new();
+
+        private string _tableName = "";
+
+        private readonly Dictionary<string, string> _namespaces = [];
+
+        // the values of the row and of the key of the change being written
+        private JsonElement[] _row = [];
+        private JsonElement[] _key = [];
+
+        /// <summary>
+        /// The values of a JSON array, in an array of exactly their number, reused while that number stays.
+        /// </summary>
+        private static JsonElement[] ReadValues(JsonElement array, ref JsonElement[] values)
+        {
+            var length = array.GetArrayLength();
+
+            if (values.Length != length) values = new JsonElement[length];
+
+            var i = 0;
+
+            foreach (var value in array.EnumerateArray()) values[i++] = value;
+
+            return values;
+        }
         private ulong? _lastWal;
         private ulong _lastMessageNo;
 
@@ -36,9 +62,12 @@ namespace PgOutput2Json.MongoDb
         {
             var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            var tableName = msg.TableName.ToString();
+            // the rows of a batch are mostly of one table: its name is not made again for each of them
+            if (!msg.TableName.Equals(_tableName.AsSpan())) _tableName = msg.TableName.ToString();
 
-            using var doc = JsonDocument.Parse(msg.Json.ToString());
+            var tableName = _tableName;
+
+            using var doc = JsonDocument.Parse(_utf8.Encode(msg.Json));
 
             await TryParseSchemaAsync(client, tableName, doc, token).ConfigureAwait(false);
 
@@ -120,10 +149,16 @@ namespace PgOutput2Json.MongoDb
 
             if (columns == null) throw new Exception("Missing table schema: " + tableName);
 
-            doc.RootElement.TryGetProperty("k", out var keyElement);
-            doc.RootElement.TryGetProperty("r", out var rowElement);
+            // read once: indexing a JSON array walks it from the start when it has arrays or objects in it
+            var keyElement = doc.RootElement.TryGetProperty("k", out var key) && key.ValueKind == JsonValueKind.Array ? ReadValues(key, ref _key) : null;
+            var rowElement = doc.RootElement.TryGetProperty("r", out var row) && row.ValueKind == JsonValueKind.Array ? ReadValues(row, ref _row) : [];
 
-            db.UpsertOrDelete(_batch, tableName, columns, changeTypeElement, keyElement, rowElement);
+            if (!_namespaces.TryGetValue(tableName, out var collectionNamespace))
+            {
+                _namespaces[tableName] = collectionNamespace = db.GetCollectionNamespace(tableName);
+            }
+
+            MongoDbExtensions.UpsertOrDelete(_batch, collectionNamespace, columns, changeType, keyElement, rowElement);
         }
 
         private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
