@@ -34,6 +34,14 @@ namespace PgOutput2Json.ClickHouse
         public bool UseJsonType { get; set; } = true;
 
         /// <summary>
+        /// Stores the arrays of numbers, booleans, text, dates, timestamps and uuids in ClickHouse arrays, e.g.
+        /// Array(Nullable(Int32)). ClickHouse arrays cannot be null, so a null array is stored as an empty one, and
+        /// they have a fixed number of dimensions: a multi-dimensional value stops the replication with an error.
+        /// With false, or for arrays of other types, the columns are Strings with the JSON text. Default is true.
+        /// </summary>
+        public bool UseArrayTypes { get; set; } = true;
+
+        /// <summary>
         /// Removes the rows of deleted PostgreSQL rows from ClickHouse when no new rows have arrived in a table for this
         /// long. Without it a deleted row is kept as a row marked deleted, which FINAL hides but which still takes
         /// space. It uses the cleanup merges of ReplacingMergeTree, which ClickHouse still marks experimental.

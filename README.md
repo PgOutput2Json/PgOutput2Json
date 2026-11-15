@@ -979,12 +979,22 @@ The options are used only when the output creates the table: ClickHouse cannot c
 | `date` | `Date32` |
 | `timestamp` | `DateTime64(6)` |
 | `timestamptz` | `DateTime64(6, 'UTC')` |
-| arrays | `String` with the JSON text, e.g. `[1,2,null]` |
+| arrays of the types above, and of `text`, `bytea` and the other types sent as text | `Array(Nullable(...))` of the element type, e.g. `integer[]` is `Array(Nullable(Int32))` (see [Arrays](#arrays)) |
+| arrays of enums and user-defined types | `String` with the PostgreSQL array literal, e.g. `{sad,happy}` |
 | `json`, `jsonb` | `JSON` (see [JSON columns](#json-columns)) |
 | `bytea` | `String` with the bytes in hex |
 | anything else (`text`, `time`, `interval`, enums...) | `String` with the text PostgreSQL sends |
 
-Key columns are not `Nullable`, all the other columns are.
+Key columns are not `Nullable`, all the other columns are, except arrays. A key column that is an array, or json, is a `String`.
+
+### Arrays
+
+An array is a ClickHouse array, so `has()`, `arrayJoin()` and the other array functions work on it without parsing. Two things differ from PostgreSQL:
+
+- **A null array is an empty array**, because ClickHouse arrays cannot be `Nullable`. A `NULL` element stays `null`.
+- **One dimension.** PostgreSQL does not send the number of dimensions of a column (`integer[]` and `integer[][]` are the same type), so the ClickHouse column has one. A multi-dimensional value stops the replication with an error that names the column. Change that column to a `String` (`ALTER TABLE ... MODIFY COLUMN ... String`), and the listener continues with the JSON text.
+
+With `options.UseArrayTypes = false`, new array columns are `String`s with the JSON text, as before version 2.1, and a null array stays `null`. An existing column keeps its type.
 
 ### JSON columns
 
@@ -1069,6 +1079,7 @@ public class Worker : BackgroundService
 | `Username`, `Password` | `default`, empty | |
 | `UseAsyncInserts` | `true` | See [Batch size](#batch-size). |
 | `UseJsonType` | `true` | See [JSON columns](#json-columns). |
+| `UseArrayTypes` | `true` | See [Arrays](#arrays). |
 | `CleanUpDeletedRowsAfter` | none | Removes the deleted rows. See [Deleted rows](#deleted-rows). |
 | `Tables` | empty | The order, partitions and engine per table. See [Order, partitions and engine](#order-partitions-and-engine). |
 | `Settings` | empty | ClickHouse settings sent with every request, e.g. `options.Settings["insert_quorum"] = "2"`. |

@@ -144,7 +144,7 @@ namespace PgOutput2Json.ClickHouse
                 await FlushAsync(existing, token).ConfigureAwait(false);
             }
 
-            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType, _options.Tables.GetValueOrDefault(tableName));
+            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType, _options.UseArrayTypes, _options.Tables.GetValueOrDefault(tableName));
 
             await _client.ExecuteAsync(table.GetCreateStatement(_options.CleanUpDeletedRowsAfter), null, null, token).ConfigureAwait(false);
 
@@ -159,11 +159,34 @@ namespace PgOutput2Json.ClickHouse
                 await _client.ExecuteAsync(table.GetAlterStatement(), null, null, token).ConfigureAwait(false);
             }
 
+            if (table.Columns.Any(c => c.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray))
+            {
+                table.UseExistingTypes(await GetColumnTypesAsync(table, token).ConfigureAwait(false));
+            }
+
             _logger?.LogInformation("Table {Table} is ready for {PgTable}", table.QuotedName, tableName);
 
             _tables[tableName] = table;
 
             return table;
+        }
+
+        private async Task<Dictionary<string, string>> GetColumnTypesAsync(ClickHouseTable table, CancellationToken token)
+        {
+            var result = await _client.ExecuteAsync(
+                "SELECT name, type FROM system.columns WHERE database = currentDatabase() AND table = {t:String} FORMAT JSONCompactEachRow",
+                null, [new("t", EscapeParameter(table.Name))], token).ConfigureAwait(false);
+
+            var types = new Dictionary<string, string>();
+
+            foreach (var line in result.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                using var row = JsonDocument.Parse(line);
+
+                types[row.RootElement[0].GetString()!] = row.RootElement[1].GetString()!;
+            }
+
+            return types;
         }
 
         private static void AppendDelete(ClickHouseTable table, JsonElement keyElement, string version)
@@ -185,9 +208,13 @@ namespace PgOutput2Json.ClickHouse
             line.Append('"').Append(version).Append("\",1]\n");
         }
 
-        private static void AppendValue(StringBuilder line, ClickHouseColumn column, JsonElement value)
+        internal static void AppendValue(StringBuilder line, ClickHouseColumn column, JsonElement value)
         {
-            if (column.Kind == ColumnKind.Json && value.ValueKind == JsonValueKind.String)
+            if (column.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray && value.ValueKind == JsonValueKind.Array)
+            {
+                AppendArray(line, column, value);
+            }
+            else if (column.Kind == ColumnKind.Json && value.ValueKind == JsonValueKind.String)
             {
                 AppendJson(line, value.GetString()!);
             }
@@ -199,6 +226,40 @@ namespace PgOutput2Json.ClickHouse
             {
                 line.Append(value.GetRawText());
             }
+        }
+
+        /// <summary>
+        /// A ClickHouse array has the dimensions of its type, and PostgreSQL does not send the dimensions of a column:
+        /// the type has one, and a value with more is an error that says what to do. Dates are clamped one by one.
+        /// </summary>
+        private static void AppendArray(StringBuilder line, ClickHouseColumn column, JsonElement value)
+        {
+            line.Append('[');
+
+            var first = true;
+
+            foreach (var element in value.EnumerateArray())
+            {
+                if (element.ValueKind == JsonValueKind.Array)
+                {
+                    throw new Exception($"Column {column.Name} has a multi-dimensional array, and its ClickHouse type {column.Type} has one dimension. " +
+                        "Change the ClickHouse column to String (ALTER TABLE ... MODIFY COLUMN ... String), or set UseArrayTypes to false for new tables.");
+                }
+
+                if (!first) line.Append(',');
+                first = false;
+
+                if (column.Kind != ColumnKind.Array && element.ValueKind == JsonValueKind.String)
+                {
+                    line.Append('"').Append(Clamp(column.Kind == ColumnKind.DateArray ? ColumnKind.Date : ColumnKind.Timestamp, element.GetString()!)).Append('"');
+                }
+                else
+                {
+                    line.Append(element.GetRawText());
+                }
+            }
+
+            line.Append(']');
         }
 
         /// <summary>

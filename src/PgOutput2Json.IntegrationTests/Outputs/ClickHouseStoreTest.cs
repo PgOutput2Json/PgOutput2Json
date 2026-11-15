@@ -74,20 +74,20 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         {
             var endpoint = await Containers.GetClickHouseEndpointAsync();
 
-            // arrays are stored as their JSON text and bytea as hex
+            // arrays are ClickHouse arrays (a null one is empty) and bytea is hex
             await StoreScenario.RunAsync("os_click",
                 builder => builder.UseClickHouse(options => Configure(options, endpoint)),
                 table => ReadAsync(endpoint, table),
                 expectedAfterCopy:
                     """
-                    [1,"one",1.5,true,"[\"a\",\"b c\"]","0102","x*3000"]
-                    [2,"two",null,false,null,null,null]
+                    [1,"one",1.5,true,["a","b c"],"0102","x*3000"]
+                    [2,"two",null,false,[],null,null]
                     """,
                 expected:
                     """
-                    [1,"uno",1.5,true,"[\"a\",\"b c\"]","0102","x*3000"]
-                    [2,null,2.25,false,"[\"x\"]",null,null]
-                    [30,"three",3,null,"[]","ff",null]
+                    [1,"uno",1.5,true,["a","b c"],"0102","x*3000"]
+                    [2,null,2.25,false,["x"],null,null]
+                    [30,"three",3,null,[],"ff",null]
                     """,
                 expectedKeyLast:
                     """
@@ -163,16 +163,16 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 await Db.ExecuteAsync(@"
                     INSERT INTO clk_types VALUES (1, -2, 9223372036854775807, 12345678901234567890.123456789, 1.5, 1.5, 1e300, true,
                         '\xDEADBEEF', E'quote"" back\\ nl\n tab\t unié 😀', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-02-29', '2024-02-29 12:34:56.789',
-                        '2024-02-29 12:34:56.789+02', '12:34:56', '1 day', '{""a"": 1}', '{{1,2},{3,4}}', 'happy');
+                        '2024-02-29 12:34:56.789+02', '12:34:56', '1 day', '{""a"": 1}', '{1,NULL,3}', 'happy');
                     INSERT INTO clk_types (id, num, f8, d, ts, tstz) VALUES (2, 'NaN', 'NaN', 'infinity', '-infinity', 'infinity');
                     INSERT INTO clk_types (id, d, ts, tstz) VALUES (3, '0044-03-15 BC', '10000-01-01 00:00:00', '0044-03-15 12:00:00+00 BC');");
 
                 // NaN is null, as in the JSON; a date ClickHouse cannot store is the first or the last one it can
                 await WaitForAsync(endpoint, "clk_types",
                     """
-                    [1,-2,9223372036854775807,12345678901234567890.123456789,1.5,1.5,1e300,true,"deadbeef","quote\" back\\ nl\n tab\t unié 😀","a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","2024-02-29","2024-02-29 12:34:56.789000","2024-02-29 10:34:56.789000","12:34:56","1 day",{"a":1},"[[1,2],[3,4]]","happy"]
-                    [2,null,null,null,null,null,null,null,null,null,null,"9999-12-31","0001-01-01 00:00:00.000000","9999-12-31 23:59:59.999999",null,null,null,null,null]
-                    [3,null,null,null,null,null,null,null,null,null,null,"0001-01-01","9999-12-31 23:59:59.999999","0001-01-01 00:00:00.000000",null,null,null,null,null]
+                    [1,-2,9223372036854775807,12345678901234567890.123456789,1.5,1.5,1e300,true,"deadbeef","quote\" back\\ nl\n tab\t unié 😀","a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","2024-02-29","2024-02-29 12:34:56.789000","2024-02-29 10:34:56.789000","12:34:56","1 day",{"a":1},[1,null,3],"happy"]
+                    [2,null,null,null,null,null,null,null,null,null,null,"9999-12-31","0001-01-01 00:00:00.000000","9999-12-31 23:59:59.999999",null,null,null,[],null]
+                    [3,null,null,null,null,null,null,null,null,null,null,"0001-01-01","9999-12-31 23:59:59.999999","0001-01-01 00:00:00.000000",null,null,null,[],null]
                     """);
             });
 
@@ -180,7 +180,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 "id Int32, i2 Nullable(Int16), i8 Nullable(Int64), num Nullable(Decimal(76, 38)), n2 Nullable(Decimal(12, 4)), f4 Nullable(Float32), " +
                 "f8 Nullable(Float64), b Nullable(Bool), by Nullable(String), t Nullable(String), u Nullable(UUID), d Nullable(Date32), " +
                 "ts Nullable(DateTime64(6)), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
-                "a Nullable(String), mood Nullable(String), _version UInt128, _deleted UInt8, _synced_at DateTime64(6, 'UTC')",
+                "a Array(Nullable(Int32)), mood Nullable(String), _version UInt128, _deleted UInt8, _synced_at DateTime64(6, 'UTC')",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_types' ORDER BY position) FORMAT TSVRaw"));
         }
 
@@ -341,6 +341,92 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 await QueryAsync(endpoint, $"SELECT name, engine, partition_key, sorting_key FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name LIKE 'clk_opt_%' ORDER BY name FORMAT TSVRaw").ContinueWith(t => t.Result.Replace('\t', ' ')));
 
             Assert.AreEqual("0", await QueryAsync(endpoint, "SELECT count() FROM clk_opt_null"));
+        }
+
+        [TestMethod]
+        public async Task Arrays_should_be_ClickHouse_arrays_or_their_JSON_text_without_the_array_types()
+        {
+            const string columns = "(id int PRIMARY KEY, tags text[], days date[], at timestamptz[], amounts numeric(10,2)[], ids uuid[], flags bool[], f float8[], moods clk_arr_mood[])";
+            const string values = @"
+                (1, '{a,NULL,""b c""}', '{2024-02-29,infinity,0044-03-15 BC}', '{2024-02-29 12:00:00+02}', '{1.50,NULL}',
+                    '{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}', '{t,f}', '{1.5,NaN}', '{sad,happy}'),
+                (2, '{}', NULL, NULL, NULL, NULL, NULL, NULL, NULL)";
+
+            await Db.ExecuteAsync($@"
+                CREATE TYPE clk_arr_mood AS ENUM ('sad', 'happy');
+                CREATE TABLE clk_arr {columns};
+                CREATE TABLE clk_arr_text {columns};");
+
+            // a date ClickHouse cannot store is the nearest one, NaN is null, a null array is empty, and the arrays of an enum stay text
+            var endpoint = await RunAsync("clk_arr", "clk_arr", async endpoint =>
+            {
+                await Db.ExecuteAsync($"INSERT INTO clk_arr VALUES {values}");
+
+                await WaitForAsync(endpoint, "clk_arr",
+                    """
+                    [1,["a",null,"b c"],["2024-02-29","9999-12-31","0001-01-01"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],"{sad,happy}"]
+                    [2,[],[],[],[],[],[],[],null]
+                    """);
+            });
+
+            Assert.AreEqual(
+                "tags Array(Nullable(String)), days Array(Nullable(Date32)), at Array(Nullable(DateTime64(6, 'UTC'))), amounts Array(Nullable(Decimal(10, 2))), " +
+                "ids Array(Nullable(UUID)), flags Array(Nullable(Bool)), f Array(Nullable(Float64)), moods Nullable(String)",
+                await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_arr' AND name NOT IN ('id', '_version', '_deleted', '_synced_at') ORDER BY position) FORMAT TSVRaw"));
+
+            // without the array types, the JSON text: a null array stays null
+            await RunAsync("clk_arr_text", "clk_arr_text", async endpoint =>
+            {
+                await Db.ExecuteAsync($"INSERT INTO clk_arr_text VALUES {values}");
+
+                await WaitForAsync(endpoint, "clk_arr_text",
+                    """
+                    [1,"[\"a\",null,\"b c\"]","[\"2024-02-29\",\"infinity\",\"0044-03-15 BC\"]","[\"2024-02-29 10:00:00+00\"]","[1.50,null]","[\"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\"]","[true,false]","[1.5,null]","{sad,happy}"]
+                    [2,"[]",null,null,null,null,null,null,null]
+                    """);
+            }, options => options.UseArrayTypes = false);
+        }
+
+        [TestMethod]
+        public async Task Multi_dimensional_array_should_stop_until_the_column_is_a_String()
+        {
+            var endpoint = await Containers.GetClickHouseEndpointAsync();
+
+            await Db.ExecuteAsync(@"
+                CREATE TABLE clk_arr_dim (id int PRIMARY KEY, a int[]);
+                CREATE PUBLICATION clk_arr_dim_pub FOR TABLE clk_arr_dim;");
+
+            await Db.CreateSlotAsync("clk_arr_dim_slot");
+
+            using var logs = new CollectingLoggerFactory();
+
+            var builder = PgOutput2JsonBuilder.Create()
+                .WithLoggerFactory(logs)
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications("clk_arr_dim_pub")
+                .WithPgReplicationSlot("clk_arr_dim_slot")
+                .WithReconnectDelay(TimeSpan.FromMilliseconds(500))
+                .UseClickHouse(options => Configure(options, endpoint));
+
+            await using (new RunningListener(builder))
+            {
+                await Db.ExecuteAsync("INSERT INTO clk_arr_dim VALUES (1, '{1,2}')");
+
+                await WaitForAsync(endpoint, "clk_arr_dim", "[1,[1,2]]");
+
+                await Db.ExecuteAsync("INSERT INTO clk_arr_dim VALUES (2, '{{1,2},{3,4}}')");
+
+                await Wait.UntilAsync(() => logs.Contains(Microsoft.Extensions.Logging.LogLevel.Error, "Column a has a multi-dimensional array"), "the error");
+
+                // the fix the error names: the listener reconnects, sees the String and writes the JSON text
+                await QueryAsync(endpoint, "ALTER TABLE clk_arr_dim MODIFY COLUMN a String");
+
+                await WaitForAsync(endpoint, "clk_arr_dim",
+                    """
+                    [1,"[1,2]"]
+                    [2,"[[1,2],[3,4]]"]
+                    """);
+            }
         }
 
         [TestMethod]
