@@ -56,5 +56,54 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 new[] { "public.om_kinesis[1]", "public.om_kinesis[2]", "public.om_kinesis[1]", "public.om_kinesis[2]" },
                 records.Select(r => r.PartitionKey).ToArray());
         }
+
+        [TestMethod]
+        public async Task Kinesis_should_put_a_batch_larger_than_one_request_in_order()
+        {
+            var config = new AmazonKinesisConfig { ServiceURL = await Containers.GetLocalStackUrlAsync(), AuthenticationRegion = "us-east-1" };
+
+            using var client = new AmazonKinesisClient(config);
+
+            await client.CreateStreamAsync(new CreateStreamRequest { StreamName = "om_kinesis_large", ShardCount = 1 });
+
+            await Wait.UntilAsync(
+                async () => (await client.DescribeStreamSummaryAsync(new DescribeStreamSummaryRequest { StreamName = "om_kinesis_large" })).StreamDescriptionSummary.StreamStatus == StreamStatus.ACTIVE,
+                "the stream");
+
+            // more records than one PutRecords request takes
+            const int count = 1_200;
+
+            await using (var publisher = new global::PgOutput2Json.Kinesis.KinesisPublisher(new() { StreamName = "om_kinesis_large", KinesisConfig = config }, null))
+            {
+                for (var i = 1; i <= count; i++)
+                {
+                    await publisher.PublishAsync(StoreMessage.Create(100, (ulong)i), default);
+                }
+
+                await publisher.ConfirmAsync(default);
+            }
+
+            var shardId = (await client.ListShardsAsync(new ListShardsRequest { StreamName = "om_kinesis_large" })).Shards[0].ShardId;
+
+            var iterator = (await client.GetShardIteratorAsync(new GetShardIteratorRequest
+            {
+                StreamName = "om_kinesis_large",
+                ShardId = shardId,
+                ShardIteratorType = ShardIteratorType.TRIM_HORIZON,
+            })).ShardIterator;
+
+            var messageNumbers = new List<int>();
+
+            for (var attempt = 0; messageNumbers.Count < count && attempt < 50; attempt++)
+            {
+                var response = await client.GetRecordsAsync(new GetRecordsRequest { ShardIterator = iterator });
+
+                messageNumbers.AddRange(response.Records.Select(r => System.Text.Json.JsonDocument.Parse(r.Data.ToArray()).RootElement.GetProperty("n").GetInt32()));
+
+                iterator = response.NextShardIterator;
+            }
+
+            CollectionAssert.AreEqual(Enumerable.Range(1, count).ToArray(), messageNumbers.ToArray());
+        }
     }
 }

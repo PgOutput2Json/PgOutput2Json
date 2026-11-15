@@ -64,3 +64,12 @@ Consumers of the Kinesis stream must therefore be prepared for duplicated messag
 - `n` — the message number within the transaction
 
 A `(w, n)` pair uniquely identifies a change event. A consumer that remembers the highest pair it processed, per table and shard, can skip anything at or below it.
+
+### Records out of order after a rejected record
+
+A batch of changes is sent in `PutRecords` requests of up to 500 records and 5 MB, one after the other.
+
+Kinesis can accept the records of a request that follow a record it rejected (for example one throttled with `ProvisionedThroughputExceededException`). The batch is not confirmed and is replayed, so the rejected record reaches the stream once the problem is gone, but **after** records that follow it in the WAL. For example, if record 2 of 1, 2, 3 is rejected, the shard ends up with 1, 3, 1, 2, 3.
+
+- A consumer that applies changes idempotently is not affected: a row may show an older version for a moment, and the replay brings it up to date.
+- A consumer that keeps a watermark (the highest `(w, n)` pair processed) skips the late record as a duplicate, and loses it. Give the stream enough capacity that records are not throttled (on-demand mode, or enough shards), or apply the changes idempotently.
