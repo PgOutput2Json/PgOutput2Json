@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 
-namespace PgOutput2Json.ClickHouse
+namespace PgOutput2Json
 {
     /// <summary>
     /// A buffer reused for the UTF-8 bytes of one message at a time, so that a message is parsed without

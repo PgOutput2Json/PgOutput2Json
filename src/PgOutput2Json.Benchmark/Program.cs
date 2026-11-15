@@ -130,6 +130,16 @@ try
                 o.UseRowBinary = options.ClickHouseRowBinary;
             });
         }
+        else if (output == "sqlite")
+        {
+            foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" }) File.Delete(options.SqliteFile + suffix);
+
+            builder.UseSqlite(o =>
+            {
+                o.ConnectionStringBuilder.DataSource = options.SqliteFile;
+                o.UseWal = options.SqliteWal;
+            });
+        }
         else if (options.Compact)
         {
             builder.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact);

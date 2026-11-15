@@ -526,6 +526,10 @@ END;
 
 This tells connections with foreign key checks off from those with them on, so it works as long as your application's connections check them (the default of Microsoft.Data.Sqlite and EF Core), and you do not turn them on in `PostConnectionSetup`.
 
+### Batch size
+
+Every batch of changes is one transaction. `UseSqlite` sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 58,000 rows per second and the stream at about 62,000 with batches of 1,000, and at about 52,000 and 56,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL in Docker on the same machine). Larger batches add little. To use another size, call `WithBatchSize` after `UseSqlite`. A batch that is not full is still written after the batch wait time (100 ms by default).
+
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
 
 ### 7.1 Create a .NET Worker Service
