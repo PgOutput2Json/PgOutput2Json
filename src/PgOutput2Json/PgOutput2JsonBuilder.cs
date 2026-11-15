@@ -65,6 +65,11 @@ namespace PgOutput2Json
             return this;
         }
 
+        /// <summary>
+        /// The factory an output registered, so that the benchmark can wrap it.
+        /// </summary>
+        internal IMessagePublisherFactory? MessagePublisherFactory => _messagePublisherFactory;
+
         public PgOutput2JsonBuilder WithMessagePublisherFactory(IMessagePublisherFactory messagePublisherFactory)
         {
             _messagePublisherFactory = messagePublisherFactory;

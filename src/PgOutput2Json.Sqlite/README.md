@@ -125,6 +125,8 @@ The outputs that store data instead of forwarding messages (SQLite, MongoDB, Dyn
 
 Every output is covered by integration tests, which run on each change against PostgreSQL 14 to 18.
 
+To measure the throughput on your own machine, run the [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark): it copies and streams rows to a null output or to ClickHouse, and reports rows per second, CPU and allocations.
+
 ## 🤖 AI-assisted Development
 
 For transparency: as of recently, we use AI tools (e.g. Claude Code) for some development tasks — writing and reviewing code, tests, and documentation, and analyzing issues. AI-assisted changes go through the same review and testing as everything else before they are merged into a release.

@@ -19,7 +19,12 @@ dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.cs
 
 # Run the manual integration test worker
 dotnet run --project src/PgOutput2Json.TestWorker/PgOutput2Json.TestWorker.csproj
+
+# Run the benchmark (Docker; see src/PgOutput2Json.Benchmark/README.md for the options and profiling)
+dotnet run -c Release --project src/PgOutput2Json.Benchmark -- --rows 1000000 --output null,clickhouse
 ```
+
+The benchmark measures the initial copy and catching up with rows in the WAL, end to end, with a null output (the library alone) or ClickHouse. A wrapper around the output's factory (`CountingPublisherFactory`, using the builder's internal `MessagePublisherFactory`) counts the confirmed rows, and it reports rows/s, CPU and allocations per row. On Linux it connects to the containers at their own IP, not through Docker's port proxy.
 
 Both test projects run on every pull request and on `main` (`.github/workflows/tests.yml`). The integration tests use PostgreSQL 16 unless `PG_IMAGE` is set (e.g. `PG_IMAGE=postgres:14`); the CI repeats them on versions 14 to 18. A test that needs a newer version calls `Containers.RequirePg`. The tests of the outputs are in the `Outputs` namespace and start their own containers (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB Local, LocalStack, the Event Hubs emulator, ClickHouse) on first use; they share `MessageScenario` (message outputs) and `StoreScenario` (SQLite, MongoDB, DynamoDB, ClickHouse). The Event Hubs emulator cannot create an event hub while it runs: a test that needs one adds it to `Containers.EventHubs`. Run only them with `--filter "FullyQualifiedName~.Outputs."`, or leave them out with `!~`.
 
