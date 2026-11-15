@@ -56,6 +56,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             Assert.AreEqual(1, events.Select(e => e.Partition).Distinct().Count(), "the rows of one table are in several partitions");
 
+            // chosen by the publisher: murmur2 of the table name
+            Assert.AreEqual(ExpectedPartition("public.eh_route_table"), events[0].Partition);
+
             CollectionAssert.AreEqual(Enumerable.Range(1, RouteRows).ToList(), events.Select(e => e.Id).ToList());
         }
 

@@ -26,52 +26,19 @@ namespace PgOutput2Json.Tests
 
             var groups = Describe(EventHubsPublisher.GetSendGroups(buffer));
 
-            CollectionAssert.AreEqual(new[] { "0:1,2,4,5", "1:3" }, groups);
+            CollectionAssert.AreEqual(new[] { "0:a1,b2,a4,b5", "1:a3" }, groups);
         }
 
-        [TestMethod]
-        public void GetSendGroups_should_send_in_buffer_order_when_the_service_picks_the_partition()
+        private static EventHubsPublisher.BufferEntry Entry(string partitionId, string tableName, ulong messageNo)
         {
-            // tables a and b can share a service-chosen partition, so their order must be kept
-            var buffer = new List<EventHubsPublisher.BufferEntry>
-            {
-                Entry(null, "a", 1),
-                Entry(null, "a", 2),
-                Entry(null, "b", 3),
-                Entry(null, "a", 4),
-            };
-
-            var groups = Describe(EventHubsPublisher.GetSendGroups(buffer));
-
-            CollectionAssert.AreEqual(new[] { "a:1,2", "b:3", "a:4" }, groups);
-        }
-
-        [TestMethod]
-        public void GetSendGroups_should_send_in_buffer_order_when_only_some_events_have_a_partition()
-        {
-            var buffer = new List<EventHubsPublisher.BufferEntry>
-            {
-                Entry("0", "a", 1),
-                Entry(null, "b", 2),
-                Entry("0", "a", 3),
-                Entry("0", "c", 4),
-            };
-
-            var groups = Describe(EventHubsPublisher.GetSendGroups(buffer));
-
-            CollectionAssert.AreEqual(new[] { "0:1", "b:2", "0:3,4" }, groups);
-        }
-
-        private static EventHubsPublisher.BufferEntry Entry(string? partitionId, string tableName, ulong messageNo)
-        {
-            return new EventHubsPublisher.BufferEntry(new EventData("{}") { MessageId = messageNo.ToString() }, partitionId, tableName);
+            return new EventHubsPublisher.BufferEntry(new EventData("{}") { MessageId = $"{tableName}{messageNo}" }, partitionId);
         }
 
         // "target:messageNo,messageNo" per group, in send order
         private static string[] Describe(IEnumerable<List<EventHubsPublisher.BufferEntry>> groups)
         {
             return groups
-                .Select(g => $"{g[0].PartitionId ?? g[0].PartitionKey}:{string.Join(",", g.Select(x => x.EventData.MessageId))}")
+                .Select(g => $"{g[0].PartitionId}:{string.Join(",", g.Select(x => x.EventData.MessageId))}")
                 .ToArray();
         }
     }
