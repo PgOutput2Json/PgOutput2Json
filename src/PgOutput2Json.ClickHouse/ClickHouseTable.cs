@@ -36,6 +36,11 @@ namespace PgOutput2Json.ClickHouse
         public const string VersionColumn = "_version";
         public const string DeletedColumn = "_deleted";
 
+        /// <summary>
+        /// When ClickHouse wrote the row, filled in by ClickHouse. It is not in the inserts, so a replayed change gets a new time.
+        /// </summary>
+        public const string SyncedAtColumn = "_synced_at";
+
         public string QuotedName { get; }
 
         public IReadOnlyList<ClickHouseColumn> Columns { get; }
@@ -73,7 +78,7 @@ namespace PgOutput2Json.ClickHouse
             return column.IsKey && !HasNullableKey ? column.Type : $"Nullable({column.Type})";
         }
 
-        public string GetCreateStatement()
+        public string GetCreateStatement(TimeSpan? cleanUpDeletedRowsAfter)
         {
             var sql = new StringBuilder($"CREATE TABLE IF NOT EXISTS {QuotedName} (");
 
@@ -82,7 +87,7 @@ namespace PgOutput2Json.ClickHouse
                 sql.Append(column.QuotedName).Append(' ').Append(GetColumnType(column)).Append(", ");
             }
 
-            sql.Append($"{VersionColumn} UInt128, {DeletedColumn} UInt8) ");
+            sql.Append($"{VersionColumn} UInt128, {DeletedColumn} UInt8, {SyncedAtColumn} DateTime64(6, 'UTC') DEFAULT now64(6)) ");
 
             if (KeyColumns.Count == 0)
             {
@@ -93,10 +98,37 @@ namespace PgOutput2Json.ClickHouse
             {
                 sql.Append($"ENGINE = ReplacingMergeTree({VersionColumn}, {DeletedColumn}) ORDER BY ({string.Join(", ", KeyColumns.Select(c => c.QuotedName))})");
 
-                if (HasNullableKey) sql.Append(" SETTINGS allow_nullable_key = 1");
+                var settings = new List<string>();
+
+                if (HasNullableKey) settings.Add("allow_nullable_key = 1");
+                if (cleanUpDeletedRowsAfter is { } after) settings.Add(GetCleanupSettings(after));
+
+                if (settings.Count > 0) sql.Append(" SETTINGS ").Append(string.Join(", ", settings));
             }
 
             return sql.ToString();
+        }
+
+        /// <summary>
+        /// The cleanup settings for a table that existed before: null for a table without a key, which has no deleted rows.
+        /// </summary>
+        public string? GetCleanupStatement(TimeSpan? cleanUpDeletedRowsAfter)
+        {
+            if (cleanUpDeletedRowsAfter is not { } after || KeyColumns.Count == 0) return null;
+
+            return $"ALTER TABLE {QuotedName} MODIFY SETTING {GetCleanupSettings(after)}";
+        }
+
+        /// <summary>
+        /// A merge removes the deleted rows once every part of a partition is older than the age, so in a table
+        /// that gets new rows all the time it does not happen; OPTIMIZE TABLE ... FINAL CLEANUP works there.
+        /// </summary>
+        private static string GetCleanupSettings(TimeSpan after)
+        {
+            return "allow_experimental_replacing_merge_with_cleanup = 1, " +
+                   "enable_replacing_merge_with_cleanup_for_min_age_to_force_merge = 1, " +
+                   "min_age_to_force_merge_on_partition_only = 1, " +
+                   $"min_age_to_force_merge_seconds = {(long)Math.Ceiling(after.TotalSeconds)}";
         }
 
         /// <summary>

@@ -34,6 +34,15 @@ namespace PgOutput2Json.ClickHouse
         public bool UseJsonType { get; set; } = true;
 
         /// <summary>
+        /// Removes the rows of deleted PostgreSQL rows from ClickHouse when no new rows have arrived in a table for this
+        /// long. Without it a deleted row is kept as a row marked deleted, which FINAL hides but which still takes
+        /// space. It uses the cleanup merges of ReplacingMergeTree, which ClickHouse still marks experimental.
+        /// The settings are added to the tables on the next start, also to existing tables. Default is null: deleted
+        /// rows are kept.
+        /// </summary>
+        public TimeSpan? CleanUpDeletedRowsAfter { get; set; }
+
+        /// <summary>
         /// ClickHouse settings sent with every request, e.g. "insert_quorum".
         /// </summary>
         public Dictionary<string, string> Settings { get; } = [];

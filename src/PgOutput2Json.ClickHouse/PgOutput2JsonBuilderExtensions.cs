@@ -26,6 +26,11 @@ namespace PgOutput2Json
                 throw new ArgumentException("ClickHouse Database must be provided", nameof(options.Database));
             }
 
+            if (options.CleanUpDeletedRowsAfter is { } cleanUpAfter && cleanUpAfter < TimeSpan.FromSeconds(1))
+            {
+                throw new ArgumentException("ClickHouse CleanUpDeletedRowsAfter must be at least one second", nameof(options.CleanUpDeletedRowsAfter));
+            }
+
             builder.WithMessagePublisherFactory(new ClickHousePublisherFactory(options));
 
             return builder;
