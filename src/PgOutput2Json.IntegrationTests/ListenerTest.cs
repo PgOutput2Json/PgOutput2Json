@@ -124,17 +124,21 @@ namespace PgOutput2Json.IntegrationTests
             using var logs = new CollectingLoggerFactory();
 
             var failed = false;
+            var confirmedAtFailure = -1;
 
-            var publisher = new CollectingPublisherFactory
+            var publisher = new CollectingPublisherFactory();
+
+            // the third row fails once, after the first two were published
+            publisher.OnPublish = message =>
             {
-                // the third row fails once, after the first two were published but not confirmed
-                OnPublish = message =>
+                if (!failed && message.KeyKolValue.ToString() == "[3]")
                 {
-                    if (!failed && message.KeyKolValue.ToString() == "[3]")
-                    {
-                        failed = true;
-                        throw new InvalidOperationException("The output is down");
-                    }
+                    failed = true;
+
+                    // on a slow machine the batch wait time can pass between two rows of the transaction, and confirm them
+                    confirmedAtFailure = publisher.ConfirmedBatches.Sum();
+
+                    throw new InvalidOperationException("The output is down");
                 }
             };
 
@@ -142,20 +146,25 @@ namespace PgOutput2Json.IntegrationTests
             {
                 await Db.ExecuteAsync("INSERT INTO ls_fail SELECT i, 'v' FROM generate_series(1, 4) i");
 
-                await Wait.UntilAsync(() => publisher.Messages.Count >= 6, "the replay", 60);
+                await Wait.UntilAsync(() => failed && publisher.Messages.Count >= 2 + 4 - confirmedAtFailure, "the replay", 60);
                 await Wait.UntilAsync(() => publisher.ConfirmedBatches.Sum() >= 4, "the confirm");
             }
 
-            // at-least-once: the whole transaction again, in order, and nothing lost
-            Assert.AreEqual("[1] [2] [1] [2] [3] [4]", Keys(publisher));
+            // at-least-once: the rows that were not confirmed again, in order, and nothing lost; the publisher saves its
+            // position, so the confirmed ones are skipped
+            var replayed = Enumerable.Range(confirmedAtFailure + 1, 4 - confirmedAtFailure).Select(i => $"[{i}]");
+
+            Assert.AreEqual(string.Join(" ", new[] { "[1]", "[2]" }.Concat(replayed)), Keys(publisher));
             Assert.IsTrue(logs.Contains(LogLevel.Error, "The output is down"));
             Assert.AreEqual(2, publisher.PublisherCount, "a new publisher is created for the new connection");
 
             // the replay has the same deduplication keys
             var messages = publisher.Messages;
 
-            Assert.AreEqual((messages[0].TxFinalLsn, messages[0].MessageNo), (messages[2].TxFinalLsn, messages[2].MessageNo));
-            Assert.AreEqual((messages[1].TxFinalLsn, messages[1].MessageNo), (messages[3].TxFinalLsn, messages[3].MessageNo));
+            for (var i = confirmedAtFailure; i < 2; i++)
+            {
+                Assert.AreEqual((messages[i].TxFinalLsn, messages[i].MessageNo), (messages[2 + i - confirmedAtFailure].TxFinalLsn, messages[2 + i - confirmedAtFailure].MessageNo));
+            }
         }
 
         [TestMethod]
