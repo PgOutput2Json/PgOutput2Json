@@ -45,6 +45,8 @@ namespace PgOutput2Json.Webhooks
 
         private readonly StringBuilder _payload = new(1024);
 
+        private readonly Utf8Buffer _utf8 = new();
+
         private ulong _walSeqFirst;
         private ulong _walSeqLast;
 
@@ -95,15 +97,18 @@ namespace PgOutput2Json.Webhooks
 
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            var body = "[" + _payload.ToString() + "]";
+            // the JSON array of the batch, as UTF-8 once: signed and sent as these bytes, also by a retry
+            _payload.Append(']');
+
+            var body = _utf8.Encode(_payload);
 
             // Sign the payload
             string? signature = null;
             if (!string.IsNullOrWhiteSpace(_options.WebhookSecret))
             {
                 signature = _options.UseStandardWebhooks
-                    ? SignStandard(msgId, timestamp, body)
-                    : Sign(body);
+                    ? SignStandard(msgId, timestamp, body.Span)
+                    : Sign(body.Span);
             }
 
             var attempt = 0;
@@ -114,7 +119,7 @@ namespace PgOutput2Json.Webhooks
                 {
                     if (_execFilePath != null)
                     {
-                        await PostToLocalFileAsync(_execFilePath, msgId, timestamp, body, signature, token)
+                        await PostToLocalFileAsync(_execFilePath, msgId, timestamp, _payload, signature, token)
                             .ConfigureAwait(false);
                     }
                     else
@@ -144,7 +149,7 @@ namespace PgOutput2Json.Webhooks
             }
         }
 
-        private async Task PostToLocalFileAsync(string filePath, string msgId, string timestamp, string body, string? signature, CancellationToken token)
+        private async Task PostToLocalFileAsync(string filePath, string msgId, string timestamp, StringBuilder body, string? signature, CancellationToken token)
         {
             var psi = new ProcessStartInfo
             {
@@ -216,11 +221,15 @@ namespace PgOutput2Json.Webhooks
             }
         }
 
-        private async Task PostToWebhookAsync(string msgId, string timestamp, string body, string? signature, CancellationToken token)
+        private async Task PostToWebhookAsync(string msgId, string timestamp, ReadOnlyMemory<byte> body, string? signature, CancellationToken token)
         {
+            var content = new ReadOnlyMemoryContent(body);
+
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+
             using var request = new HttpRequestMessage(HttpMethod.Post, _options.WebhookUrl)
             {
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
+                Content = content
             };
 
             request.Headers.Add(_headerKeyUserAgent, _userAgent);
@@ -255,7 +264,7 @@ namespace PgOutput2Json.Webhooks
 
                 _logger?.LogWarning("[PgHook] Webhook returned {StatusCode}: {Request} {Response}",
                     response.StatusCode,
-                    body,
+                    _payload.ToString(),
                     responseBody);
             }
 
@@ -270,6 +279,7 @@ namespace PgOutput2Json.Webhooks
             }
             else
             {
+                _payload.Append('[');
                 _walSeqFirst = jsonMessage.TxFinalLsn;
             }
 
@@ -295,7 +305,8 @@ namespace PgOutput2Json.Webhooks
             }
             else
             {
-                _payload.Append(jsonMessage.Json.ToString());
+                // copied from the StringBuilder, without a string of it
+                _payload.Append(jsonMessage.Json);
             }
 
             return Task.CompletedTask;
@@ -306,28 +317,29 @@ namespace PgOutput2Json.Webhooks
             return ValueTask.CompletedTask;
         }
 
-        public string Sign(string body)
+        public string Sign(ReadOnlySpan<byte> body)
         {
-            using var hmac = new HMACSHA256(_key);
-
-            var hash = hmac.ComputeHash(_safeUTF8Encoding.GetBytes(body));
+            var hash = HMACSHA256.HashData(_key, body);
             var signature = "sha256=" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
 
             return signature;
         }
 
-        public string SignStandard(string msgId, string timestamp, string payload)
+        public string SignStandard(string msgId, string timestamp, ReadOnlySpan<byte> payload)
         {
-            var toSign = $"{msgId}.{timestamp}.{payload}";
-            var toSignBytes = _safeUTF8Encoding.GetBytes(toSign);
+            // msgId.timestamp.payload, hashed in two parts: no copy of the payload with the prefix in front
+            var prefix = _safeUTF8Encoding.GetBytes($"{msgId}.{timestamp}.");
 
             var result = "";
 
             foreach (var key in _stdKeys)
             {
-                using var hmac = new HMACSHA256(key);
+                using var hmac = IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, key);
 
-                var hash = hmac.ComputeHash(toSignBytes);
+                hmac.AppendData(prefix);
+                hmac.AppendData(payload);
+
+                var hash = hmac.GetHashAndReset();
                 var signature = $"v1,{Convert.ToBase64String(hash)}";
 
                 if (result == "")

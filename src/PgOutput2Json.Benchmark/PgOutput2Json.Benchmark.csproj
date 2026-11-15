@@ -25,6 +25,7 @@
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMq\PgOutput2Json.RabbitMq.csproj" />
     <ProjectReference Include="..\PgOutput2Json.MongoDb\PgOutput2Json.MongoDb.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Webhooks\PgOutput2Json.Webhooks.csproj" />
   </ItemGroup>
 
 </Project>
