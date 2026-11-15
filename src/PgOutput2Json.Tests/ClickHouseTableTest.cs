@@ -154,6 +154,31 @@ namespace PgOutput2Json.Tests
         }
 
         [TestMethod]
+        public void Array_of_a_type_that_is_not_built_in_should_be_an_array_of_strings()
+        {
+            // the type name comes after the type modifier: an array is named after its type with an underscore
+            using var schema = JsonDocument.Parse("""["public.t",["id",1,23],["moods",0,16384,-1,"_mood"],["mood",0,16385,-1,"mood"],["key",1,16384,-1,"_mood"]]""");
+
+            var table = ClickHouseTable.FromSchema("t", schema.RootElement, useJsonType: true, useArrayTypes: true);
+
+            Assert.AreEqual("Array(Nullable(String)) TextArray, String Other, String Other",
+                string.Join(", ", table.Columns.Skip(1).Select(c => $"{c.Type} {c.Kind}")));
+
+            var text = ClickHouseTable.FromSchema("t", schema.RootElement, useJsonType: true, useArrayTypes: false);
+
+            Assert.AreEqual(ColumnKind.Other, text.Columns[1].Kind);
+
+            // the value is the PostgreSQL text of the array
+            Assert.AreEqual("""["sad","so so",null,"NULL"]""", Append("Array(Nullable(String))", ColumnKind.TextArray, """ "{sad,\"so so\",NULL,\"NULL\"}" """));
+            Assert.AreEqual("[]", Append("Array(Nullable(String))", ColumnKind.TextArray, "\"{}\""));
+            Assert.AreEqual("null", Append("Array(Nullable(String))", ColumnKind.TextArray, "null"));
+
+            var exception = Assert.ThrowsExactly<Exception>(() => Append("Array(Nullable(String))", ColumnKind.TextArray, "\"{{sad},{so}}\""));
+
+            StringAssert.Contains(exception.Message, "Column a has a multi-dimensional array");
+        }
+
+        [TestMethod]
         public void Array_columns_should_not_be_Nullable()
         {
             var column = new ClickHouseColumn { Name = "a", QuotedName = "`a`", IsKey = false, Type = "Array(Nullable(Int32))", Kind = ColumnKind.Array };

@@ -269,6 +269,59 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
+        [DataRow("ts_ty", JsonWriteMode.Compact,
+            """["public.ts_ty",["id",1,23],["mood",0,MOOD,-1,"ts_ty_mood"],["moods",0,MOODS,-1,"_ts_ty_mood"],["ints",0,INTS,-1,"_int4"],["code",0,CODE,-1,"text"],["t",0,25]]""")]
+        [DataRow("ts_tyd", JsonWriteMode.Default,
+            """{"tableName":"public.ts_tyd","columns":[{"name":"id","isKey":true,"dataType":23},{"name":"mood","isKey":false,"dataType":MOOD,"typeName":"ts_ty_mood"},""" +
+            """{"name":"moods","isKey":false,"dataType":MOODS,"typeName":"_ts_ty_mood"},{"name":"ints","isKey":false,"dataType":INTS,"typeName":"_int4"},""" +
+            """{"name":"code","isKey":false,"dataType":CODE,"typeName":"text"},{"name":"t","isKey":false,"dataType":25}]}""")]
+        public async Task Schema_should_have_the_name_of_a_type_that_is_not_built_in_in_the_copy_and_the_stream(string name, JsonWriteMode writeMode, string expected)
+        {
+            // a domain has the name of its base type, as pgoutput sends it, also a domain of a domain
+            await Db.ExecuteAsync($@"
+                DO $$ BEGIN
+                    CREATE TYPE ts_ty_mood AS ENUM ('sad', 'happy');
+                    CREATE DOMAIN ts_ty_ints AS int[];
+                    CREATE DOMAIN ts_ty_code0 AS text;
+                    CREATE DOMAIN ts_ty_code AS ts_ty_code0;
+                EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                CREATE TABLE {name} (id int PRIMARY KEY, mood ts_ty_mood, moods ts_ty_mood[], ints ts_ty_ints, code ts_ty_code, t text);
+                INSERT INTO {name} VALUES (1, 'sad', '{{sad,happy}}', '{{1,2}}', 'a', 'b');
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+
+            foreach (var (token, type) in new[] { ("MOODS", "ts_ty_mood[]"), ("MOOD", "ts_ty_mood"), ("INTS", "ts_ty_ints"), ("CODE", "ts_ty_code") })
+            {
+                expected = expected.Replace(token, (await Db.ScalarAsync<uint>($"SELECT '{type}'::regtype::oid")).ToString());
+            }
+
+            var publisher = new CollectingPublisherFactory();
+
+            await using (new RunningListener(CreateBuilder(name, publisher).WithJsonOptions(options => options.WriteMode = writeMode)))
+            {
+                await Wait.UntilAsync(async () => await Db.TableStatesAsync($"{name}_slot") == $"public.{name}:ready", "the table ready");
+
+                await Db.ExecuteAsync($"INSERT INTO {name} VALUES (2, 'happy', '{{happy}}', '{{3}}', 'c', 'd')");
+
+                await Wait.UntilAsync(() => publisher.Messages.Count >= 2, "the streamed row");
+            }
+
+            var property = writeMode == JsonWriteMode.Compact ? "s" : "schema";
+
+            var schemas = publisher.Messages.Select(m =>
+            {
+                using var json = JsonDocument.Parse(m.Json);
+
+                return json.RootElement.GetProperty("c").GetString() + ":" +
+                    (json.RootElement.TryGetProperty(property, out var schema) ? schema.GetRawText() : "-");
+            }).ToArray();
+
+            // the copy and the stream send the same schema
+            CollectionAssert.AreEqual(new[] { $"C:{expected}", $"I:{expected}" }, schemas);
+        }
+
+        [TestMethod]
         public async Task Copy_should_apply_the_row_filter_and_the_column_list()
         {
             Containers.RequirePg(15, "Row filters and column lists");

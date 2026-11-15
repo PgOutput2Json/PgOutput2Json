@@ -302,7 +302,7 @@ namespace PgOutput2Json.IntegrationTests
                 "CREATE TYPE jo_lit_mood AS ENUM ('sad', 'happy'); CREATE TABLE jo_lit (id int PRIMARY KEY, moods jo_lit_mood[], mood jo_lit_mood)",
                 "INSERT INTO jo_lit VALUES (1, ARRAY['sad', 'happy']::jo_lit_mood[], 'happy')", 1);
 
-            // the stream carries only the type oid, and the oid of a user type says nothing about it
+            // the value is the PostgreSQL literal; the schema has the name of the type (_jo_lit_mood)
             Assert.AreEqual("""{"id":1,"moods":"{sad,happy}","mood":"happy"}""", Row(messages[0]));
         }
 

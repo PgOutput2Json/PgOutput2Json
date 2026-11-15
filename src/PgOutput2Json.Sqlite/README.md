@@ -92,8 +92,9 @@ Compact mode is off by default. Your message handler, the message brokers and th
 With `.WithJsonOptions(o => o.WriteMode = JsonWriteMode.Compact)`, `"k"` and `"r"` are arrays of values without column names, which makes the messages smaller. The column names come in a schema property:
 
 ```
-"s": ["schema.table", ["id", 1, 23], ["name", 0, 1043, 104], ...]
-                       // column name, part of the key (1/0), type OID, type modifier (only if present)
+"s": ["schema.table", ["id", 1, 23], ["name", 0, 1043, 104], ["moods", 0, 16384, -1, "_mood"], ...]
+                       // column name, part of the key (1/0), type OID, type modifier (only if present),
+                       // type name (only for types that are not built in)
 ```
 
 The schema is not repeated in every message. It comes with the first row of a table after the listener connects, and again after the table changes. After a reconnect it is not always repeated for every table. **Consumers must remember the last schema per table** and decode rows with it, as the SQLite, MongoDB and DynamoDB adapters do. A consumer that starts reading in the middle of a stream must already know the schema, for example from its own store.

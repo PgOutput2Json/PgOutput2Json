@@ -159,7 +159,7 @@ namespace PgOutput2Json.ClickHouse
                 await _client.ExecuteAsync(table.GetAlterStatement(), null, null, token).ConfigureAwait(false);
             }
 
-            if (table.Columns.Any(c => c.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray))
+            if (table.Columns.Any(c => c.IsArray))
             {
                 table.UseExistingTypes(await GetColumnTypesAsync(table, token).ConfigureAwait(false));
             }
@@ -210,9 +210,19 @@ namespace PgOutput2Json.ClickHouse
 
         internal static void AppendValue(StringBuilder line, ClickHouseColumn column, JsonElement value)
         {
-            if (column.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray && value.ValueKind == JsonValueKind.Array)
+            if (column.IsArray && value.ValueKind == JsonValueKind.Array)
             {
                 AppendArray(line, column, value);
+            }
+            else if (column.Kind == ColumnKind.TextArray && value.ValueKind == JsonValueKind.String)
+            {
+                var json = new StringBuilder();
+
+                JsonUtils.WriteArrayOfText(json, value.GetString());
+
+                using var doc = JsonDocument.Parse(json.ToString());
+
+                AppendArray(line, column, doc.RootElement);
             }
             else if (column.Kind == ColumnKind.Json && value.ValueKind == JsonValueKind.String)
             {
@@ -249,7 +259,7 @@ namespace PgOutput2Json.ClickHouse
                 if (!first) line.Append(',');
                 first = false;
 
-                if (column.Kind != ColumnKind.Array && element.ValueKind == JsonValueKind.String)
+                if (column.Kind is ColumnKind.DateArray or ColumnKind.TimestampArray && element.ValueKind == JsonValueKind.String)
                 {
                     line.Append('"').Append(Clamp(column.Kind == ColumnKind.DateArray ? ColumnKind.Date : ColumnKind.Timestamp, element.GetString()!)).Append('"');
                 }

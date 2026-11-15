@@ -434,6 +434,10 @@ namespace PgOutput2Json
                                 if (relation.RelationId == oid) message.HasRelationChanged = true;
                                 continue;
 
+                            case TypeMessage type:
+                                writer.AddType(type);
+                                continue;
+
                             case BeginMessage begin:
                                 message.CommitTimeStamp = begin.TransactionCommitTimestamp;
                                 message.TransactionFinalLsn = (ulong)begin.TransactionFinalLsn;

@@ -198,6 +198,12 @@ namespace PgOutput2Json
                                 continue;
                             }
 
+                            if (message is TypeMessage typeMsg)
+                            {
+                                _writer.AddType(typeMsg);
+                                continue;
+                            }
+
                             if (message is BeginMessage beginMsg)
                             {
                                 replicationMessage.CommitTimeStamp = beginMsg.TransactionCommitTimestamp;

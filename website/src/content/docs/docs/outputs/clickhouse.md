@@ -99,7 +99,7 @@ The options are used only when the output creates the table: ClickHouse cannot c
 | `timestamp` | `DateTime64(6)` |
 | `timestamptz` | `DateTime64(6, 'UTC')` |
 | arrays of the types above, and of `text`, `bytea` and the other types sent as text | `Array(Nullable(...))` of the element type, e.g. `integer[]` is `Array(Nullable(Int32))` (see [Arrays](#arrays)) |
-| arrays of enums and user-defined types | `String` with the PostgreSQL array literal, e.g. `{sad,happy}` |
+| arrays of enums and user-defined types | `Array(Nullable(String))`, e.g. `['sad','happy']` |
 | `json`, `jsonb` | `JSON` (see [JSON columns](#json-columns)) |
 | `bytea` | `String` with the bytes in hex |
 | anything else (`text`, `time`, `interval`, enums...) | `String` with the text PostgreSQL sends |
@@ -111,7 +111,9 @@ Key columns are not `Nullable`, all the other columns are, except arrays. A key 
 An array is a ClickHouse array, so `has()`, `arrayJoin()` and the other array functions work on it without parsing. Two things differ from PostgreSQL:
 
 - **A null array is an empty array**, because ClickHouse arrays cannot be `Nullable`. A `NULL` element stays `null`.
-- **One dimension.** PostgreSQL does not send the number of dimensions of a column (`integer[]` and `integer[][]` are the same type), so the ClickHouse column has one. A multi-dimensional value stops the replication with an error that names the column. Change that column to a `String` (`ALTER TABLE ... MODIFY COLUMN ... String`), and the listener continues with the JSON text.
+- **One dimension.** PostgreSQL does not send the number of dimensions of a column (`integer[]` and `integer[][]` are the same type), so the ClickHouse column has one. A multi-dimensional value stops the replication with an error that names the column. Change that column to a `String` (`ALTER TABLE ... MODIFY COLUMN ... String`), and the listener continues with the JSON text (for an array of an enum or a user-defined type, the PostgreSQL array literal).
+
+The library sends the arrays of enums and user-defined types as the PostgreSQL array literal (`{sad,happy}`). The output knows they are arrays from the name of the type that PostgreSQL sends with the schema (an array type is named after its element type with an underscore: `_mood`), and stores their elements as strings. A domain over an array, such as `CREATE DOMAIN ints AS int[]`, is also an `Array(Nullable(String))`.
 
 With `options.UseArrayTypes = false`, new array columns are `String`s with the JSON text, as before version 2.1, and a null array stays `null`. An existing column keeps its type.
 
