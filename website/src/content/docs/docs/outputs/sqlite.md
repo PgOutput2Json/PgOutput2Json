@@ -10,6 +10,18 @@ The PgOutput2Json library will create the SQLite database if it does not already
 
 The output writes through a connection of its own, opened without pooling, so it neither gets nor leaves connection settings in the pool your application uses (for example `PRAGMA query_only`). On that connection it turns off the foreign key checks, like PostgreSQL's own logical replication: the rows arrive in the order of the table syncs and the batches, not in the order of the foreign keys, so a child row can come before its parent. Your application's connections still check them. To check them on the output's connection too, run `PRAGMA foreign_keys = ON` in `options.PostConnectionSetup`.
 
+Triggers on the tables fire for the replicated rows too: SQLite cannot turn them off for one connection, as PostgreSQL's replication does. A trigger can tell the output's writes apart by the foreign key setting of the connection that fires it:
+
+```sql
+CREATE TRIGGER items_audit AFTER UPDATE ON items
+WHEN (SELECT foreign_keys FROM pragma_foreign_keys) = 1 -- not the replication
+BEGIN
+    INSERT INTO audit (item_id) VALUES (new.id);
+END;
+```
+
+This tells connections with foreign key checks off from those with them on, so it works as long as your application's connections check them (the default of Microsoft.Data.Sqlite and EF Core), and you do not turn them on in `PostConnectionSetup`.
+
 > **Important:** First set up PostgreSQL as described in [Getting started](../../getting-started/).
 
 ## Create a .NET Worker Service
