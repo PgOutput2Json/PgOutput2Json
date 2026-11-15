@@ -79,12 +79,14 @@ try
     }
 
     IPEndPoint? rabbitMqEndpoint = options.RabbitMqEndpoint != null ? IPEndPoint.Parse(options.RabbitMqEndpoint) : null;
+    IPEndPoint? rabbitMqAmqpEndpoint = options.RabbitMqAmqpEndpoint != null ? IPEndPoint.Parse(options.RabbitMqAmqpEndpoint) : null;
 
-    if (options.Outputs.Contains("rabbitmqstreams") && rabbitMqEndpoint == null)
+    // one container for both RabbitMQ outputs
+    if (options.Outputs.Contains("rabbitmqstreams") && rabbitMqEndpoint == null || options.Outputs.Contains("rabbitmq") && rabbitMqAmqpEndpoint == null)
     {
         Console.WriteLine("Starting rabbitmq:4-management...");
 
-        rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithPortBinding(5552, true).Build();
+        rabbitMq = new RabbitMqBuilder("rabbitmq:4-management").WithPortBinding(5552, true).WithPortBinding(5672, true).Build();
 
         await rabbitMq.StartAsync();
 
@@ -92,9 +94,13 @@ try
 
         if (plugin.ExitCode != 0) throw new Exception($"Could not enable the stream plugin: {plugin.Stderr}");
 
-        rabbitMqEndpoint = OperatingSystem.IsLinux()
+        rabbitMqEndpoint ??= OperatingSystem.IsLinux()
             ? new IPEndPoint(IPAddress.Parse(rabbitMq.IpAddress), 5552)
             : new IPEndPoint(IPAddress.Loopback, rabbitMq.GetMappedPublicPort(5552));
+
+        rabbitMqAmqpEndpoint ??= OperatingSystem.IsLinux()
+            ? new IPEndPoint(IPAddress.Parse(rabbitMq.IpAddress), 5672)
+            : new IPEndPoint(IPAddress.Loopback, rabbitMq.GetMappedPublicPort(5672));
     }
 
     // the server advertises its own host name to the clients, which the resolver replaces with the endpoint
@@ -212,6 +218,26 @@ try
                 o.Username = options.ClickHouseUsername;
                 o.Password = options.ClickHousePassword;
                 o.UseRowBinary = options.ClickHouseRowBinary;
+            });
+        }
+        else if (output == "rabbitmq")
+        {
+            var factory = new RabbitMQ.Client.ConnectionFactory
+            {
+                HostName = rabbitMqAmqpEndpoint!.Address.ToString(),
+                Port = rabbitMqAmqpEndpoint.Port,
+                UserName = options.RabbitMqUsername,
+                Password = options.RabbitMqPassword,
+            };
+
+            await RecreateExchangeAsync(factory);
+
+            builder.UseRabbitMq(o =>
+            {
+                o.ExchangeName = BenchmarkStream;
+                o.ConnectionFactory = factory;
+                o.HostNames.Add(factory.HostName);
+                o.UsePersistentMessagesByDefault = !options.RabbitMqTransient;
             });
         }
         else if (output == "rabbitmqstreams")
@@ -400,6 +426,22 @@ static async Task RecreateStreamAsync(StreamSystemConfig config)
             await Task.Delay(1000);
         }
     }
+}
+
+/// <summary>
+/// A new topic exchange with a new, empty queue bound to it, so that the messages are stored, as they would be.
+/// </summary>
+static async Task RecreateExchangeAsync(RabbitMQ.Client.ConnectionFactory factory)
+{
+    await using var connection = await factory.CreateConnectionAsync();
+    await using var channel = await connection.CreateChannelAsync();
+
+    await channel.QueueDeleteAsync(BenchmarkStream, ifUnused: false, ifEmpty: false);
+    await channel.ExchangeDeleteAsync(BenchmarkStream);
+
+    await channel.ExchangeDeclareAsync(BenchmarkStream, RabbitMQ.Client.ExchangeType.Topic, durable: true, autoDelete: false);
+    await channel.QueueDeclareAsync(BenchmarkStream, durable: true, exclusive: false, autoDelete: false);
+    await channel.QueueBindAsync(BenchmarkStream, BenchmarkStream, "#");
 }
 
 /// <summary>

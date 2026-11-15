@@ -10,7 +10,7 @@ namespace PgOutput2Json.Benchmark
             dotnet run -c Release --project src/PgOutput2Json.Benchmark -- [options]
 
               --scenario copy,stream     The initial copy of a table, and catching up with rows already in the WAL (default: both)
-              --output null,clickhouse,sqlite,rabbitmqstreams,kafka
+              --output null,clickhouse,sqlite,rabbitmq,rabbitmqstreams,kafka
                                          null: only counts the rows, which measures the library itself (default: null)
               --rows N                   Rows per scenario (default: 1000000)
               --workers N                Copy workers per table (default: 1)
@@ -29,6 +29,8 @@ namespace PgOutput2Json.Benchmark
               --sqlite FILE              The SQLite database, deleted before every run (default: pg2j_bench.db in the temp directory)
               --sqlite-wal               The WAL journal mode for SQLite (UseWal)
               --rabbitmq HOST:PORT       A RabbitMQ stream endpoint, instead of a container (stream pg2j_bench, created again for every run)
+              --rabbitmq-amqp HOST:PORT  A RabbitMQ AMQP endpoint, instead of a container (exchange and queue pg2j_bench, created again)
+              --rabbitmq-transient       Messages that are not persistent (UsePersistentMessagesByDefault = false)
               --rabbitmq-user USER       (default: rabbitmq)
               --rabbitmq-password PWD    (default: rabbitmq)
               --rabbitmq-buffer N        Messages per frame (MessageBufferSize, default: that of the output)
@@ -56,6 +58,8 @@ namespace PgOutput2Json.Benchmark
         public string SqliteFile { get; private set; } = Path.Combine(Path.GetTempPath(), "pg2j_bench.db");
         public bool SqliteWal { get; private set; }
         public string? RabbitMqEndpoint { get; private set; }
+        public string? RabbitMqAmqpEndpoint { get; private set; }
+        public bool RabbitMqTransient { get; private set; }
         public string RabbitMqUsername { get; private set; } = "rabbitmq";
         public string RabbitMqPassword { get; private set; } = "rabbitmq";
         public int? RabbitMqBufferSize { get; private set; }
@@ -95,6 +99,8 @@ namespace PgOutput2Json.Benchmark
                     case "--sqlite": options.SqliteFile = Value(); break;
                     case "--sqlite-wal": options.SqliteWal = true; break;
                     case "--rabbitmq": options.RabbitMqEndpoint = Value(); break;
+                    case "--rabbitmq-amqp": options.RabbitMqAmqpEndpoint = Value(); break;
+                    case "--rabbitmq-transient": options.RabbitMqTransient = true; break;
                     case "--rabbitmq-user": options.RabbitMqUsername = Value(); break;
                     case "--rabbitmq-password": options.RabbitMqPassword = Value(); break;
                     case "--rabbitmq-buffer": options.RabbitMqBufferSize = (int)Number(); break;
@@ -115,7 +121,7 @@ namespace PgOutput2Json.Benchmark
             }
 
             if (options.Scenarios.Any(s => s is not ("copy" or "stream"))) return null;
-            if (options.Outputs.Any(o => o is not ("null" or "clickhouse" or "sqlite" or "rabbitmqstreams" or "kafka"))) return null;
+            if (options.Outputs.Any(o => o is not ("null" or "clickhouse" or "sqlite" or "rabbitmq" or "rabbitmqstreams" or "kafka"))) return null;
 
             return options.Rows > 0 && options.Workers > 0 && options.TxRows > 0 && options.Runs > 0 ? options : null;
         }

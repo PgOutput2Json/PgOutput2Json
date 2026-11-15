@@ -67,3 +67,7 @@ public class Worker : BackgroundService
 
 Run the code, and with a little luck, you should see JSON messages being pushed into the `my_queue` in RabbitMQ when you make a change in the tables specified in `my_publication`.
 The routing key will be in the form: `schema.table.key_partition`. Since we did not configure anything specific in the PgOutput2Json, the `key_partition` will always be `0`.
+
+## Batch size
+
+At the end of every batch the listener waits for the confirms of RabbitMQ (publisher confirms). `UseRabbitMq` therefore sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark), with a durable queue bound to the exchange, the initial copy and the stream ran at about 31,000 rows per second with batches of 1,000, and at about 24,000 and 21,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and RabbitMQ in Docker on the same machine). Larger batches added nothing: RabbitMQ itself used most of the CPU, routing and confirming every message, also when the messages were not persistent. For more throughput, use [RabbitMQ Streams](../rabbitmq-streams/). To use another size, call `WithBatchSize` after `UseRabbitMq`. A batch that is not full is still confirmed after the batch wait time (100 ms by default).
