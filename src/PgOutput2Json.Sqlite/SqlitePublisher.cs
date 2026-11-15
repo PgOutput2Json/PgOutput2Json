@@ -251,9 +251,18 @@ namespace PgOutput2Json.Sqlite
         {
             if (_connection != null) return _connection;
 
-            _connection = new SqliteConnection(_options.ConnectionStringBuilder.ConnectionString);
+            // a connection of its own: a pooled one keeps its settings, so it could bring those of the application's
+            // connections (PRAGMA query_only), and take ours to them
+            var connectionString = new SqliteConnectionStringBuilder(_options.ConnectionStringBuilder.ConnectionString) { Pooling = false };
+
+            _connection = new SqliteConnection(connectionString.ConnectionString);
 
             await _connection.OpenAsync(token).ConfigureAwait(false);
+
+            // the rows come in the order of the table syncs and the batches, not in the order of the foreign keys,
+            // so they are not checked, as with session_replication_role = replica in PostgreSQL's own replication;
+            // the setting is per connection, and is ignored inside a transaction
+            await _connection.DisableForeignKeysAsync(token).ConfigureAwait(false);
 
             if (_options.UseWal)
             {

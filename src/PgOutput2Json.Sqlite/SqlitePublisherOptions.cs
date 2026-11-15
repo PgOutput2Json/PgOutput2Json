@@ -20,7 +20,15 @@ namespace PgOutput2Json.Sqlite
 
     public class SqlitePublisherOptions
     {
+        /// <summary>
+        /// The database to write to. The output opens a connection of its own, without pooling,
+        /// and turns off the foreign key checks on it.
+        /// </summary>
         public required SqliteConnectionStringBuilder ConnectionStringBuilder { get; set; }
+
+        /// <summary>
+        /// Runs after the output has opened its connection and set it up, before the first write.
+        /// </summary>
         public Func<SqliteConnection, Task>? PostConnectionSetup { get; set; }
 
         public bool UseWal { get; set; }

@@ -47,6 +47,15 @@ namespace PgOutput2Json.Sqlite
                     ulong.Parse(position.AsSpan(slash + 1), CultureInfo.InvariantCulture));
         }
 
+        public static async Task DisableForeignKeysAsync(this SqliteConnection cn, CancellationToken token)
+        {
+            using var cmd = cn.CreateCommand();
+
+            cmd.CommandText = "PRAGMA foreign_keys = OFF";
+
+            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
         public static async Task SetSchemaAsync(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> cols, CancellationToken token)
         {
 #pragma warning disable VSTHRD103 // Call async methods when in an async method
