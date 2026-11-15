@@ -73,6 +73,74 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     """);
         }
 
+        [TestMethod]
+        public async Task Arrays_of_enums_and_domains_should_be_arrays_of_strings_in_the_copy_and_the_stream()
+        {
+            var settings = MongoClientSettings.FromConnectionString(await Containers.GetMongoConnectionStringAsync());
+
+            using var client = new MongoClient(settings);
+
+            var database = client.GetDatabase("os_mongo_arr_db");
+
+            // row 1 is copied, row 2 streamed; an enum is a string, and an array of it (also of two dimensions) an array of strings
+            await Db.ExecuteAsync(@"
+                CREATE TYPE os_mongo_arr_mood AS ENUM ('sad', 'so so');
+                CREATE DOMAIN os_mongo_arr_ints AS int[];
+                CREATE TABLE os_mongo_arr (id int PRIMARY KEY, mood os_mongo_arr_mood, moods os_mongo_arr_mood[], grid os_mongo_arr_mood[], ints os_mongo_arr_ints);
+                INSERT INTO os_mongo_arr VALUES (1, 'sad', '{sad,""so so"",NULL}', '{{sad,sad},{""so so"",NULL}}', '{1,2}');
+                CREATE PUBLICATION os_mongo_arr_pub FOR TABLE os_mongo_arr;");
+
+            await Db.CreateSlotAsync("os_mongo_arr_slot");
+
+            var builder = PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications("os_mongo_arr_pub")
+                .WithPgReplicationSlot("os_mongo_arr_slot")
+                .WithInitialDataCopy(true)
+                .UseMongoDb(options =>
+                {
+                    options.ClientSettings = settings;
+                    options.DatabaseName = "os_mongo_arr_db";
+                });
+
+            var expected =
+                """
+                { "grid" : [["sad", "sad"], ["so so", null]], "id" : 1, "ints" : ["1", "2"], "mood" : "sad", "moods" : ["sad", "so so", null] }
+                { "grid" : null, "id" : 2, "ints" : [], "mood" : null, "moods" : ["so so"] }
+                """.ReplaceLineEndings("\n");
+
+            var actual = "";
+
+            await using (new RunningListener(builder))
+            {
+                await Wait.UntilAsync(async () => await Db.TableStatesAsync("os_mongo_arr_slot") == "public.os_mongo_arr:ready", "the table ready");
+
+                await Db.ExecuteAsync("INSERT INTO os_mongo_arr VALUES (2, NULL, '{\"so so\"}', NULL, '{}')");
+
+                try
+                {
+                    await Wait.UntilAsync(async () =>
+                    {
+                        var documents = await database.GetCollection<BsonDocument>("public__os_mongo_arr")
+                            .Find(FilterDefinition<BsonDocument>.Empty)
+                            .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
+                            .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
+                            .ToListAsync();
+
+                        actual = string.Join("\n", documents
+                            .Select(d => new BsonDocument(d.Elements.OrderBy(e => e.Name, System.StringComparer.Ordinal)))
+                            .Select(d => d.ToJson(new JsonWriterSettings { OutputMode = JsonOutputMode.RelaxedExtendedJson })));
+
+                        return actual == expected;
+                    }, "the rows in MongoDB");
+                }
+                catch (System.TimeoutException)
+                {
+                    Assert.AreEqual(expected, actual);
+                }
+            }
+        }
+
         private static string Number(BsonValue value)
         {
             return value.IsDouble ? value.AsDouble.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : value.ToString()!;

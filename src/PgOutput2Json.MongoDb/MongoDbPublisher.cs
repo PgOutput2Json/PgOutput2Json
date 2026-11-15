@@ -152,7 +152,9 @@ namespace PgOutput2Json.MongoDb
                         typeModifier = -1;
                     }
 
-                    columns.Add(new ColumnInfo { Name = name, DataType = dataType, TypeModifier = typeModifier, IsKey = isKey == 1 });
+                    var typeName = colLength > 4 ? colElement[4].GetString() : null;
+
+                    columns.Add(new ColumnInfo { Name = name, DataType = dataType, TypeModifier = typeModifier, TypeName = typeName, IsKey = isKey == 1 });
                 }
             }
 

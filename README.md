@@ -560,6 +560,8 @@ Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` wh
 
 The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. Collections are created the first time a row belonging to the respective table is changed. Additionally, one unique index is created for each collection, covering the fields that are a part of the primary key.
 
+Arrays are stored as BSON arrays. Arrays of enums, user-defined types and domains over arrays are arrays of strings; before version 2.1 they were a string with the PostgreSQL array literal (`{sad,happy}`), and documents written before keep it until their row changes. A key column keeps the string, because a unique index on an array field indexes each element.
+
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
 
 ### 8.1 Create a .NET Worker Service
