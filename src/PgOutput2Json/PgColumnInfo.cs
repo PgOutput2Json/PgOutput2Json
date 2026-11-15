@@ -7,5 +7,6 @@
         public bool IsPartitionKey { get; set; }
         public uint DataTypeId { get; set; }
         public int TypeModifier { get; set; }
+        public string? TypeName { get; set; }
     }
 }

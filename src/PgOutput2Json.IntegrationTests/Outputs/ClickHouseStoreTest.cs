@@ -346,32 +346,33 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         [TestMethod]
         public async Task Arrays_should_be_ClickHouse_arrays_or_their_JSON_text_without_the_array_types()
         {
-            const string columns = "(id int PRIMARY KEY, tags text[], days date[], at timestamptz[], amounts numeric(10,2)[], ids uuid[], flags bool[], f float8[], moods clk_arr_mood[])";
+            const string columns = "(id int PRIMARY KEY, tags text[], days date[], at timestamptz[], amounts numeric(10,2)[], ids uuid[], flags bool[], f float8[], moods clk_arr_mood[], ints clk_arr_ints)";
             const string values = @"
                 (1, '{a,NULL,""b c""}', '{2024-02-29,infinity,0044-03-15 BC}', '{2024-02-29 12:00:00+02}', '{1.50,NULL}',
-                    '{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}', '{t,f}', '{1.5,NaN}', '{sad,happy}'),
-                (2, '{}', NULL, NULL, NULL, NULL, NULL, NULL, NULL)";
+                    '{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}', '{t,f}', '{1.5,NaN}', '{sad,""so so"",NULL}', '{1,2}'),
+                (2, '{}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)";
 
             await Db.ExecuteAsync($@"
-                CREATE TYPE clk_arr_mood AS ENUM ('sad', 'happy');
+                CREATE TYPE clk_arr_mood AS ENUM ('sad', 'so so');
+                CREATE DOMAIN clk_arr_ints AS int[];
                 CREATE TABLE clk_arr {columns};
                 CREATE TABLE clk_arr_text {columns};");
 
-            // a date ClickHouse cannot store is the nearest one, NaN is null, a null array is empty, and the arrays of an enum stay text
+            // a date ClickHouse cannot store is the nearest one, NaN is null, a null array is empty, and an array of an enum, or a domain over an array, is an array of strings
             var endpoint = await RunAsync("clk_arr", "clk_arr", async endpoint =>
             {
                 await Db.ExecuteAsync($"INSERT INTO clk_arr VALUES {values}");
 
                 await WaitForAsync(endpoint, "clk_arr",
                     """
-                    [1,["a",null,"b c"],["2024-02-29","9999-12-31","0001-01-01"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],"{sad,happy}"]
-                    [2,[],[],[],[],[],[],[],null]
+                    [1,["a",null,"b c"],["2024-02-29","9999-12-31","0001-01-01"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],["sad","so so",null],["1","2"]]
+                    [2,[],[],[],[],[],[],[],[],[]]
                     """);
             });
 
             Assert.AreEqual(
                 "tags Array(Nullable(String)), days Array(Nullable(Date32)), at Array(Nullable(DateTime64(6, 'UTC'))), amounts Array(Nullable(Decimal(10, 2))), " +
-                "ids Array(Nullable(UUID)), flags Array(Nullable(Bool)), f Array(Nullable(Float64)), moods Nullable(String)",
+                "ids Array(Nullable(UUID)), flags Array(Nullable(Bool)), f Array(Nullable(Float64)), moods Array(Nullable(String)), ints Array(Nullable(String))",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_arr' AND name NOT IN ('id', '_version', '_deleted', '_synced_at') ORDER BY position) FORMAT TSVRaw"));
 
             // without the array types, the JSON text: a null array stays null
@@ -381,8 +382,8 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
                 await WaitForAsync(endpoint, "clk_arr_text",
                     """
-                    [1,"[\"a\",null,\"b c\"]","[\"2024-02-29\",\"infinity\",\"0044-03-15 BC\"]","[\"2024-02-29 10:00:00+00\"]","[1.50,null]","[\"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\"]","[true,false]","[1.5,null]","{sad,happy}"]
-                    [2,"[]",null,null,null,null,null,null,null]
+                    [1,"[\"a\",null,\"b c\"]","[\"2024-02-29\",\"infinity\",\"0044-03-15 BC\"]","[\"2024-02-29 10:00:00+00\"]","[1.50,null]","[\"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\"]","[true,false]","[1.5,null]","{sad,\"so so\",NULL}","{1,2}"]
+                    [2,"[]",null,null,null,null,null,null,null,null]
                     """);
             }, options => options.UseArrayTypes = false);
         }

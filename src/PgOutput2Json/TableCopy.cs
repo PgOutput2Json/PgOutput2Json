@@ -347,7 +347,15 @@ SELECT
             WHERE i.indrelid = a.attrelid
               AND (CASE c.relreplident WHEN 'i' THEN i.indisreplident ELSE i.indisprimary END)
               AND a.attnum = ANY(i.indkey))
-    END AS is_key
+    END AS is_key,
+    -- the name pgoutput sends for a type that is not built in: that of the base type, for a domain
+    CASE WHEN a.atttypid >= 10000 THEN (
+        WITH RECURSIVE base AS (
+            SELECT t.typname, t.typtype, t.typbasetype FROM pg_type t WHERE t.oid = a.atttypid
+            UNION ALL
+            SELECT t.typname, t.typtype, t.typbasetype FROM pg_type t JOIN base b ON t.oid = b.typbasetype WHERE b.typtype = 'd')
+        SELECT typname::text FROM base WHERE typtype <> 'd')
+    END AS type_name
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
 WHERE
@@ -376,6 +384,7 @@ ORDER BY
                     DataTypeId = (uint)reader.GetValue(1),
                     TypeModifier = reader.GetInt32(2),
                     IsKey = reader.GetBoolean(3),
+                    TypeName = reader.GetValue(4) as string,
                     IsPartitionKey = partitionKeyCols != null && partitionKeyCols.Contains(colName),
                 });
             }
@@ -435,6 +444,13 @@ ORDER BY
                     JsonUtils.EscapeText(json, col.TypeModifier.ToString());
                 }
 
+                if (col.TypeName != null)
+                {
+                    json.Append(",\"typeName\":\"");
+                    JsonUtils.EscapeText(json, col.TypeName);
+                    json.Append('"');
+                }
+
                 json.Append('}');
                 i++;
             }
@@ -467,10 +483,17 @@ ORDER BY
 
                 JsonUtils.EscapeText(json, col.DataTypeId.ToString());
 
-                if (col.TypeModifier != -1)
+                if (col.TypeModifier != -1 || col.TypeName != null)
                 {
                     json.Append(',');
                     JsonUtils.EscapeText(json, col.TypeModifier.ToString());
+                }
+
+                if (col.TypeName != null)
+                {
+                    json.Append(",\"");
+                    JsonUtils.EscapeText(json, col.TypeName);
+                    json.Append('"');
                 }
 
                 json.Append(']');

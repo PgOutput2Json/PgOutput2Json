@@ -53,10 +53,21 @@ namespace PgOutput2Json
 
         private readonly JsonMessage _result = new();
 
+        // the names of the types that are not built in, from the Type messages that pgoutput sends before a Relation message
+        private readonly Dictionary<uint, string> _typeNames = [];
+
         public JsonWriter(JsonOptions jsonOptions, ReplicationListenerOptions listenerOptions)
         {
             _jsonOptions = jsonOptions;
             _listenerOptions = listenerOptions;
+        }
+
+        /// <summary>
+        /// Keeps the name of a type that is not built in, for the schema. For a domain pgoutput sends the name of its base type.
+        /// </summary>
+        public void AddType(TypeMessage type)
+        {
+            _typeNames[type.TypeId] = type.Name;
         }
 
         public async Task<JsonMessage> WriteMessageAsync(ReplicationMessage replMessage, CancellationToken token)
@@ -512,6 +523,13 @@ namespace PgOutput2Json
                     JsonUtils.EscapeText(JsonBuilder, col.TypeModifier.ToString());
                 }
 
+                if (_typeNames.TryGetValue(col.DataTypeId, out var typeName))
+                {
+                    JsonBuilder.Append(",\"typeName\":\"");
+                    JsonUtils.EscapeText(JsonBuilder, typeName);
+                    JsonBuilder.Append('"');
+                }
+
                 JsonBuilder.Append('}');
                 i++;
             }
@@ -549,10 +567,20 @@ namespace PgOutput2Json
 
                 JsonUtils.EscapeText(JsonBuilder, col.DataTypeId.ToString());
 
-                if (col.TypeModifier != -1)
+                // the type name comes after the type modifier, so then the modifier is there even when it is -1
+                var hasTypeName = _typeNames.TryGetValue(col.DataTypeId, out var typeName);
+
+                if (col.TypeModifier != -1 || hasTypeName)
                 {
                     JsonBuilder.Append(',');
                     JsonUtils.EscapeText(JsonBuilder, col.TypeModifier.ToString());
+                }
+
+                if (hasTypeName)
+                {
+                    JsonBuilder.Append(",\"");
+                    JsonUtils.EscapeText(JsonBuilder, typeName);
+                    JsonBuilder.Append('"');
                 }
 
                 JsonBuilder.Append(']');

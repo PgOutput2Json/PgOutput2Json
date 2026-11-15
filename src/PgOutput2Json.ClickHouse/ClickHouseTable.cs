@@ -16,6 +16,11 @@ namespace PgOutput2Json.ClickHouse
         Array,
         DateArray,
         TimestampArray,
+
+        /// <summary>
+        /// An array of a type that is not built in (an enum, a user type): the value is the PostgreSQL text of the array.
+        /// </summary>
+        TextArray,
     }
 
     internal sealed class ClickHouseColumn
@@ -30,6 +35,8 @@ namespace PgOutput2Json.ClickHouse
         public required string Type { get; init; }
 
         public required ColumnKind Kind { get; set; }
+
+        public bool IsArray => Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray or ColumnKind.TextArray;
     }
 
     /// <summary>
@@ -119,7 +126,7 @@ namespace PgOutput2Json.ClickHouse
         {
             foreach (var column in Columns)
             {
-                if (column.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray
+                if (column.IsArray
                     && types.TryGetValue(column.Name, out var type)
                     && !type.StartsWith("Array(", StringComparison.Ordinal))
                 {
@@ -134,7 +141,7 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public string GetColumnType(ClickHouseColumn column)
         {
-            if (column.Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray) return column.Type;
+            if (column.IsArray) return column.Type;
 
             return column.IsKey && !HasNullableKey ? column.Type : $"Nullable({column.Type})";
         }
@@ -255,7 +262,8 @@ namespace PgOutput2Json.ClickHouse
         }
 
         /// <summary>
-        /// Reads the schema of the compact write mode: the table name, then [name, isKey, type oid, type modifier] per column.
+        /// Reads the schema of the compact write mode: the table name, then [name, isKey, type oid, type modifier, type name] per column.
+        /// The type modifier and the type name are optional; the type name is there for the types that are not built in.
         /// </summary>
         public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null)
         {
@@ -281,11 +289,19 @@ namespace PgOutput2Json.ClickHouse
 
                 var typeModifier = columnElement.GetArrayLength() > 3 && columnElement[3].TryGetInt32(out var modifier) ? modifier : -1;
 
+                var typeName = columnElement.GetArrayLength() > 4 ? columnElement[4].GetString() : null;
+
                 // a table cannot be ordered by a JSON column, so a json column of the key stays a String
                 var isJson = useJsonType && !isKey && oid is (uint)PgOid.JSONOID or (uint)PgOid.JSONBOID;
 
                 // the same for an array: a key column cannot be Nullable inside
                 var elementType = useArrayTypes && !isKey ? GetArrayElementType(oid, typeModifier) : null;
+
+                // PostgreSQL names the array of a type after it, with an underscore: _mood is mood[].
+                // The library sends its value as the PostgreSQL text, and the output turns it into an array of strings.
+                var isTextArray = useArrayTypes && !isKey && elementType == null && typeName != null && typeName.StartsWith('_');
+
+                if (isTextArray) elementType = "String";
 
                 columns.Add(new ClickHouseColumn
                 {
@@ -293,7 +309,8 @@ namespace PgOutput2Json.ClickHouse
                     QuotedName = Quote(name),
                     IsKey = isKey,
                     Type = isJson ? "JSON" : elementType != null ? $"Array(Nullable({elementType}))" : GetType(oid, typeModifier),
-                    Kind = elementType != null ? (oid == (uint)PgOid.A_DATEOID ? ColumnKind.DateArray
+                    Kind = isTextArray ? ColumnKind.TextArray
+                        : elementType != null ? (oid == (uint)PgOid.A_DATEOID ? ColumnKind.DateArray
                                                   : oid is (uint)PgOid.A_TIMESTAMPOID or (uint)PgOid.A_TIMESTAMPTZOID ? ColumnKind.TimestampArray
                                                   : ColumnKind.Array)
                         : oid == (uint)PgOid.DATEOID ? ColumnKind.Date
