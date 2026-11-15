@@ -13,6 +13,13 @@ using PgOutput2Json.ClickHouse;
 using Testcontainers.ClickHouse;
 using Testcontainers.PostgreSql;
 using Testcontainers.RabbitMq;
+using Testcontainers.Kafka;
+
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
+
+using Confluent.Kafka;
+using Confluent.Kafka.Admin;
 
 using RabbitMQ.Stream.Client;
 
@@ -29,6 +36,7 @@ using var loggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.Si
 PostgreSqlContainer? postgres = null;
 ClickHouseContainer? clickHouse = null;
 RabbitMqContainer? rabbitMq = null;
+IContainer? kafka = null;
 
 try
 {
@@ -97,6 +105,49 @@ try
         Endpoints = [rabbitMqEndpoint!],
         AddressResolver = new AddressResolver(rabbitMqEndpoint!),
     };
+
+    var kafkaBootstrapServers = options.KafkaBootstrapServers;
+
+    if (options.Outputs.Contains("kafka") && kafkaBootstrapServers == null)
+    {
+        Console.WriteLine("Starting apache/kafka:3.9.0...");
+
+        if (OperatingSystem.IsLinux())
+        {
+            // the broker tells the clients where to connect: its own address, not a mapped port behind Docker's proxy
+            kafka = new ContainerBuilder("apache/kafka:3.9.0")
+                .WithEnvironment(new Dictionary<string, string>
+                {
+                    ["KAFKA_NODE_ID"] = "1",
+                    ["KAFKA_PROCESS_ROLES"] = "broker,controller",
+                    ["KAFKA_LISTENERS"] = "PLAINTEXT://:9092,CONTROLLER://:9093",
+                    ["KAFKA_CONTROLLER_LISTENER_NAMES"] = "CONTROLLER",
+                    ["KAFKA_LISTENER_SECURITY_PROTOCOL_MAP"] = "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT",
+                    ["KAFKA_CONTROLLER_QUORUM_VOTERS"] = "1@localhost:9093",
+                    ["KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR"] = "1",
+                    ["KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR"] = "1",
+                    ["KAFKA_TRANSACTION_STATE_LOG_MIN_ISR"] = "1",
+                    ["KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS"] = "0",
+                })
+                .WithEntrypoint("sh", "-c")
+                .WithCommand("export KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://$(hostname -i):9092 && exec /etc/kafka/docker/run")
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Kafka Server started"))
+                .Build();
+
+            await kafka.StartAsync();
+
+            kafkaBootstrapServers = $"{kafka.IpAddress}:9092";
+        }
+        else
+        {
+            var container = new KafkaBuilder("apache/kafka:3.9.0").Build();
+
+            await container.StartAsync();
+
+            kafka = container;
+            kafkaBootstrapServers = container.GetBootstrapAddress();
+        }
+    }
 
     var results = new List<(Result Best, Result Median)>();
 
@@ -173,6 +224,16 @@ try
                 o.StreamSystemConfig = RabbitMqConfig();
 
                 if (options.RabbitMqBufferSize != null) o.MessageBufferSize = options.RabbitMqBufferSize.Value;
+            });
+        }
+        else if (output == "kafka")
+        {
+            await RecreateTopicAsync(kafkaBootstrapServers!, options.KafkaPartitions);
+
+            builder.UseKafka(o =>
+            {
+                o.Topic = BenchmarkStream;
+                o.ProducerConfig = new ProducerConfig(new Dictionary<string, string>(options.KafkaConfig)) { BootstrapServers = kafkaBootstrapServers };
             });
         }
         else if (output == "sqlite")
@@ -253,6 +314,7 @@ finally
     if (postgres != null) await postgres.DisposeAsync();
     if (clickHouse != null) await clickHouse.DisposeAsync();
     if (rabbitMq != null) await rabbitMq.DisposeAsync();
+    if (kafka != null) await kafka.DisposeAsync();
 }
 
 /// <summary>
@@ -337,6 +399,46 @@ static async Task RecreateStreamAsync(StreamSystemConfig config)
         {
             await Task.Delay(1000);
         }
+    }
+}
+
+/// <summary>
+/// A new, empty topic.
+/// </summary>
+static async Task RecreateTopicAsync(string bootstrapServers, int partitions)
+{
+    using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrapServers }).Build();
+
+    try
+    {
+        await admin.DeleteTopicsAsync([BenchmarkStream]);
+    }
+    catch (DeleteTopicsException ex) when (ex.Results.All(r => r.Error.Code == ErrorCode.UnknownTopicOrPart))
+    {
+    }
+
+    // the deletion completes in the background
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            await admin.CreateTopicsAsync([new TopicSpecification { Name = BenchmarkStream, NumPartitions = partitions, ReplicationFactor = 1 }]);
+            break;
+        }
+        catch (CreateTopicsException ex) when (ex.Results.Any(r => r.Error.Code == ErrorCode.TopicAlreadyExists) && attempt < 60)
+        {
+            await Task.Delay(500);
+        }
+    }
+
+    // the metadata of a new topic has its partitions a moment later
+    for (var attempt = 1; attempt < 60; attempt++)
+    {
+        var metadata = admin.GetMetadata(BenchmarkStream, TimeSpan.FromSeconds(5));
+
+        if (metadata.Topics.FirstOrDefault()?.Partitions.Count == partitions) break;
+
+        await Task.Delay(500);
     }
 }
 

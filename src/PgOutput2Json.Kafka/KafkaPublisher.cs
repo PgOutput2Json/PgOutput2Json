@@ -25,14 +25,10 @@ namespace PgOutput2Json.Kafka
             // fail fast - the listener reconnects without confirming, and PostgreSQL replays the unconfirmed changes
             ThrowIfDeliveryFailed();
 
-            var tableName = message.TableName.ToString();
-            var msgJson = message.Json.ToString();
-            var msgKey = message.KeyKolValue.ToString();
-
-            if (_options.WriteTableNameToMessageKey)
-            {
-                msgKey = string.Join("", tableName, msgKey);
-            }
+            // the bytes Kafka gets, made from the StringBuilders without strings of them, unless the key has the table name
+            var keyBytes = _options.WriteTableNameToMessageKey
+                ? Encoding.UTF8.GetBytes(string.Concat(message.TableName.ToString(), message.KeyKolValue.ToString()))
+                : Utf8Buffer.ToArray(message.KeyKolValue);
 
             var partition = GetPartition(message, out var partitionKey);
 
@@ -44,8 +40,8 @@ namespace PgOutput2Json.Kafka
                 {
                     { "wal_seq_no", Encoding.UTF8.GetBytes(message.TxFinalLsn.ToString()) },
                     { "message_no", Encoding.UTF8.GetBytes(message.MessageNo.ToString()) },
-                    { "table_name", Encoding.UTF8.GetBytes(tableName) },
-                    { "partition_key", Encoding.UTF8.GetBytes(partitionKey ?? msgKey) }
+                    { "table_name", Utf8Buffer.ToArray(message.TableName) },
+                    { "partition_key", partitionKey != null ? Encoding.UTF8.GetBytes(partitionKey) : keyBytes }
                 };
             }
 
@@ -53,13 +49,13 @@ namespace PgOutput2Json.Kafka
 
             if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug("Publishing to Topic={Topic}, Key={Key}, Body={Body}", _options.Topic, msgKey, message.Json.ToString());
+                _logger.LogDebug("Publishing to Topic={Topic}, Key={Key}, Body={Body}", _options.Topic, Encoding.UTF8.GetString(keyBytes), message.Json.ToString());
             }
 
-            producer.Produce(new TopicPartition(_options.Topic, partition), new Message<string, string>
+            producer.Produce(new TopicPartition(_options.Topic, partition), new Message<byte[], byte[]>
             {
-                Key = msgKey,
-                Value = msgJson,
+                Key = keyBytes,
+                Value = Utf8Buffer.ToArray(message.Json),
                 Headers = headers
             },
             OnDelivery);
@@ -67,14 +63,14 @@ namespace PgOutput2Json.Kafka
             return Task.CompletedTask;
         }
 
-        private void OnDelivery(DeliveryReport<string, string> deliveryReport)
+        private void OnDelivery(DeliveryReport<byte[], byte[]> deliveryReport)
         {
             // Runs on the librdkafka poll thread, where Confluent.Kafka swallows exceptions - throwing here
             // would let Flush return normally and the WAL be confirmed for an undelivered message.
             // Record the first failure instead, ConfirmAsync and PublishAsync rethrow it.
             if (deliveryReport.Error.IsError)
             {
-                Interlocked.CompareExchange(ref _deliveryError, new ProduceException<string, string>(deliveryReport.Error, deliveryReport), null);
+                Interlocked.CompareExchange(ref _deliveryError, new ProduceException<byte[], byte[]>(deliveryReport.Error, deliveryReport), null);
             }
         }
 
@@ -114,7 +110,7 @@ namespace PgOutput2Json.Kafka
         /// is disabled by default, so the deadline applies to the batch as a whole: when it expires the confirm fails
         /// and the producer is discarded - never single messages, which would leave a gap in the order.
         /// </summary>
-        private void WaitForDelivery(IProducer<string, string> producer, CancellationToken token)
+        private void WaitForDelivery(IProducer<byte[], byte[]> producer, CancellationToken token)
         {
             var timeout = _options.ConfirmTimeout;
             var waitForever = timeout <= TimeSpan.Zero || timeout == Timeout.InfiniteTimeSpan;
@@ -199,7 +195,7 @@ namespace PgOutput2Json.Kafka
             return topic.Partitions.OrderBy(p => p.PartitionId).ToList();
         }
 
-        private IProducer<string, string> EnsureProducer()
+        private IProducer<byte[], byte[]> EnsureProducer()
         {
             if (_producer != null) return _producer;
 
@@ -207,7 +203,7 @@ namespace PgOutput2Json.Kafka
 
             var config = CreateProducerConfig(_options);
 
-            _producer = new ProducerBuilder<string, string>(config)
+            _producer = new ProducerBuilder<byte[], byte[]>(config)
                 .SetErrorHandler((_, e) => _logger?.LogError("Kafka producer error: IsFatal={IsFatal}, Code={Code}, Reason={Reason}", e.IsFatal, e.Code, e.Reason))
                 .SetLogHandler((_, e) => _logger?.LogInformation("Kafka producer log: Level={Level}, Message={Message}", e.Level, e.Message))
                 .Build();
@@ -248,9 +244,9 @@ namespace PgOutput2Json.Kafka
         private static readonly TimeSpan _flushSlice = TimeSpan.FromMilliseconds(500);
         private static readonly TimeSpan _confirmWarningInterval = TimeSpan.FromSeconds(30);
 
-        private IProducer<string, string>? _producer;
+        private IProducer<byte[], byte[]>? _producer;
 
-        private ProduceException<string, string>? _deliveryError; // first failed delivery, set on the librdkafka poll thread
+        private ProduceException<byte[], byte[]>? _deliveryError; // first failed delivery, set on the librdkafka poll thread
 
         private readonly KafkaPublisherOptions _options;
         private readonly ILogger<KafkaPublisher>? _logger;

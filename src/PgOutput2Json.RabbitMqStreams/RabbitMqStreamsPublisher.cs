@@ -25,7 +25,7 @@ namespace PgOutput2Json.RabbitMqStreams
         public async override Task PublishAsync(JsonMessage jsonMsg, CancellationToken token)
         {
             // the message keeps its bytes until it is confirmed, so they are its own; made without a string of the JSON
-            var msg = new Message(GetUtf8(jsonMsg.Json))
+            var msg = new Message(Utf8Buffer.ToArray(jsonMsg.Json))
             {
                 Properties = new RabbitMQ.Stream.Client.AMQP.Properties
                 {
@@ -80,32 +80,6 @@ namespace PgOutput2Json.RabbitMqStreams
             {
                 _logger.LogDebug("Published to {StreamName}: {Body}", _options.StreamName, jsonMsg.Json.ToString());
             }
-        }
-
-        private readonly Encoder _encoder = Encoding.UTF8.GetEncoder();
-
-        private byte[] GetUtf8(StringBuilder text)
-        {
-            // an encoder, because a chunk of the StringBuilder can end in the middle of a surrogate pair
-            _encoder.Reset();
-
-            var length = 0;
-
-            foreach (var chunk in text.GetChunks()) length += _encoder.GetByteCount(chunk.Span, flush: false);
-
-            length += _encoder.GetByteCount(System.ReadOnlySpan<char>.Empty, flush: true);
-
-            var bytes = new byte[length];
-
-            _encoder.Reset();
-
-            var written = 0;
-
-            foreach (var chunk in text.GetChunks()) written += _encoder.GetBytes(chunk.Span, bytes.AsSpan(written), flush: false);
-
-            _encoder.GetBytes(System.ReadOnlySpan<char>.Empty, bytes.AsSpan(written), flush: true);
-
-            return bytes;
         }
 
         private async Task SendPendingAsync(Producer producer)

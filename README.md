@@ -453,6 +453,10 @@ public class Worker : BackgroundService
 
 Once the service is running, any changes made to the tables listed in `my_publication` will be published to the `my_topic` topic in Kafka as JSON messages.
 
+### 5.3 Batch Size
+
+At the end of every batch the listener waits until Kafka has acknowledged all of its messages (with `acks=all`, which idempotence needs). `UseKafka` therefore sets the batch size to 10,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 140,000 rows per second and the stream at about 94,000 with batches of 10,000, and at about 8,800 and 8,300 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and Kafka in Docker on the same machine). The batching of librdkafka itself (`linger.ms`, 5 ms by default) made no difference there. To use another size, call `WithBatchSize` after `UseKafka`. A batch that is not full is still confirmed after the batch wait time (100 ms by default). After an error, the unconfirmed messages of the batch are sent again.
+
 ## 6. Using Redis
 
 PgOutput2Json supports publishing JSON messages to Redis streams (default) or Pub/Sub channels.

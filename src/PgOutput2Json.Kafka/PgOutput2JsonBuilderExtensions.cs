@@ -8,6 +8,10 @@ namespace PgOutput2Json
         public static PgOutput2JsonBuilder UseKafka(this PgOutput2JsonBuilder builder, 
             Action<KafkaPublisherOptions>? configureAction = null)
         {
+            // the listener waits at the end of a batch until Kafka has acknowledged all of it: 10,000 messages are
+            // more than ten times faster than the 100 of the library. WithBatchSize after UseKafka changes it
+            builder.WithBatchSize(10_000);
+
             var options = new KafkaPublisherOptions();
 
             configureAction?.Invoke(options);

@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
     <PackageReference Include="Testcontainers.ClickHouse" Version="4.16.0" />
+    <PackageReference Include="Testcontainers.Kafka" Version="4.16.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" />
     <PackageReference Include="Testcontainers.RabbitMq" Version="4.16.0" />
   </ItemGroup>
@@ -20,6 +21,7 @@
     <ProjectReference Include="..\PgOutput2Json.ClickHouse\PgOutput2Json.ClickHouse.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Sqlite\PgOutput2Json.Sqlite.csproj" />
     <ProjectReference Include="..\PgOutput2Json.RabbitMqStreams\PgOutput2Json.RabbitMqStreams.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
   </ItemGroup>
 
 </Project>
