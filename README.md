@@ -115,7 +115,7 @@ A replay is usually one batch, but it can be more:
 Every message carries a deduplication key: the transaction final LSN (`"w"`) plus the message number within that transaction (`"n"`). Consumers use it in one of two ways:
 
 - **Apply changes idempotently.** Upsert and delete by key. Replayed changes arrive in order, so the result is the same.
-- **Keep a watermark.** Remember the highest `(w, n)` pair processed and skip anything at or below it. Keep one watermark per table, in each partition or stream you read: the order is guaranteed only there. On Kafka, a message the broker rejects can arrive late and out of order; see the Kafka output for how to prevent that.
+- **Keep a watermark.** Remember the highest `(w, n)` pair processed and skip anything at or below it. Keep one watermark per table, in each partition or stream you read: the order is guaranteed only there. On Kafka and Kinesis, a message the output rejects can arrive late and out of order; see those outputs.
 
 The rows of the initial data copy have change type `"C"` and no position: `"w"` and `"n"` are 0. Upsert them by key and leave them out of the watermark. A copy that failed and started again publishes its rows again. While a table is being copied and synced, its changes are published behind the changes of the other tables, which is one more reason to keep the watermark per table.
 
@@ -700,6 +700,15 @@ public class Worker : BackgroundService
     }  
 }
 ```
+
+### 9.2 Records Out of Order After a Rejected Record
+
+A batch of changes is sent in `PutRecords` requests of up to 500 records and 5 MB, one after the other.
+
+Kinesis can accept the records of a request that follow a record it rejected (for example one throttled with `ProvisionedThroughputExceededException`). The batch is not confirmed and is replayed, so the rejected record reaches the stream once the problem is gone, but **after** records that follow it in the WAL. For example, if record 2 of 1, 2, 3 is rejected, the shard ends up with 1, 3, 1, 2, 3.
+
+- A consumer that applies changes idempotently is not affected: a row may show an older version for a moment, and the replay brings it up to date.
+- A consumer that keeps a watermark (the highest `(w, n)` pair processed) skips the late record as a duplicate, and loses it. Give the stream enough capacity that records are not throttled (on-demand mode, or enough shards), or apply the changes idempotently.
 
 ## 10. Using Amazon DynamoDB
 
