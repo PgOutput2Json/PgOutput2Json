@@ -558,9 +558,9 @@ public class Worker : BackgroundService
 PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. By default, rows are copied only when they change, using logical replication.
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
-The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. Collections are created the first time a row belonging to the respective table is changed. Additionally, one unique index is created for each collection, covering the fields that are a part of the primary key.
+The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. Collections are created the first time a row belonging to the respective table is changed. Additionally, one unique index is created for each collection, covering the fields that are a part of the primary key. A key field that is an array is stored as its JSON text (`["a","b"]`): a unique index on an array field indexes each element, so two rows whose keys share an element would be duplicates.
 
-Arrays are stored as BSON arrays. Arrays of enums, user-defined types and domains over arrays are arrays of strings; before version 2.1 they were a string with the PostgreSQL array literal (`{sad,happy}`), and documents written before keep it until their row changes. A key column keeps the string, because a unique index on an array field indexes each element.
+Arrays are stored as BSON arrays. Arrays of enums, user-defined types and domains over arrays are arrays of strings; before version 2.1 they were a string with the PostgreSQL array literal (`{sad,happy}`), and documents written before keep it until their row changes.
 
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
 

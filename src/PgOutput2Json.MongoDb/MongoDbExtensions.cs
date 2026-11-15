@@ -201,6 +201,10 @@ namespace PgOutput2Json.MongoDb
 
         private static BsonValue GetColumnValue(JsonElement valElement, ColumnInfo column)
         {
+            // the unique index of the key indexes each element of an array field, so two rows that share an element
+            // would be duplicates: an array in a key column is stored as its JSON text
+            if (column.IsKey && valElement.ValueKind == JsonValueKind.Array) return valElement.GetRawText();
+
             switch (valElement.ValueKind)
             {
                 case JsonValueKind.String:
@@ -230,7 +234,8 @@ namespace PgOutput2Json.MongoDb
 
                         JsonUtils.WriteArrayOfText(json, valElement.GetString());
 
-                        return ParseJson(json.ToString());
+                        // in a key column the JSON text, like the other arrays
+                        return column.IsKey ? json.ToString() : ParseJson(json.ToString());
                     }
                     else
                     {
@@ -432,9 +437,8 @@ namespace PgOutput2Json.MongoDb
         /// <summary>
         /// An array of a type that is not built in (an enum, a user type, a domain over an array): PostgreSQL names
         /// an array type after its element type with an underscore, and the library sends its value as the PostgreSQL text.
-        /// A key column keeps the text: a unique index on an array field would index each element.
         /// </summary>
-        public readonly bool IsTextArray => !IsKey && TypeName != null && TypeName.StartsWith('_');
+        public readonly bool IsTextArray => TypeName != null && TypeName.StartsWith('_');
 
         public readonly PgOid PgOid { get {  return (PgOid)DataType; } }
     }
