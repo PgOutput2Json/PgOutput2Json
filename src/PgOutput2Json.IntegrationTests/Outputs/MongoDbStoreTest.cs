@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -137,6 +138,91 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 catch (System.TimeoutException)
                 {
                     Assert.AreEqual(expected, actual);
+                }
+            }
+        }
+
+        [TestMethod]
+        public async Task Array_in_the_key_should_be_its_JSON_text_so_rows_can_share_elements()
+        {
+            var settings = MongoClientSettings.FromConnectionString(await Containers.GetMongoConnectionStringAsync());
+
+            using var client = new MongoClient(settings);
+
+            var database = client.GetDatabase("os_mongo_akey_db");
+
+            // the keys share the element "a": as arrays, the unique index would reject the second row
+            await Db.ExecuteAsync(@"
+                CREATE TYPE os_mongo_akey_mood AS ENUM ('sad', 'so so');
+                CREATE TABLE os_mongo_akey (id text[] PRIMARY KEY, v text, tags text[]);
+                CREATE TABLE os_mongo_akey_enum (id os_mongo_akey_mood[] PRIMARY KEY, v text);
+                INSERT INTO os_mongo_akey VALUES ('{a,b}', 'copied', '{x}');
+                INSERT INTO os_mongo_akey_enum VALUES ('{sad,""so so""}', 'copied');
+                CREATE PUBLICATION os_mongo_akey_pub FOR TABLE os_mongo_akey, os_mongo_akey_enum;");
+
+            await Db.CreateSlotAsync("os_mongo_akey_slot");
+
+            using var logs = new CollectingLoggerFactory();
+
+            var builder = PgOutput2JsonBuilder.Create()
+                .WithLoggerFactory(logs)
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications("os_mongo_akey_pub")
+                .WithPgReplicationSlot("os_mongo_akey_slot")
+                .WithInitialDataCopy(true)
+                .UseMongoDb(options =>
+                {
+                    options.ClientSettings = settings;
+                    options.DatabaseName = "os_mongo_akey_db";
+                });
+
+            // the other array columns stay arrays; an array of an enum in the key is the JSON text too
+            var expected =
+                """
+                { "id" : "[\"a\",\"b\"]", "tags" : ["x"], "v" : "updated" }
+                { "id" : "[\"a\",\"d\"]", "tags" : ["y", "z"], "v" : "key changed" }
+                { "id" : "[\"sad\",\"so so\"]", "v" : "copied" }
+                { "id" : "[\"sad\"]", "v" : "streamed" }
+                """.ReplaceLineEndings("\n");
+
+            var actual = "";
+
+            await using (new RunningListener(builder))
+            {
+                await Wait.UntilAsync(async () => await Db.TableStatesAsync("os_mongo_akey_slot") == "public.os_mongo_akey:ready,public.os_mongo_akey_enum:ready", "the tables ready");
+
+                await Db.ExecuteAsync(@"
+                    INSERT INTO os_mongo_akey VALUES ('{a,c}', 'streamed', '{y,z}'), ('{e}', 'deleted', NULL);
+                    UPDATE os_mongo_akey SET v = 'updated' WHERE id = '{a,b}';
+                    UPDATE os_mongo_akey SET id = '{a,d}', v = 'key changed' WHERE id = '{a,c}';
+                    DELETE FROM os_mongo_akey WHERE id = '{e}';
+                    INSERT INTO os_mongo_akey_enum VALUES ('{sad}', 'streamed');");
+
+                try
+                {
+                    await Wait.UntilAsync(async () =>
+                    {
+                        var documents = new List<BsonDocument>();
+
+                        foreach (var collection in new[] { "public__os_mongo_akey", "public__os_mongo_akey_enum" })
+                        {
+                            documents.AddRange(await database.GetCollection<BsonDocument>(collection)
+                                .Find(FilterDefinition<BsonDocument>.Empty)
+                                .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
+                                .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
+                                .ToListAsync());
+                        }
+
+                        actual = string.Join("\n", documents
+                            .Select(d => new BsonDocument(d.Elements.OrderBy(e => e.Name, System.StringComparer.Ordinal)))
+                            .Select(d => d.ToJson(new JsonWriterSettings { OutputMode = JsonOutputMode.RelaxedExtendedJson })));
+
+                        return actual == expected;
+                    }, "the rows in MongoDB");
+                }
+                catch (System.TimeoutException)
+                {
+                    Assert.AreEqual(expected, actual, $"Logged: {logs}");
                 }
             }
         }
