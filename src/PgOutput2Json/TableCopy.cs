@@ -232,7 +232,7 @@ namespace PgOutput2Json
             var schemaWritten = false;
 
             var value = new StringBuilder(256);
-            var values = new List<string>(100);
+            var values = new List<string?>(100);
 
             var row = new ChangeRow { ChangeType = RowChangeType.Copy, Table = context.RowTable, IsTableSync = true };
 
@@ -284,7 +284,7 @@ namespace PgOutput2Json
             }
         }
 
-        private static JsonMessage GetJsonMessage(JsonMessage jsonMessage, List<string> values, CopyContext context, ref bool schemaWritten)
+        private static JsonMessage GetJsonMessage(JsonMessage jsonMessage, List<string?> values, CopyContext context, ref bool schemaWritten)
         {
             jsonMessage.Json.Clear();
             jsonMessage.KeyKolValue.Clear();
@@ -360,7 +360,7 @@ namespace PgOutput2Json
             return (new RowTable(table.TableName, rowColumns), indexes);
         }
 
-        private static ChangeRow GetRow(ChangeRow row, List<string> values, CopyContext context)
+        private static ChangeRow GetRow(ChangeRow row, List<string?> values, CopyContext context)
         {
             var newValues = row.NewValueList;
 
@@ -372,7 +372,7 @@ namespace PgOutput2Json
 
                 var text = values[i];
 
-                newValues.Add(text == @"\N" ? RowValue.Null : RowValue.FromText(text));
+                newValues.Add(text == null ? RowValue.Null : RowValue.FromText(text));
             }
 
             row.NewValues = newValues;
@@ -409,22 +409,25 @@ ORDER BY c.oid";
         }
 
         /// <summary>
-        /// Writes row values to the provided values array. Escape sequences are unescaped.
+        /// Writes row values to the provided values array, null for a NULL (\N). Escape sequences are unescaped,
+        /// so a text that is \N (written \\N) is not a NULL.
         /// See: https://www.postgresql.org/docs/current/sql-copy.html
         /// </summary>
-        internal static void GetValues(List<string> values, StringBuilder value, string line, ILogger? logger)
+        internal static void GetValues(List<string?> values, StringBuilder value, string line, ILogger? logger)
         {
             values.Clear();
             value.Clear();
 
             var escape = false;
+            var isNull = false;
 
             foreach (var c in line)
             {
                 if (c == '\t')
                 {
-                    values.Add(value.ToString());
+                    values.Add(isNull ? null : value.ToString());
                     value.Clear();
+                    isNull = false;
                 }
                 else if (escape)
                 {
@@ -454,8 +457,8 @@ ORDER BY c.oid";
                             value.Append('\v');
                             break;
                         case 'N':
-                            value.Append('\\');
-                            value.Append('N');
+                            // NULL is the whole value: \N
+                            isNull = true;
                             break;
                         default:
                             logger?.LogWarning("Skipping unknown escape char: \\{char}", c);
@@ -473,11 +476,11 @@ ORDER BY c.oid";
             }
 
             // the last value has no terminating tab - and it can be an empty string
-            values.Add(value.ToString());
+            values.Add(isNull ? null : value.ToString());
         }
 
         private static void WriteRow(IReadOnlyList<PgColumnInfo> cols,
-                                    List<string> values,
+                                    List<string?> values,
                                     StringBuilder json,
                                     StringBuilder keyVal,
                                     StringBuilder partitionKeyVal,
@@ -494,7 +497,7 @@ ORDER BY c.oid";
             {
                 var colValue = values[i];
 
-                var isNull = colValue == @"\N";
+                var isNull = colValue == null;
 
                 // we must write nulls in compact mode to preserve the column indexes (no column names)
                 if (isNull && !jsonOptions.WriteNulls && jsonOptions.WriteMode != JsonWriteMode.Compact)
@@ -536,7 +539,7 @@ ORDER BY c.oid";
                     json.Append(':');
                 }
 
-                if (isNull)
+                if (colValue == null)
                 {
                     json.Append("null");
                     if (col.IsKey) keyVal.Append("null");

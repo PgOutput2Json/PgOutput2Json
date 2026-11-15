@@ -8,9 +8,9 @@ namespace PgOutput2Json.Tests
     [TestClass]
     public class TableSyncTest
     {
-        private static List<string> GetValues(string line)
+        private static List<string?> GetValues(string line)
         {
-            var values = new List<string>();
+            var values = new List<string?>();
 
             TableCopy.GetValues(values, new StringBuilder(), line, null);
 
@@ -29,7 +29,14 @@ namespace PgOutput2Json.Tests
         [TestMethod]
         public void GetValues_should_unescape_the_copy_format()
         {
-            CollectionAssert.AreEqual(new[] { "a\tb", "c\nd", "e\\f", "\\N" }, GetValues("a\\tb\tc\\nd\te\\\\f\t\\N"));
+            CollectionAssert.AreEqual(new[] { "a\tb", "c\nd", "e\\f", null }, GetValues("a\\tb\tc\\nd\te\\\\f\t\\N"));
+        }
+
+        [TestMethod]
+        public void GetValues_should_keep_a_text_that_is_backslash_N_apart_from_null()
+        {
+            // the text \N is written \\N, a NULL \N
+            CollectionAssert.AreEqual(new[] { "\\N", null, "\\N" }, GetValues("\\\\N\t\\N\t\\\\N"));
         }
 
         [TestMethod]
