@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents (and people) working with code in this repository.
 
 ## Commands
 
@@ -31,6 +31,12 @@ Both test projects run on every pull request and on `main` (`.github/workflows/t
 The website (landing page and docs, Astro + Starlight) is in `website/` and is deployed to GitHub Pages by `.github/workflows/website.yml`. Its docs pages were split from `README.md`: when the README or an adapter README changes, update the matching page in `website/src/content/docs/docs/`. See `website/README.md`. Each package README (`src/<Package>/README.md`, shown on NuGet) is built from them: the root README up to its Quick Start, the Quick Start steps 1.1 to 1.3 (for the core package also 1.4), a `## Using <Output>` section with the output's website page (headings one level down, links absolute to https://pg2json.com/docs/, the temporary slot note after the worker example), and the permanent replication slots section. Keep them in sync when any of these change.
 
 The core library targets `net8.0`, `net9.0`, and `net10.0`. `TreatWarningsAsErrors=True` is set — all warnings must be resolved.
+
+## Packages and Releases
+
+- `src/Directory.Build.props` has the version (one for all 12 packages) and the package settings. The settings only for packages apply to the projects with an `icon.png`. They are: symbols (`.snupkg`) with Source Link, and Release builds as `ContinuousIntegrationBuild` (deterministic, paths normalized to `/_/`), so a package built on any machine maps its sources to the commit on GitHub. `./publish.sh` builds the packages in Release and pushes them to nuget.org (it asks for the API key, and warns when HEAD is not tagged `v<version>`).
+- The public API (PublicApiAnalyzers): `PublicAPI.Shipped.txt` (as of the last release, 2.1.0) and `PublicAPI.Unshipped.txt` (changes since, removals as `*REMOVED*`) next to each package's project. A public change fails the build (RS0016, RS0017) until it is listed: `dotnet format analyzers <project> --diagnostics RS0016 --severity info` adds new entries (it does not add removals). New types are internal unless users need them; the tests and the other packages reach internals through `InternalsVisibleTo`. RS0026/RS0027 (overloads with optional parameters) stay on: they only check API that is not shipped, so a new overload cannot make existing calls ambiguous.
+- Package validation (`EnablePackageValidation`): each package built is compared with `PackageValidationBaselineVersion` (a release on nuget.org, downloaded once) and between its target frameworks. A removed or changed API fails the build (CP0002 etc.) unless it is in the project's `CompatibilitySuppressions.xml` (generate it with `-p:ApiCompatGenerateSuppressionFile=true`, only for an intended break). The baseline is the first release of the version line (x.y.0): patch releases do not move it, since they add no API. When a minor or major release is on nuget.org, it becomes the baseline, the suppressions are deleted, and `PublicAPI.Unshipped.txt` moves into `PublicAPI.Shipped.txt` (the `*REMOVED*` entries delete their shipped lines).
 
 ## Architecture
 

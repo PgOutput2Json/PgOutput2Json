@@ -1,0 +1,16 @@
+#nullable enable
+PgOutput2Json.AzureEventHubs.EventHubsPublisher
+PgOutput2Json.AzureEventHubs.EventHubsPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.AzureEventHubs.EventHubsPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+PgOutput2Json.AzureEventHubs.EventHubsPublisher.EventHubsPublisher(PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.AzureEventHubs.EventHubsPublisher!>? logger) -> void
+PgOutput2Json.AzureEventHubs.EventHubsPublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.ClientOptions.get -> Azure.Messaging.EventHubs.Producer.EventHubProducerClientOptions?
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.ClientOptions.set -> void
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.ConnectionString.get -> string!
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.ConnectionString.set -> void
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.EventHubName.get -> string!
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.EventHubName.set -> void
+PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions.EventHubsPublisherOptions() -> void
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseEventHubs(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.AzureEventHubs.EventHubsPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

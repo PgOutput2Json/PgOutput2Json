@@ -1,0 +1,41 @@
+#nullable enable
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+PgOutput2Json.Sqlite.ColumnInfo
+PgOutput2Json.Sqlite.ColumnInfo.ColumnInfo() -> void
+PgOutput2Json.Sqlite.ColumnInfo.DataType.get -> uint
+PgOutput2Json.Sqlite.ColumnInfo.DataType.set -> void
+PgOutput2Json.Sqlite.ColumnInfo.GetSqliteType() -> string!
+PgOutput2Json.Sqlite.ColumnInfo.IsBlob() -> bool
+PgOutput2Json.Sqlite.ColumnInfo.IsDateTime() -> bool
+PgOutput2Json.Sqlite.ColumnInfo.IsKey.get -> bool
+PgOutput2Json.Sqlite.ColumnInfo.IsKey.set -> void
+PgOutput2Json.Sqlite.ColumnInfo.Name.get -> string!
+PgOutput2Json.Sqlite.ColumnInfo.Name.set -> void
+PgOutput2Json.Sqlite.ColumnInfo.TypeModifier.get -> int
+PgOutput2Json.Sqlite.ColumnInfo.TypeModifier.set -> void
+PgOutput2Json.Sqlite.SqlitePublisher
+PgOutput2Json.Sqlite.SqlitePublisher.PublishRowAsync(PgOutput2Json.ChangeRow! row, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.Sqlite.SqlitePublisher.SqlitePublisher(PgOutput2Json.Sqlite.SqlitePublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.Sqlite.SqlitePublisher!>? logger) -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions
+PgOutput2Json.Sqlite.SqlitePublisherOptions.ConnectionStringBuilder.get -> Microsoft.Data.Sqlite.SqliteConnectionStringBuilder!
+PgOutput2Json.Sqlite.SqlitePublisherOptions.ConnectionStringBuilder.set -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.PostConnectionSetup.get -> System.Func<Microsoft.Data.Sqlite.SqliteConnection!, System.Threading.Tasks.Task!>?
+PgOutput2Json.Sqlite.SqlitePublisherOptions.PostConnectionSetup.set -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.SqlitePublisherOptions() -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.UseWal.get -> bool
+PgOutput2Json.Sqlite.SqlitePublisherOptions.UseWal.set -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.WalCheckpointTryCount.get -> int
+PgOutput2Json.Sqlite.SqlitePublisherOptions.WalCheckpointTryCount.set -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.WalCheckpointType.get -> PgOutput2Json.Sqlite.WalCheckpointType
+PgOutput2Json.Sqlite.SqlitePublisherOptions.WalCheckpointType.set -> void
+PgOutput2Json.Sqlite.WalCheckpointType
+PgOutput2Json.Sqlite.WalCheckpointType.Automatic = 0 -> PgOutput2Json.Sqlite.WalCheckpointType
+PgOutput2Json.Sqlite.WalCheckpointType.Full = 4 -> PgOutput2Json.Sqlite.WalCheckpointType
+PgOutput2Json.Sqlite.WalCheckpointType.Passive = 1 -> PgOutput2Json.Sqlite.WalCheckpointType
+PgOutput2Json.Sqlite.WalCheckpointType.Restart = 2 -> PgOutput2Json.Sqlite.WalCheckpointType
+PgOutput2Json.Sqlite.WalCheckpointType.Truncate = 3 -> PgOutput2Json.Sqlite.WalCheckpointType
+override PgOutput2Json.Sqlite.SqlitePublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.Sqlite.SqlitePublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.Sqlite.SqlitePublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
+override PgOutput2Json.Sqlite.SqlitePublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseSqlite(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.Sqlite.SqlitePublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

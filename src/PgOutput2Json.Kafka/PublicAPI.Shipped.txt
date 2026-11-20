@@ -1,0 +1,24 @@
+#nullable enable
+PgOutput2Json.Kafka.KafkaPublisher
+PgOutput2Json.Kafka.KafkaPublisher.KafkaPublisher(PgOutput2Json.Kafka.KafkaPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.Kafka.KafkaPublisher!>? logger = null) -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions
+PgOutput2Json.Kafka.KafkaPublisherOptions.AdminClientConfig.get -> Confluent.Kafka.AdminClientConfig?
+PgOutput2Json.Kafka.KafkaPublisherOptions.AdminClientConfig.set -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.ConfirmTimeout.get -> System.TimeSpan
+PgOutput2Json.Kafka.KafkaPublisherOptions.ConfirmTimeout.set -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.KafkaPublisherOptions() -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.PartitionKeyFields.get -> System.Collections.Generic.Dictionary<string!, System.Collections.Generic.List<string!>!>!
+PgOutput2Json.Kafka.KafkaPublisherOptions.PartitionKeyFields.set -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.ProducerConfig.get -> Confluent.Kafka.ProducerConfig!
+PgOutput2Json.Kafka.KafkaPublisherOptions.ProducerConfig.set -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.Topic.get -> string!
+PgOutput2Json.Kafka.KafkaPublisherOptions.Topic.set -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.WriteHeaders.get -> bool
+PgOutput2Json.Kafka.KafkaPublisherOptions.WriteHeaders.set -> void
+PgOutput2Json.Kafka.KafkaPublisherOptions.WriteTableNameToMessageKey.get -> bool
+PgOutput2Json.Kafka.KafkaPublisherOptions.WriteTableNameToMessageKey.set -> void
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+override PgOutput2Json.Kafka.KafkaPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.Kafka.KafkaPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.Kafka.KafkaPublisher.PublishAsync(PgOutput2Json.JsonMessage! message, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseKafka(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.Kafka.KafkaPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

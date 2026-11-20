@@ -1,0 +1,34 @@
+#nullable enable
+PgOutput2Json.DynamoDb.ColumnInfo
+PgOutput2Json.DynamoDb.ColumnInfo.ColumnInfo() -> void
+PgOutput2Json.DynamoDb.ColumnInfo.DataType.get -> uint
+PgOutput2Json.DynamoDb.ColumnInfo.DataType.set -> void
+PgOutput2Json.DynamoDb.ColumnInfo.IsKey.get -> bool
+PgOutput2Json.DynamoDb.ColumnInfo.IsKey.set -> void
+PgOutput2Json.DynamoDb.ColumnInfo.Name.get -> string!
+PgOutput2Json.DynamoDb.ColumnInfo.Name.set -> void
+PgOutput2Json.DynamoDb.ColumnInfo.TypeModifier.get -> int
+PgOutput2Json.DynamoDb.ColumnInfo.TypeModifier.set -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisher
+PgOutput2Json.DynamoDb.DynamoDbPublisher.DynamoDbPublisher(PgOutput2Json.DynamoDb.DynamoDbPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.DynamoDb.DynamoDbPublisher!>? logger, bool useDeduplication = true) -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.ClientConfig.get -> Amazon.DynamoDBv2.AmazonDynamoDBConfig!
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.ClientConfig.set -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.DefaultBillingMode.get -> Amazon.DynamoDBv2.BillingMode!
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.DefaultBillingMode.set -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.DynamoDbPublisherOptions() -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.MaxParallelBatchWrites.get -> int
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.MaxParallelBatchWrites.set -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.PostConnectionSetup.get -> System.Func<Amazon.DynamoDBv2.AmazonDynamoDBClient!, System.Threading.Tasks.Task!>?
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.PostConnectionSetup.set -> void
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.TableBillingModes.get -> System.Collections.Generic.Dictionary<string!, Amazon.DynamoDBv2.BillingMode!>!
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.TableBillingModes.set -> void
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+override PgOutput2Json.DynamoDb.DynamoDbPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.DynamoDb.DynamoDbPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.DynamoDb.DynamoDbPublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
+override PgOutput2Json.DynamoDb.DynamoDbPublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.DynamoDb.DynamoDbPublisher.CreateTableIfNotExistsAsync(Amazon.DynamoDBv2.AmazonDynamoDBClient! client, string! tableName, System.Collections.Generic.IReadOnlyList<PgOutput2Json.DynamoDb.ColumnInfo>! columns, PgOutput2Json.DynamoDb.DynamoDbPublisherOptions! options, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.DynamoDb.DynamoDbPublisher.GetAttributeValueFromJsonElement(System.Text.Json.JsonElement element, PgOutput2Json.DynamoDb.ColumnInfo col) -> Amazon.DynamoDBv2.Model.AttributeValue!
+static PgOutput2Json.DynamoDb.DynamoDbPublisher.GetStringFromJsonElement(System.Text.Json.JsonElement element) -> string?
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseDynamoDb(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.DynamoDb.DynamoDbPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!
