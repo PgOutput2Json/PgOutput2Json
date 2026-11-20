@@ -1,3 +1,4 @@
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -199,6 +200,88 @@ namespace PgOutput2Json.Tests
                 // the application's own connections still check them
                 Assert.AreEqual(1L, await ExecuteAsync(connectionString, "PRAGMA foreign_keys"));
             });
+        }
+
+        /// <summary>
+        /// Table and column names come from PostgreSQL, where they can have any character, and whoever can create a table
+        /// the publication picks up (FOR ALL TABLES, FOR TABLES IN SCHEMA) chooses them: they must not change the SQL.
+        /// </summary>
+        [TestMethod]
+        public async Task Names_with_quotes_should_not_change_the_SQL()
+        {
+            await WithApplicationDatabaseAsync(async connectionString =>
+            {
+                await ExecuteAsync(connectionString, "CREATE TABLE victim (id INTEGER); INSERT INTO victim VALUES (1)");
+
+                const string table = "x\"; DROP TABLE victim; --.y'z";
+                const string id = "id\"; DROP TABLE victim; --";
+                const string name = "na'me\"";
+                const string added = "added\" INTEGER; DROP TABLE victim; --";
+
+                var t = J(table);
+                var schema = $"\"s\":[{t},[{J(id)},1,23],[{J(name)},0,25]]";
+                var schemaAdded = $"\"s\":[{t},[{J(id)},1,23],[{J(name)},0,25],[{J(added)},0,23]]";
+
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    var fullName = "public." + table;
+
+                    await publisher.PublishAsync(CreateTableMessage(fullName, $"{{\"c\":\"I\",{schema},\"r\":[1,\"one\"]}}"), CancellationToken.None);
+                    await publisher.PublishAsync(CreateTableMessage(fullName, $"{{\"c\":\"I\",\"r\":[2,\"two\"]}}"), CancellationToken.None);
+                    await publisher.PublishAsync(CreateTableMessage(fullName, $"{{\"c\":\"U\",\"r\":[1,\"uno\"]}}"), CancellationToken.None);
+                    await publisher.PublishAsync(CreateTableMessage(fullName, $"{{\"c\":\"U\",\"k\":[2],\"r\":[3,\"__TOAST__\"]}}"), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+
+                    // a new column: the table is altered
+                    await publisher.PublishAsync(CreateTableMessage(fullName, $"{{\"c\":\"I\",{schemaAdded},\"r\":[4,\"four\",44]}}"), CancellationToken.None);
+                    await publisher.PublishAsync(CreateTableMessage(fullName, $"{{\"c\":\"D\",\"k\":[4]}}"), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+                }
+
+                Assert.AreEqual(1L, await ExecuteAsync(connectionString, "SELECT count(*) FROM victim"));
+
+                // the table and the columns have the names of PostgreSQL (the table name without the schema)
+                Assert.AreEqual("1=uno,3=two", await ExecuteAsync(connectionString,
+                    "SELECT group_concat(k || '=' || v, ',') FROM (SELECT \"id\"\"; DROP TABLE victim; --\" AS k, \"na'me\"\"\" AS v FROM \"x\"\"; DROP TABLE victim; --.y'z\" ORDER BY 1)"));
+
+                Assert.AreEqual(1L, await ExecuteAsync(connectionString,
+                    "SELECT count(*) FROM pragma_table_info('x\"; DROP TABLE victim; --.y''z') WHERE name = 'added\" INTEGER; DROP TABLE victim; --'"));
+            });
+        }
+
+        /// <summary>
+        /// The attack the quoting stops: a column name that ends the CREATE TABLE and adds a statement. The first change is a
+        /// delete, which uses only the key columns, so every statement of the batch is valid and its transaction commits.
+        /// </summary>
+        [TestMethod]
+        public async Task Column_name_should_not_add_a_statement()
+        {
+            await WithApplicationDatabaseAsync(async connectionString =>
+            {
+                await ExecuteAsync(connectionString, "CREATE TABLE victim (id INTEGER); INSERT INTO victim VALUES (1)");
+
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    var schema = $"\"s\":[\"x\",[\"id\",1,23],[{J("c\" INTEGER); DROP TABLE victim; --")},0,23]]";
+
+                    await publisher.PublishAsync(CreateTableMessage("public.x", $"{{\"c\":\"D\",{schema},\"k\":[1]}}"), CancellationToken.None);
+                    await publisher.ConfirmAsync(CancellationToken.None);
+                }
+
+                Assert.AreEqual(1L, await ExecuteAsync(connectionString, "SELECT count(*) FROM victim"));
+            });
+        }
+
+        /// <summary>A JSON string.</summary>
+        private static string J(string text)
+        {
+            var json = new StringBuilder("\"");
+            JsonUtils.EscapeText(json, text);
+            return json.Append('"').ToString();
         }
 
         [TestMethod]
