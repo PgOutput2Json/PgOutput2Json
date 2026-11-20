@@ -1,0 +1,22 @@
+#nullable enable
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+PgOutput2Json.RabbitMq.RabbitMqPublisher
+PgOutput2Json.RabbitMq.RabbitMqPublisher.RabbitMqPublisher(PgOutput2Json.RabbitMq.RabbitMqPublisherOptions! options, int batchSize, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.RabbitMq.RabbitMqPublisher!>? logger = null) -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.ConnectionFactory.get -> RabbitMQ.Client.ConnectionFactory!
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.ConnectionFactory.set -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.ExchangeName.get -> string!
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.ExchangeName.set -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.HostNames.get -> System.Collections.Generic.List<string!>!
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.HostNames.set -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.PersistencyConfigurationByTable.get -> System.Collections.Generic.Dictionary<string!, bool>!
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.PersistencyConfigurationByTable.set -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.RabbitMqPublisherOptions() -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.TablePartitionCounts.get -> System.Collections.Generic.Dictionary<string!, int>!
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.TablePartitionCounts.set -> void
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.UsePersistentMessagesByDefault.get -> bool
+PgOutput2Json.RabbitMq.RabbitMqPublisherOptions.UsePersistentMessagesByDefault.set -> void
+override PgOutput2Json.RabbitMq.RabbitMqPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.RabbitMq.RabbitMqPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.RabbitMq.RabbitMqPublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseRabbitMq(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.RabbitMq.RabbitMqPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

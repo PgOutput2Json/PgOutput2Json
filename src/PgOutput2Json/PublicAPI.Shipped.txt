@@ -1,0 +1,260 @@
+#nullable enable
+PgOutput2Json.ChangeRow
+PgOutput2Json.ChangeRow.ChangeRow() -> void
+PgOutput2Json.ChangeRow.ChangeType.get -> PgOutput2Json.RowChangeType
+PgOutput2Json.ChangeRow.CommitTimestamp.get -> System.DateTime
+PgOutput2Json.ChangeRow.IsTableSync.get -> bool
+PgOutput2Json.ChangeRow.MessageNo.get -> ulong
+PgOutput2Json.ChangeRow.NewValues.get -> System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowValue>?
+PgOutput2Json.ChangeRow.OldValues.get -> System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowValue>?
+PgOutput2Json.ChangeRow.ServerClock.get -> System.DateTime
+PgOutput2Json.ChangeRow.Table.get -> PgOutput2Json.RowTable!
+PgOutput2Json.ChangeRow.TxFinalLsn.get -> ulong
+PgOutput2Json.IMessagePublisher
+PgOutput2Json.IMessagePublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.IMessagePublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
+PgOutput2Json.IMessagePublisher.PublishAsync(PgOutput2Json.JsonMessage! jsonMessage, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.IMessagePublisherFactory
+PgOutput2Json.IMessagePublisherFactory.CreateMessagePublisher(PgOutput2Json.ReplicationListenerOptions! listenerOptions, string! slotName, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> PgOutput2Json.IMessagePublisher!
+PgOutput2Json.IMessagePublisherFactory.RequiredWriteMode.get -> PgOutput2Json.JsonWriteMode?
+PgOutput2Json.IMessagePublisherFactory.SupportsParallelCopy.get -> bool
+PgOutput2Json.IPgOutput2Json
+PgOutput2Json.IPgOutput2Json.StartAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+PgOutput2Json.IRowPublisher
+PgOutput2Json.IRowPublisher.PublishRowAsync(PgOutput2Json.ChangeRow! row, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.JsonMessage
+PgOutput2Json.JsonMessage.Clear() -> void
+PgOutput2Json.JsonMessage.IsTableSync.get -> bool
+PgOutput2Json.JsonMessage.Json.get -> System.Text.StringBuilder!
+PgOutput2Json.JsonMessage.JsonMessage() -> void
+PgOutput2Json.JsonMessage.KeyKolValue.get -> System.Text.StringBuilder!
+PgOutput2Json.JsonMessage.MessageNo.get -> ulong
+PgOutput2Json.JsonMessage.PartitionKolValue.get -> System.Text.StringBuilder!
+PgOutput2Json.JsonMessage.TableName.get -> System.Text.StringBuilder!
+PgOutput2Json.JsonMessage.TxFinalLsn.get -> ulong
+PgOutput2Json.JsonOptions
+PgOutput2Json.JsonOptions.JsonOptions() -> void
+PgOutput2Json.JsonOptions.TimestampFormat.get -> PgOutput2Json.TimestampFormat
+PgOutput2Json.JsonOptions.TimestampFormat.set -> void
+PgOutput2Json.JsonOptions.WriteMode.get -> PgOutput2Json.JsonWriteMode
+PgOutput2Json.JsonOptions.WriteMode.set -> void
+PgOutput2Json.JsonOptions.WriteNulls.get -> bool
+PgOutput2Json.JsonOptions.WriteNulls.set -> void
+PgOutput2Json.JsonOptions.WriteTableNames.get -> bool
+PgOutput2Json.JsonOptions.WriteTableNames.set -> void
+PgOutput2Json.JsonOptions.WriteTimestamps.get -> bool
+PgOutput2Json.JsonOptions.WriteTimestamps.set -> void
+PgOutput2Json.JsonUtils
+PgOutput2Json.JsonWriteMode
+PgOutput2Json.JsonWriteMode.Compact = 1 -> PgOutput2Json.JsonWriteMode
+PgOutput2Json.JsonWriteMode.Default = 0 -> PgOutput2Json.JsonWriteMode
+PgOutput2Json.JsonWriter
+PgOutput2Json.JsonWriter.AddType(Npgsql.Replication.PgOutput.Messages.TypeMessage! type) -> void
+PgOutput2Json.JsonWriter.JsonWriter(PgOutput2Json.JsonOptions! jsonOptions, PgOutput2Json.ReplicationListenerOptions! listenerOptions) -> void
+PgOutput2Json.JsonWriter.WriteMessageAsync(PgOutput2Json.ReplicationMessage! replMessage, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<PgOutput2Json.JsonMessage!>!
+PgOutput2Json.MessageExtensions
+PgOutput2Json.MessagePublisher
+PgOutput2Json.MessagePublisher.MessagePublisher() -> void
+PgOutput2Json.PartitionFilter
+PgOutput2Json.PartitionFilter.FromInclusive.get -> int
+PgOutput2Json.PartitionFilter.PartitionFilter(int fromInclusive, int toExclusive) -> void
+PgOutput2Json.PartitionFilter.ToExclusive.get -> int
+PgOutput2Json.PgOid
+PgOutput2Json.PgOid.ABSTIMEOID = 702 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_BOOLOID = 1000 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_BPCHAROID = 1014 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_BYTEAOID = 1001 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_CASHOID = 791 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_CHAROID = 1002 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_CIDROID = 651 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_DATEOID = 1182 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_FLOAT4OID = 1021 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_FLOAT8OID = 1022 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_INETOID = 1041 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_INT2OID = 1005 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_INT4OID = 1007 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_INT8OID = 1016 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_INTERVALOID = 1187 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_JSONBOID = 3807 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_JSONOID = 199 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_NAMEOID = 1003 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_NUMERICOID = 1231 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_OIDOID = 1028 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_POINTOID = 1017 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_TEXTOID = 1009 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_TIMEOID = 1183 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_TIMESTAMPOID = 1115 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_TIMESTAMPTZOID = 1185 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_TIMETZOID = 1270 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_UUIDOID = 2951 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_VARBITOID = 1563 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_VARCHAROID = 1015 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_XMLOID = 143 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.A_ZPBITOID = 1561 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.BOOLOID = 16 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.BOXOID = 603 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.BPCHAROID = 1042 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.BYTEAOID = 17 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.CASHOID = 790 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.CHAROID = 18 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.CIDOID = 29 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.CIDROID = 650 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.CIRCLEOID = 718 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.DATEOID = 1082 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.FLOAT4OID = 700 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.FLOAT8OID = 701 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.INETOID = 869 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.INT2OID = 21 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.INT2VECTOROID = 22 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.INT4OID = 23 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.INT8OID = 20 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.INTERVALOID = 1186 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.JSONBOID = 3802 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.JSONOID = 114 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.LINEOID = 628 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.LSEGOID = 601 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.NAMEOID = 19 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.NUMERICOID = 1700 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.OIDOID = 26 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.OIDVECTOROID = 30 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.PATHOID = 602 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.POINTOID = 600 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.POLYGONOID = 604 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.REGPROCOID = 24 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.RELTIMEOID = 703 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TEXTOID = 25 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TIDOID = 27 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TIMEOID = 1083 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TIMESTAMPOID = 1114 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TIMESTAMPTZOID = 1184 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TIMETZOID = 1266 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.TINTERVALOID = 704 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.UNKNOWNOID = 705 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.UUIDOID = 2950 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.VARBITOID = 1562 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.VARCHAROID = 1043 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.XIDOID = 28 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.XMLOID = 142 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOid.ZPBITOID = 1560 -> PgOutput2Json.PgOid
+PgOutput2Json.PgOidExtensions
+PgOutput2Json.PgOutput2JsonBuilder
+PgOutput2Json.PgOutput2JsonBuilder.Build() -> PgOutput2Json.IPgOutput2Json!
+PgOutput2Json.PgOutput2JsonBuilder.PgOutput2JsonBuilder() -> void
+PgOutput2Json.PgOutput2JsonBuilder.WithBatchSize(int batchSize) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithDeduplication(bool useDeduplication) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithIdleWalMessageInterval(System.TimeSpan interval) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 2) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithInitialDataCopy(bool copyData, int maxParallelJobs, int workersPerTable) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithJsonOptions(System.Action<PgOutput2Json.JsonOptions!>! configureAction) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithMessageHandler(PgOutput2Json.SimpleMessageHandler! messageHandler) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithMessagePublisherFactory(PgOutput2Json.IMessagePublisherFactory! messagePublisherFactory) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithPartitionKeyFields(string! tableName, string! field, params string![]! additionalFields) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithPgColumns(string! tableName, params string![]! columnNames) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithPgConnectionString(string! connectionString) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithPgDataSource(System.Action<Npgsql.NpgsqlDataSourceBuilder!>! builderAction) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithPgPublications(params string![]! publicationNames) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithPgReplicationSlot(string! replicationSlotName, bool useTemporarySlot = false) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.PgOutput2JsonBuilder.WithReconnectDelay(System.TimeSpan delay) -> PgOutput2Json.PgOutput2JsonBuilder!
+PgOutput2Json.ReplicationListenerOptions
+PgOutput2Json.ReplicationListenerOptions.BatchSize.get -> int
+PgOutput2Json.ReplicationListenerOptions.BatchWaitTime.get -> System.TimeSpan
+PgOutput2Json.ReplicationListenerOptions.ConnectionString.get -> string!
+PgOutput2Json.ReplicationListenerOptions.CopyData.get -> bool
+PgOutput2Json.ReplicationListenerOptions.CopyWorkersPerTable.get -> int
+PgOutput2Json.ReplicationListenerOptions.DataSourceBuilder.get -> Npgsql.NpgsqlDataSourceBuilder!
+PgOutput2Json.ReplicationListenerOptions.IdleWalMessageInterval.get -> System.TimeSpan
+PgOutput2Json.ReplicationListenerOptions.IncludedColumns.get -> System.Collections.Generic.Dictionary<string!, System.Collections.Generic.IReadOnlyList<string!>!>!
+PgOutput2Json.ReplicationListenerOptions.MaxParallelCopyJobs.get -> int
+PgOutput2Json.ReplicationListenerOptions.PartitionKeyColumns.get -> System.Collections.Generic.Dictionary<string!, System.Collections.Generic.IReadOnlyList<string!>!>!
+PgOutput2Json.ReplicationListenerOptions.PublicationNames.get -> string![]!
+PgOutput2Json.ReplicationListenerOptions.ReconnectDelay.get -> System.TimeSpan
+PgOutput2Json.ReplicationListenerOptions.ReplicationListenerOptions() -> void
+PgOutput2Json.ReplicationListenerOptions.ReplicationSlotName.get -> string!
+PgOutput2Json.ReplicationListenerOptions.UseDeduplication.get -> bool
+PgOutput2Json.ReplicationListenerOptions.UseDeduplication.set -> void
+PgOutput2Json.ReplicationListenerOptions.UseTemporarySlot.get -> bool
+PgOutput2Json.ReplicationMessage
+PgOutput2Json.ReplicationMessage.CommitTimeStamp.get -> System.DateTime
+PgOutput2Json.ReplicationMessage.CommitTimeStamp.set -> void
+PgOutput2Json.ReplicationMessage.HasRelationChanged.get -> bool
+PgOutput2Json.ReplicationMessage.HasRelationChanged.set -> void
+PgOutput2Json.ReplicationMessage.Message.get -> Npgsql.Replication.PgOutput.Messages.PgOutputReplicationMessage?
+PgOutput2Json.ReplicationMessage.Message.set -> void
+PgOutput2Json.ReplicationMessage.MessageNo.get -> ulong
+PgOutput2Json.ReplicationMessage.MessageNo.set -> void
+PgOutput2Json.ReplicationMessage.ReplicationMessage() -> void
+PgOutput2Json.ReplicationMessage.TransactionFinalLsn.get -> ulong
+PgOutput2Json.ReplicationMessage.TransactionFinalLsn.set -> void
+PgOutput2Json.RowChangeType
+PgOutput2Json.RowChangeType.Copy = 3 -> PgOutput2Json.RowChangeType
+PgOutput2Json.RowChangeType.Delete = 2 -> PgOutput2Json.RowChangeType
+PgOutput2Json.RowChangeType.Insert = 0 -> PgOutput2Json.RowChangeType
+PgOutput2Json.RowChangeType.Update = 1 -> PgOutput2Json.RowChangeType
+PgOutput2Json.RowColumn
+PgOutput2Json.RowColumn.IsKey.get -> bool
+PgOutput2Json.RowColumn.IsKey.init -> void
+PgOutput2Json.RowColumn.IsPartitionKey.get -> bool
+PgOutput2Json.RowColumn.IsPartitionKey.init -> void
+PgOutput2Json.RowColumn.Name.get -> string!
+PgOutput2Json.RowColumn.Name.init -> void
+PgOutput2Json.RowColumn.RowColumn() -> void
+PgOutput2Json.RowColumn.TypeId.get -> uint
+PgOutput2Json.RowColumn.TypeId.init -> void
+PgOutput2Json.RowColumn.TypeModifier.get -> int
+PgOutput2Json.RowColumn.TypeModifier.init -> void
+PgOutput2Json.RowColumn.TypeName.get -> string?
+PgOutput2Json.RowColumn.TypeName.init -> void
+PgOutput2Json.RowTable
+PgOutput2Json.RowTable.Columns.get -> System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowColumn!>!
+PgOutput2Json.RowTable.Name.get -> string!
+PgOutput2Json.RowTable.RowTable(string! name, System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowColumn!>! columns) -> void
+PgOutput2Json.RowValue
+PgOutput2Json.RowValue.Kind.get -> PgOutput2Json.RowValueKind
+PgOutput2Json.RowValue.RowValue() -> void
+PgOutput2Json.RowValue.Text.get -> string?
+PgOutput2Json.RowValueKind
+PgOutput2Json.RowValueKind.Null = 0 -> PgOutput2Json.RowValueKind
+PgOutput2Json.RowValueKind.Text = 1 -> PgOutput2Json.RowValueKind
+PgOutput2Json.RowValueKind.Unchanged = 2 -> PgOutput2Json.RowValueKind
+PgOutput2Json.SimpleMessageHandler
+PgOutput2Json.TimestampFormat
+PgOutput2Json.TimestampFormat.DateTimeTicks = 0 -> PgOutput2Json.TimestampFormat
+PgOutput2Json.TimestampFormat.UnixTimeMilliseconds = 1 -> PgOutput2Json.TimestampFormat
+abstract PgOutput2Json.MessagePublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+abstract PgOutput2Json.MessagePublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+abstract PgOutput2Json.MessagePublisher.PublishAsync(PgOutput2Json.JsonMessage! jsonMessage, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.RowValue.ToString() -> string!
+static PgOutput2Json.JsonUtils.EscapeText(System.Text.StringBuilder! jsonBuilder, System.ReadOnlySpan<char> value) -> int
+static PgOutput2Json.JsonUtils.WriteArrayOfBoolean(System.Text.StringBuilder! jsonBuilder, string! value) -> int
+static PgOutput2Json.JsonUtils.WriteArrayOfByte(System.Text.StringBuilder! jsonBuilder, string! value) -> int
+static PgOutput2Json.JsonUtils.WriteArrayOfNumber(System.Text.StringBuilder! jsonBuilder, string! value) -> int
+static PgOutput2Json.JsonUtils.WriteArrayOfText(System.Text.StringBuilder! jsonBuilder, System.ReadOnlySpan<char> value) -> int
+static PgOutput2Json.JsonUtils.WriteBoolean(System.Text.StringBuilder! jsonBuilder, string! value) -> int
+static PgOutput2Json.JsonUtils.WriteBoolean(System.Text.StringBuilder! jsonBuilder, string! value, int start, int len) -> int
+static PgOutput2Json.JsonUtils.WriteByte(System.Text.StringBuilder! jsonBuilder, string! value) -> int
+static PgOutput2Json.JsonUtils.WriteByte(System.Text.StringBuilder! jsonBuilder, string! value, int start, int len) -> int
+static PgOutput2Json.JsonUtils.WriteNumber(System.Text.StringBuilder! jsonBuilder, string! value) -> int
+static PgOutput2Json.JsonUtils.WriteNumber(System.Text.StringBuilder! jsonBuilder, string! value, int start, int len) -> int
+static PgOutput2Json.JsonUtils.WriteText(System.Text.StringBuilder! jsonBuilder, System.ReadOnlySpan<char> value) -> int
+static PgOutput2Json.MessageExtensions.TryGetWalEnd(this string? json, out ulong walEnd) -> bool
+static PgOutput2Json.MessageExtensions.TryGetWalSeq(this string? json, out ulong walEnd, out ulong messageNo) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfBoolean(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfByte(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfJson(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfNumber(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfText(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfTimestamp(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsArrayOfUuid(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsBoolean(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsByte(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsJson(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsNumber(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsTimestamp(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOidExtensions.IsUuid(this PgOutput2Json.PgOid pgOid) -> bool
+static PgOutput2Json.PgOutput2JsonBuilder.Create() -> PgOutput2Json.PgOutput2JsonBuilder!
+static PgOutput2Json.RowValue.FromText(string! text) -> PgOutput2Json.RowValue
+static PgOutput2Json.RowValue.Null.get -> PgOutput2Json.RowValue
+static PgOutput2Json.RowValue.Unchanged.get -> PgOutput2Json.RowValue
+virtual PgOutput2Json.MessagePublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
+virtual PgOutput2Json.SimpleMessageHandler.Invoke(string! json, string! tableName, string! keyColumnValue, string! partitionKey) -> System.Threading.Tasks.Task<bool>!

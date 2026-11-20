@@ -1,0 +1,31 @@
+#nullable enable
+PgOutput2Json.MongoDb.ColumnInfo
+PgOutput2Json.MongoDb.ColumnInfo.ColumnInfo() -> void
+PgOutput2Json.MongoDb.ColumnInfo.DataType.get -> uint
+PgOutput2Json.MongoDb.ColumnInfo.DataType.set -> void
+PgOutput2Json.MongoDb.ColumnInfo.IsKey.get -> bool
+PgOutput2Json.MongoDb.ColumnInfo.IsKey.set -> void
+PgOutput2Json.MongoDb.ColumnInfo.IsTextArray.get -> bool
+PgOutput2Json.MongoDb.ColumnInfo.Name.get -> string!
+PgOutput2Json.MongoDb.ColumnInfo.Name.set -> void
+PgOutput2Json.MongoDb.ColumnInfo.PgOid.get -> PgOutput2Json.PgOid
+PgOutput2Json.MongoDb.ColumnInfo.TypeModifier.get -> int
+PgOutput2Json.MongoDb.ColumnInfo.TypeModifier.set -> void
+PgOutput2Json.MongoDb.ColumnInfo.TypeName.get -> string?
+PgOutput2Json.MongoDb.ColumnInfo.TypeName.set -> void
+PgOutput2Json.MongoDb.MongoDbPublisher
+PgOutput2Json.MongoDb.MongoDbPublisher.MongoDbPublisher(PgOutput2Json.MongoDb.MongoDbPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.MongoDb.MongoDbPublisher!>? logger, bool useDeduplication = true) -> void
+PgOutput2Json.MongoDb.MongoDbPublisherOptions
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.ClientSettings.get -> MongoDB.Driver.MongoClientSettings!
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.ClientSettings.set -> void
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.DatabaseName.get -> string!
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.DatabaseName.set -> void
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.MongoDbPublisherOptions() -> void
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.PostConnectionSetup.get -> System.Func<MongoDB.Driver.MongoClient!, System.Threading.Tasks.Task!>?
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.PostConnectionSetup.set -> void
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+override PgOutput2Json.MongoDb.MongoDbPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.MongoDb.MongoDbPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.MongoDb.MongoDbPublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
+override PgOutput2Json.MongoDb.MongoDbPublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseMongoDb(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.MongoDb.MongoDbPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

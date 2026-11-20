@@ -1,0 +1,31 @@
+#nullable enable
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+PgOutput2Json.Webhooks.WebhookPublisherOptions
+PgOutput2Json.Webhooks.WebhookPublisherOptions.ConnectTimeout.get -> System.TimeSpan
+PgOutput2Json.Webhooks.WebhookPublisherOptions.ConnectTimeout.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.ExecFileArgs.get -> string!
+PgOutput2Json.Webhooks.WebhookPublisherOptions.ExecFileArgs.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.KeepAliveDelay.get -> System.TimeSpan
+PgOutput2Json.Webhooks.WebhookPublisherOptions.KeepAliveDelay.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.KeepAliveTimeout.get -> System.TimeSpan
+PgOutput2Json.Webhooks.WebhookPublisherOptions.KeepAliveTimeout.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.OldWebhookSecrets.get -> System.Collections.Generic.List<string!>!
+PgOutput2Json.Webhooks.WebhookPublisherOptions.OldWebhookSecrets.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.PooledConnectionIdleTimeout.get -> System.TimeSpan
+PgOutput2Json.Webhooks.WebhookPublisherOptions.PooledConnectionIdleTimeout.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.PooledConnectionLifetime.get -> System.TimeSpan
+PgOutput2Json.Webhooks.WebhookPublisherOptions.PooledConnectionLifetime.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.RequestTimeout.get -> System.TimeSpan
+PgOutput2Json.Webhooks.WebhookPublisherOptions.RequestTimeout.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.RetryDelays.get -> System.TimeSpan[]!
+PgOutput2Json.Webhooks.WebhookPublisherOptions.RetryDelays.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.UseStandardWebhooks.get -> bool
+PgOutput2Json.Webhooks.WebhookPublisherOptions.UseStandardWebhooks.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.UseThinPayload.get -> bool
+PgOutput2Json.Webhooks.WebhookPublisherOptions.UseThinPayload.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.WebhookPublisherOptions() -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.WebhookSecret.get -> string!
+PgOutput2Json.Webhooks.WebhookPublisherOptions.WebhookSecret.set -> void
+PgOutput2Json.Webhooks.WebhookPublisherOptions.WebhookUrl.get -> string!
+PgOutput2Json.Webhooks.WebhookPublisherOptions.WebhookUrl.set -> void
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseWebhook(this PgOutput2Json.PgOutput2JsonBuilder! builder, string! webhookUrl, System.Action<PgOutput2Json.Webhooks.WebhookPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

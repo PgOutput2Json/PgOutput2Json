@@ -36,4 +36,30 @@
         <IsTrimmable>true</IsTrimmable>
     </PropertyGroup>
 
+    <!-- the 12 packages: the projects with an icon.png (not the tests, the benchmark or TestWorker) -->
+    <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)/icon.png')">
+        <!-- symbols with Source Link (in the SDK): a debugger steps into the source of the commit built -->
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+
+        <!-- deterministic, with the paths normalized: the same commit builds the same assemblies on any machine -->
+        <ContinuousIntegrationBuild Condition="'$(Configuration)' == 'Release'">true</ContinuousIntegrationBuild>
+
+        <!-- each package is compared with a release on nuget.org when it is built, and its target frameworks with each other:
+             an API removed or changed, or a target framework dropped, fails the build unless it is listed in the project's
+             CompatibilitySuppressions.xml, on purpose. The baseline is the first release of the version line (x.y.0):
+             patch releases do not move it -->
+        <EnablePackageValidation>true</EnablePackageValidation>
+        <PackageValidationBaselineVersion>2.1.0</PackageValidationBaselineVersion>
+    </PropertyGroup>
+
+    <!-- the public API, listed in PublicAPI.Shipped.txt (released) and PublicAPI.Unshipped.txt (since the last release) next to
+         each package's project: a change to it fails the build until the lists are updated, so it shows in the pull request -->
+    <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/icon.png')">
+        <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="5.6.0">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+    </ItemGroup>
+
 </Project>

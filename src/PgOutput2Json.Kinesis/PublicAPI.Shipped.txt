@@ -1,0 +1,14 @@
+#nullable enable
+PgOutput2Json.Kinesis.KinesisPublisher
+PgOutput2Json.Kinesis.KinesisPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.Kinesis.KinesisPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+PgOutput2Json.Kinesis.KinesisPublisher.KinesisPublisher(PgOutput2Json.Kinesis.KinesisPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.Kinesis.KinesisPublisher!>? logger) -> void
+PgOutput2Json.Kinesis.KinesisPublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.Kinesis.KinesisPublisherOptions
+PgOutput2Json.Kinesis.KinesisPublisherOptions.KinesisConfig.get -> Amazon.Kinesis.AmazonKinesisConfig!
+PgOutput2Json.Kinesis.KinesisPublisherOptions.KinesisConfig.set -> void
+PgOutput2Json.Kinesis.KinesisPublisherOptions.KinesisPublisherOptions() -> void
+PgOutput2Json.Kinesis.KinesisPublisherOptions.StreamName.get -> string!
+PgOutput2Json.Kinesis.KinesisPublisherOptions.StreamName.set -> void
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseKinesis(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.Kinesis.KinesisPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

@@ -1,0 +1,27 @@
+#nullable enable
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+PgOutput2Json.Redis.PublishMode
+PgOutput2Json.Redis.PublishMode.Channel = 1 -> PgOutput2Json.Redis.PublishMode
+PgOutput2Json.Redis.PublishMode.Stream = 0 -> PgOutput2Json.Redis.PublishMode
+PgOutput2Json.Redis.RedisPublisher
+PgOutput2Json.Redis.RedisPublisher.RedisPublisher(PgOutput2Json.Redis.RedisPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.Redis.RedisPublisher!>? logger = null) -> void
+PgOutput2Json.Redis.RedisPublisherOptions
+PgOutput2Json.Redis.RedisPublisherOptions.PublishMode.get -> PgOutput2Json.Redis.PublishMode
+PgOutput2Json.Redis.RedisPublisherOptions.PublishMode.set -> void
+PgOutput2Json.Redis.RedisPublisherOptions.Redis.get -> StackExchange.Redis.ConfigurationOptions!
+PgOutput2Json.Redis.RedisPublisherOptions.Redis.set -> void
+PgOutput2Json.Redis.RedisPublisherOptions.RedisPublisherOptions() -> void
+PgOutput2Json.Redis.RedisPublisherOptions.StreamName.get -> string!
+PgOutput2Json.Redis.RedisPublisherOptions.StreamName.set -> void
+PgOutput2Json.Redis.RedisPublisherOptions.StreamNameSuffix.get -> PgOutput2Json.Redis.StreamNameSuffix
+PgOutput2Json.Redis.RedisPublisherOptions.StreamNameSuffix.set -> void
+PgOutput2Json.Redis.RedisPublisherOptions.TablePartitionCounts.get -> System.Collections.Generic.Dictionary<string!, int>!
+PgOutput2Json.Redis.RedisPublisherOptions.TablePartitionCounts.set -> void
+PgOutput2Json.Redis.StreamNameSuffix
+PgOutput2Json.Redis.StreamNameSuffix.None = 0 -> PgOutput2Json.Redis.StreamNameSuffix
+PgOutput2Json.Redis.StreamNameSuffix.TableName = 1 -> PgOutput2Json.Redis.StreamNameSuffix
+PgOutput2Json.Redis.StreamNameSuffix.TableNameAndPartition = 2 -> PgOutput2Json.Redis.StreamNameSuffix
+override PgOutput2Json.Redis.RedisPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.Redis.RedisPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.Redis.RedisPublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseRedis(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.Redis.RedisPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

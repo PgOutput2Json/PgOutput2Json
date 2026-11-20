@@ -32,6 +32,12 @@ The website (landing page and docs, Astro + Starlight) is in `website/` and is d
 
 The core library targets `net8.0`, `net9.0`, and `net10.0`. `TreatWarningsAsErrors=True` is set — all warnings must be resolved.
 
+## Packages and Releases
+
+- `src/Directory.Build.props` has the version (one for all 12 packages) and the package settings. The settings only for packages apply to the projects with an `icon.png`. They are: symbols (`.snupkg`) with Source Link, and Release builds as `ContinuousIntegrationBuild` (deterministic, paths normalized to `/_/`), so a package built on any machine maps its sources to the commit on GitHub. `./publish.sh` builds the packages in Release and pushes them to nuget.org (it asks for the API key, and warns when HEAD is not tagged `v<version>`).
+- The public API (PublicApiAnalyzers): `PublicAPI.Shipped.txt` (as of the last release, 2.1.0) and `PublicAPI.Unshipped.txt` (changes since, removals as `*REMOVED*`) next to each package's project. A public change fails the build (RS0016, RS0017) until it is listed: `dotnet format analyzers <project> --diagnostics RS0016 --severity info` adds new entries (it does not add removals). New types are internal unless users need them; the tests and the other packages reach internals through `InternalsVisibleTo`. RS0026/RS0027 (overloads with optional parameters) stay on: they only check API that is not shipped, so a new overload cannot make existing calls ambiguous.
+- Package validation (`EnablePackageValidation`): each package built is compared with `PackageValidationBaselineVersion` (a release on nuget.org, downloaded once) and between its target frameworks. A removed or changed API fails the build (CP0002 etc.) unless it is in the project's `CompatibilitySuppressions.xml` (generate it with `-p:ApiCompatGenerateSuppressionFile=true`, only for an intended break). The baseline is the first release of the version line (x.y.0): patch releases do not move it, since they add no API. When a minor or major release is on nuget.org, it becomes the baseline, the suppressions are deleted, and `PublicAPI.Unshipped.txt` moves into `PublicAPI.Shipped.txt` (the `*REMOVED*` entries delete their shipped lines).
+
 ## Architecture
 
 The library listens to a PostgreSQL logical replication slot (`pgoutput` plugin) and converts WAL change events into JSON messages, then dispatches them to pluggable publisher backends.

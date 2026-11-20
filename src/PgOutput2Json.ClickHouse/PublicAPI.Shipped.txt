@@ -1,0 +1,50 @@
+#nullable enable
+PgOutput2Json.ClickHouse.ClickHouseException
+PgOutput2Json.ClickHouse.ClickHouseException.ClickHouseException(int statusCode, string? code, string! query, string! error) -> void
+PgOutput2Json.ClickHouse.ClickHouseException.Code.get -> string?
+PgOutput2Json.ClickHouse.ClickHouseException.StatusCode.get -> int
+PgOutput2Json.ClickHouse.ClickHousePublisher
+PgOutput2Json.ClickHouse.ClickHousePublisher.PublishRowAsync(PgOutput2Json.ChangeRow! row, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.CleanUpDeletedRowsAfter.get -> System.TimeSpan?
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.CleanUpDeletedRowsAfter.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.ClickHousePublisherOptions() -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Database.get -> string!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Database.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Endpoint.get -> string!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Endpoint.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.GetTableName.get -> System.Func<string!, string!>!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.GetTableName.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.HttpClient.get -> System.Net.Http.HttpClient?
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.HttpClient.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Password.get -> string!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Password.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Settings.get -> System.Collections.Generic.Dictionary<string!, string!>!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Tables.get -> System.Collections.Generic.Dictionary<string!, PgOutput2Json.ClickHouse.ClickHouseTableOptions!>!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseArrayTypes.get -> bool
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseArrayTypes.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseAsyncInserts.get -> bool
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseAsyncInserts.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseJsonType.get -> bool
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseJsonType.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseRowBinary.get -> bool
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseRowBinary.set -> void
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Username.get -> string!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Username.set -> void
+PgOutput2Json.ClickHouse.ClickHouseTableEngine
+PgOutput2Json.ClickHouse.ClickHouseTableEngine.MergeTree = 1 -> PgOutput2Json.ClickHouse.ClickHouseTableEngine
+PgOutput2Json.ClickHouse.ClickHouseTableEngine.Null = 2 -> PgOutput2Json.ClickHouse.ClickHouseTableEngine
+PgOutput2Json.ClickHouse.ClickHouseTableEngine.ReplacingMergeTree = 0 -> PgOutput2Json.ClickHouse.ClickHouseTableEngine
+PgOutput2Json.ClickHouse.ClickHouseTableOptions
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.ClickHouseTableOptions() -> void
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.Engine.get -> PgOutput2Json.ClickHouse.ClickHouseTableEngine
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.Engine.set -> void
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.OrderBy.get -> System.Collections.Generic.IReadOnlyList<string!>?
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.OrderBy.set -> void
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.PartitionBy.get -> string?
+PgOutput2Json.ClickHouse.ClickHouseTableOptions.PartitionBy.set -> void
+PgOutput2Json.PgOutput2JsonBuilderExtensions
+override PgOutput2Json.ClickHouse.ClickHousePublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+override PgOutput2Json.ClickHouse.ClickHousePublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.ClickHouse.ClickHousePublisher.PublishAsync(PgOutput2Json.JsonMessage! msg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseClickHouse(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.ClickHouse.ClickHousePublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!
