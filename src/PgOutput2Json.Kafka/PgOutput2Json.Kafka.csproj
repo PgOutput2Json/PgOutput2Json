@@ -23,8 +23,8 @@
 
 
     <ItemGroup>
-        <PackageReference Include="Confluent.Kafka" Version="2.15.0" />
-        <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="18.7.23">
+        <PackageReference Include="Confluent.Kafka" Version="2.16.0" />
+        <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="18.12.1">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
