@@ -544,7 +544,7 @@ This tells connections with foreign key checks off from those with them on, so i
 
 A `timestamp` (without time zone) is stored as ISO 8601 text without an offset (`2026-01-02T03:04:05.1234560`), so Microsoft.Data.Sqlite and EF Core read it back as the same wall time, with `DateTimeKind.Unspecified`, whatever the time zone of the machine. A `timestamptz` is stored as ISO 8601 text with its offset, in UTC (`2026-01-02T03:04:05.1234560+00:00`). Both columns are created as `DATETIME`. A `date`, `time` or `timetz` is stored as PostgreSQL's text (`2026-01-02`, `03:04:05`, `03:04:05+02`), and a value .NET cannot hold (`infinity`, a date BC) as well.
 
-Earlier versions stored a `timestamp` with the UTC offset of the machine running the output (`+01:00` in Central Europe in January), so it was read back shifted by that offset. Rows already in the database keep that value until they change, or until the table is copied again.
+Up to version 2.1.0, a `timestamp` was stored with the UTC offset of the machine running the output (`+01:00` in Central Europe in January), so it was read back shifted by that offset. Rows already in the database keep that value until they change, or until the table is copied again.
 
 ### Batch size
 
