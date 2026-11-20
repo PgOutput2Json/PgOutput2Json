@@ -24,6 +24,12 @@ This tells connections with foreign key checks off from those with them on, so i
 
 > **Important:** First set up PostgreSQL as described in [Getting started](../../getting-started/).
 
+## Dates and times
+
+A `timestamp` (without time zone) is stored as ISO 8601 text without an offset (`2026-01-02T03:04:05.1234560`), so Microsoft.Data.Sqlite and EF Core read it back as the same wall time, with `DateTimeKind.Unspecified`, whatever the time zone of the machine. A `timestamptz` is stored as ISO 8601 text with its offset, in UTC (`2026-01-02T03:04:05.1234560+00:00`). Both columns are created as `DATETIME`. A `date`, `time` or `timetz` is stored as PostgreSQL's text (`2026-01-02`, `03:04:05`, `03:04:05+02`), and a value .NET cannot hold (`infinity`, a date BC) as well.
+
+Earlier versions stored a `timestamp` with the UTC offset of the machine running the output (`+01:00` in Central Europe in January), so it was read back shifted by that offset. Rows already in the database keep that value until they change, or until the table is copied again.
+
 ## Batch size
 
 Every batch of changes is one transaction. `UseSqlite` sets the batch size to 1,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) with batches of 1,000 and the database file on the server's disk, the initial copy ran at about 55,000 rows per second and the stream at about 50,000, or about 68,000 and 61,000 with `options.UseWal = true` (the WAL journal mode of SQLite), since a commit then waits less for the disk. With the file in memory (tmpfs), where a commit does not wait for a disk, they ran at about 85,000 and 75,000 (with or without `UseWal`), and at about 72,000 and 68,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs, 8 GB RAM and its local disk with ext4, with PostgreSQL in Docker on the same machine). Larger batches add little. To use another size, call `WithBatchSize` after `UseSqlite`. A batch that is not full is still written after the batch wait time (100 ms by default).

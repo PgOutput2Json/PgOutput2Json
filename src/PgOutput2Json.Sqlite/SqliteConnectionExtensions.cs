@@ -604,8 +604,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                     if (column.IsDateTime() && value.Kind == SqliteValueKind.String)
                     {
-                        var dateTime = DateTimeOffset.Parse(text, CultureInfo.InvariantCulture);
-                        param.Value = dateTime.ToString("O");
+                        param.Value = FormatTimestamp(text, (PgOid)column.DataType);
                     }
                     else if (column.IsBlob() && value.Kind == SqliteValueKind.String)
                     {
@@ -620,6 +619,29 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                     param.Value = value.Text;
                     break;
             }
+        }
+
+        /// <summary>
+        /// The ISO 8601 text of a timestamp. A <c>timestamp</c> (without time zone) has no offset in PostgreSQL's text
+        /// and gets none here (2026-01-02T03:04:05.1234560), so it reads back as the same wall time on any machine;
+        /// a <c>timestamptz</c> keeps its offset (UTC in the replication session). The local time zone is never used.
+        /// A value .NET cannot hold (infinity, a date BC) is stored as PostgreSQL's text.
+        /// </summary>
+        internal static string FormatTimestamp(string text, PgOid oid)
+        {
+            if (oid == PgOid.TIMESTAMPOID)
+            {
+                // no offset in the text, and AdjustToUniversal is not set: the kind is Unspecified, nothing is converted
+                return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dateTime)
+                    && dateTime.Kind == DateTimeKind.Unspecified
+                    ? dateTime.ToString("O", CultureInfo.InvariantCulture)
+                    : text;
+            }
+
+            // the offset is in the text; AssumeUniversal only matters if it is not
+            return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dateTimeOffset)
+                ? dateTimeOffset.ToString("O", CultureInfo.InvariantCulture)
+                : text;
         }
 
         private static byte[] ParseHexBlob(string? hexValue)
