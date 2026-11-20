@@ -172,7 +172,8 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             using (var cmd = cn.CreateCommand())
             {
-                cmd.CommandText = $"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{tableName}'";
+                cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @name";
+                cmd.Parameters.AddWithValue("@name", tableName);
 
                 exists = await cmd.ExecuteScalarAsync(token).ConfigureAwait(false) != null;
             }
@@ -193,14 +194,14 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             using (var cmd = cn.CreateCommand())
             {
-                cmd.CommandText = $"PRAGMA table_info(\"{tableName}\")";
+                cmd.CommandText = "SELECT name FROM pragma_table_info(@name)";
+                cmd.Parameters.AddWithValue("@name", tableName);
 
                 using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
 
                 while (await reader.ReadAsync(token).ConfigureAwait(false))
                 {
-                    // The column name is in the second column (index 1)
-                    existingCols.Add(reader.GetString(1));
+                    existingCols.Add(reader.GetString(0));
                 }
             }
 
@@ -208,7 +209,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             foreach (var col in columns.Where(c => !existingCols.Contains(c.Name)))
             {
-                alterCmd.CommandText = $"ALTER TABLE \"{tableName}\" ADD \"{col.Name}\" {col.GetSqliteType()}";
+                alterCmd.CommandText = $"ALTER TABLE {Quote(tableName)} ADD {Quote(col.Name)} {col.GetSqliteType()}";
 
                 await alterCmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }
@@ -219,25 +220,25 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             var sqlBuilder = new StringBuilder(256);
             var keyBuilder = new StringBuilder(256);
 
-            sqlBuilder.Append($"CREATE TABLE IF NOT EXISTS \"{tableName}\" (");
+            sqlBuilder.Append($"CREATE TABLE IF NOT EXISTS {Quote(tableName)} (");
 
             var i = 0;
             foreach (var colInfo in columns)
             {
                 if (i > 0) sqlBuilder.Append(", ");
-                sqlBuilder.Append($"\"{colInfo.Name}\" {colInfo.GetSqliteType()}");
+                sqlBuilder.Append($"{Quote(colInfo.Name)} {colInfo.GetSqliteType()}");
 
                 if (colInfo.IsKey)
                 {
                     if (keyBuilder.Length > 0) keyBuilder.Append(", ");
-                    keyBuilder.Append($"\"{colInfo.Name}\"");
+                    keyBuilder.Append(Quote(colInfo.Name));
                 }
                 i++;
             }
 
             if (keyBuilder.Length > 0)
             {
-                sqlBuilder.Append($", CONSTRAINT \"pk_{tableName}\" PRIMARY KEY (");
+                sqlBuilder.Append($", CONSTRAINT {Quote("pk_" + tableName)} PRIMARY KEY (");
                 sqlBuilder.Append(keyBuilder);
                 sqlBuilder.Append(')');
             }
@@ -251,10 +252,20 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        private static string GetTableName(string fullTableName)
+        /// <summary>The table name without the schema: what follows the first dot, so a table name can have dots too.</summary>
+        internal static string GetTableName(string fullTableName)
         {
-            var nameParts = fullTableName.Split('.');
-            return nameParts.Length > 1 ? nameParts[1] : nameParts[0];
+            var dot = fullTableName.IndexOf('.');
+            return dot >= 0 ? fullTableName[(dot + 1)..] : fullTableName;
+        }
+
+        /// <summary>
+        /// An identifier for SQL: in double quotes, with each double quote doubled. Table and column names come from PostgreSQL,
+        /// where they can have any character, and whoever can create a table that the publication picks up chooses them.
+        /// </summary>
+        internal static string Quote(string identifier)
+        {
+            return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
         }
 
         /// <summary>
@@ -279,13 +290,13 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             var insertBuilder = new StringBuilder(256);
 
-            insertBuilder.Append($"INSERT INTO \"{tableName}\" (");
+            insertBuilder.Append($"INSERT INTO {Quote(tableName)} (");
 
             var i = 0;
             foreach (var col in columns)
             {
                 if (i > 0) insertBuilder.Append(", ");
-                insertBuilder.Append($"\"{col.Name}\"");
+                insertBuilder.Append(Quote(col.Name));
                 i++;
             }
 
@@ -307,7 +318,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             {
                 // SET parameters come first (@p0..@p{nonKeyCount-1}), then WHERE parameters
 
-                var updateBuilder = new StringBuilder($"UPDATE \"{tableName}\" SET ");
+                var updateBuilder = new StringBuilder($"UPDATE {Quote(tableName)} SET ");
 
                 var j = 0;
                 foreach (var col in columns)
@@ -315,7 +326,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
                     if (col.IsKey) continue;
 
                     if (j > 0) updateBuilder.Append(", ");
-                    updateBuilder.Append($"\"{col.Name}\" = @p{j}");
+                    updateBuilder.Append($"{Quote(col.Name)} = @p{j}");
                     j++;
                 }
 
@@ -326,7 +337,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             }
 
             var deleteCommand = keyCount > 0
-                ? CreateCommand(cn, $"DELETE FROM \"{tableName}\" WHERE {BuildKeyWhereClause(columns, 0)}", keyCount)
+                ? CreateCommand(cn, $"DELETE FROM {Quote(tableName)} WHERE {BuildKeyWhereClause(columns, 0)}", keyCount)
                 : null;
 
             return new PreparedCommands(
@@ -367,7 +378,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
                 var paramName = $"@p{paramOffset + keyIndex}";
 
-                whereBuilder.Append($"(\"{col.Name}\" = {paramName} OR ({paramName} IS NULL AND \"{col.Name}\" IS NULL))");
+                whereBuilder.Append($"({Quote(col.Name)} = {paramName} OR ({paramName} IS NULL AND {Quote(col.Name)} IS NULL))");
 
                 keyIndex++;
             }
@@ -447,13 +458,13 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
 
             if (setCols.Count == 0) return 1; // nothing to update
 
-            var sqlBuilder = new StringBuilder($"UPDATE \"{tableName}\" SET ");
+            var sqlBuilder = new StringBuilder($"UPDATE {Quote(tableName)} SET ");
 
             var j = 0;
             foreach (var colIndex in setCols)
             {
                 if (j > 0) sqlBuilder.Append(", ");
-                sqlBuilder.Append($"\"{columns[colIndex].Name}\" = @p{j}");
+                sqlBuilder.Append($"{Quote(columns[colIndex].Name)} = @p{j}");
                 j++;
             }
 
@@ -520,12 +531,12 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             if (setColumns.Count == 0) return;
 
             // OR REPLACE: a replayed key change may find the new key already there
-            var sqlBuilder = new StringBuilder($"UPDATE OR REPLACE \"{GetTableName(fullTableName)}\" SET ");
+            var sqlBuilder = new StringBuilder($"UPDATE OR REPLACE {Quote(GetTableName(fullTableName))} SET ");
 
             for (var j = 0; j < setColumns.Count; j++)
             {
                 if (j > 0) sqlBuilder.Append(", ");
-                sqlBuilder.Append($"\"{columns[setColumns[j]].Name}\" = @p{j}");
+                sqlBuilder.Append($"{Quote(columns[setColumns[j]].Name)} = @p{j}");
             }
 
             sqlBuilder.Append(" WHERE ");
