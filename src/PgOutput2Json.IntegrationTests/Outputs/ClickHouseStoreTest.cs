@@ -137,6 +137,19 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             return endpoint;
         }
 
+        /// <summary>
+        /// The first and the last Date32 and DateTime64 (UTC) the server can store: 0001-01-01 and 9999-12-31 in recent
+        /// versions, 1900-01-01 and 2299-12-31 before. ClickHouse saturates a date out of its range, so these are its limits,
+        /// which the output takes for the dates ClickHouse cannot store.
+        /// </summary>
+        private static async Task<(string FirstDate, string LastDate, string FirstTime, string LastTime)> DateLimitsAsync(string endpoint)
+        {
+            var limits = (await QueryAsync(endpoint, "SELECT toString(toDate32('0001-01-01')), toString(toDate32('9999-12-31')), " +
+                "toString(toDateTime64('0001-01-01 00:00:00', 6, 'UTC')), toString(toDateTime64('9999-12-31 23:59:59.999999', 6, 'UTC')) FORMAT TSVRaw")).Split('\t');
+
+            return (limits[0], limits[1], limits[2], limits[3]);
+        }
+
         private static async Task WaitForAsync(string endpoint, string table, string expected, string orderBy = "id", bool final = true)
         {
             expected = expected.ReplaceLineEndings("\n");
@@ -222,12 +235,14 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     INSERT INTO clk_types (id, num, f8, d, ts, tstz) VALUES (2, 'NaN', 'NaN', 'infinity', '-infinity', 'infinity');
                     INSERT INTO clk_types (id, d, ts, tstz) VALUES (3, '0044-03-15 BC', '10000-01-01 00:00:00', '0044-03-15 12:00:00+00 BC');");
 
+                var (firstDate, lastDate, firstTime, lastTime) = await DateLimitsAsync(endpoint);
+
                 // NaN is null, as in the JSON; a date ClickHouse cannot store is the first or the last one it can
                 await WaitForAsync(endpoint, "clk_types",
-                    """
+                    $$"""
                     [1,-2,9223372036854775807,12345678901234567890.123456789,1.5,1.5,1e300,true,"deadbeef","quote\" back\\ nl\n tab\t unié 😀","a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","2024-02-29","2024-02-29 12:34:56.789000","2024-02-29 10:34:56.789000","12:34:56","1 day",{"a":1},[1,null,3],"happy"]
-                    [2,null,null,null,null,null,null,null,null,null,null,"9999-12-31","0001-01-01 00:00:00.000000","9999-12-31 23:59:59.999999",null,null,null,[],null]
-                    [3,null,null,null,null,null,null,null,null,null,null,"0001-01-01","9999-12-31 23:59:59.999999","0001-01-01 00:00:00.000000",null,null,null,[],null]
+                    [2,null,null,null,null,null,null,null,null,null,null,"{{lastDate}}","{{firstTime}}","{{lastTime}}",null,null,null,[],null]
+                    [3,null,null,null,null,null,null,null,null,null,null,"{{firstDate}}","{{lastTime}}","{{firstTime}}",null,null,null,[],null]
                     """);
             });
 
@@ -460,7 +475,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             Assert.AreEqual(
                 "clk_opt_history MergeTree  (id)\nclk_opt_null Null  \nclk_opt_order ReplacingMergeTree intDiv(tenant, 100) tenant, id",
-                await QueryAsync(endpoint, $"SELECT name, engine, partition_key, sorting_key FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name LIKE 'clk_opt_%' ORDER BY name FORMAT TSVRaw").ContinueWith(t => t.Result.Replace('\t', ' ')));
+                // a sorting key of one column is "(id)" in recent versions, "id" before
+                await QueryAsync(endpoint, $"SELECT name, engine, partition_key, if(sorting_key != '' AND position(sorting_key, ',') = 0 AND NOT startsWith(sorting_key, '('), concat('(', sorting_key, ')'), sorting_key) FROM system.tables " +
+                    $"WHERE database = '{Containers.ClickHouseDatabase}' AND name LIKE 'clk_opt_%' ORDER BY name FORMAT TSVRaw").ContinueWith(t => t.Result.Replace('\t', ' ')));
 
             Assert.AreEqual("0", await QueryAsync(endpoint, "SELECT count() FROM clk_opt_null"));
         }
@@ -485,9 +502,11 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             {
                 await Db.ExecuteAsync($"INSERT INTO clk_arr VALUES {values}");
 
+                var (firstDate, lastDate, _, _) = await DateLimitsAsync(endpoint);
+
                 await WaitForAsync(endpoint, "clk_arr",
-                    """
-                    [1,["a",null,"b c"],["2024-02-29","9999-12-31","0001-01-01"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],["sad","so so",null],["1","2"]]
+                    $$"""
+                    [1,["a",null,"b c"],["2024-02-29","{{lastDate}}","{{firstDate}}"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],["sad","so so",null],["1","2"]]
                     [2,[],[],[],[],[],[],[],[],[]]
                     """);
             });
