@@ -179,7 +179,7 @@ namespace PgOutput2Json.IntegrationTests
 
                 owner._messages.Enqueue(new PublishedMessage(
                     message.Json.ToString(),
-                    message.TableName.ToString(),
+                    message.TableName,
                     message.KeyKolValue.ToString(),
                     message.PartitionKolValue.ToString(),
                     message.TxFinalLsn,

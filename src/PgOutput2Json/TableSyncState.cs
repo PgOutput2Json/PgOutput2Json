@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -13,7 +13,14 @@ namespace PgOutput2Json
     /// A table of the configured publications. The row filters of all the publications that contain
     /// the table are combined: a change is published if any of them accepts it.
     /// </summary>
-    internal sealed record PublishedTable(string TableName, string QuotedTableName, uint Oid, string? RowFilter, IReadOnlyList<string>? Columns = null);
+    internal sealed record PublishedTable(string TableName, string QuotedTableName, uint Oid, string? RowFilter, IReadOnlyList<string>? Columns = null)
+    {
+        /// <summary>The schema, as PostgreSQL has it (TableName joins it with the table name, which is ambiguous when a name has a dot).</summary>
+        public string SchemaName { get; init; } = "";
+
+        /// <summary>The name of the table without the schema.</summary>
+        public string RelationName { get; init; } = "";
+    }
 
     /// <summary>
     /// The stored state of a published table. For "copied" the LSN is the consistent point of the copy,
@@ -297,12 +304,24 @@ ORDER BY schemaname, tablename";
             return rows
                 .GroupBy(r => (r.Schema, r.Table, r.Oid))
                 .Select(g => new PublishedTable(
-                    $"{g.Key.Schema}.{g.Key.Table}",
+                    JoinName(g.Key.Schema, g.Key.Table),
                     $"{Quote(g.Key.Schema)}.{Quote(g.Key.Table)}",
                     g.Key.Oid,
                     CombineRowFilters(g.Select(r => r.RowFilter).ToList()),
-                    g.First().Columns))
+                    g.First().Columns)
+                {
+                    SchemaName = g.Key.Schema,
+                    RelationName = g.Key.Table,
+                })
                 .ToList();
+        }
+
+        private static string JoinName(string schemaName, string relationName)
+        {
+            var builder = new System.Text.StringBuilder();
+            PgName.Append(builder, schemaName, relationName);
+
+            return builder.ToString();
         }
 
         public static string Quote(string identifier) => $"\"{identifier.Replace("\"", "\"\"")}\"";

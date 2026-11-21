@@ -67,6 +67,9 @@ namespace PgOutput2Json
         private readonly JsonWriter _writer;
         private readonly RowReader _rowReader;
 
+        // the name of each relation, and its table for a row publisher, given to the writer or the row reader with each row
+        private readonly Relations _relations = new();
+
         private readonly IMessagePublisherFactory _messagePublisherFactory;
 
         private readonly AsyncLock _lock = new();
@@ -194,7 +197,9 @@ namespace PgOutput2Json
                             {
                                 changedRelations.Add(rel.RelationId);
 
-                                ValidatePartitionKeyColumns(rel);
+                                var relationEntry = _relations.Set(rel, state.MessagePublisher is IRowPublisher ? _rowReader : null);
+
+                                ValidatePartitionKeyColumns(rel, relationEntry.Name);
 
                                 // Relation Message has WalEnd=0/0
                                 continue;
@@ -282,10 +287,16 @@ namespace PgOutput2Json
                                         && tableSync.ShouldPublish(relation.RelationId, replicationMessage.TransactionFinalLsn)))
                                 {
                                     replicationMessage.HasRelationChanged = relation != null && changedRelations.Remove(relation.RelationId);
+                                    var rowPublisher = state.MessagePublisher as IRowPublisher;
 
-                                    if (relation != null && state.MessagePublisher is IRowPublisher rowPublisher)
+                                    // one lookup per row: the name, and the table for a row publisher
+                                    var entry = relation != null ? _relations.Get(relation, rowPublisher != null ? _rowReader : null) : null;
+
+                                    replicationMessage.TableName = entry?.Name ?? "";
+
+                                    if (entry != null && rowPublisher != null)
                                     {
-                                        var row = await _rowReader.ReadAsync(replicationMessage, cancellationToken)
+                                        var row = await _rowReader.ReadAsync(replicationMessage, entry, cancellationToken)
                                             .ConfigureAwait(false);
 
                                         await rowPublisher.PublishRowAsync(row, cancellationToken)
@@ -388,11 +399,9 @@ namespace PgOutput2Json
         /// The relation message is the only place where the actual replica identity is known, so it is checked here.
         /// pgoutput sends the relation once per connection (and again on schema change), so this is logged rarely.
         /// </summary>
-        private void ValidatePartitionKeyColumns(RelationMessage rel)
+        private void ValidatePartitionKeyColumns(RelationMessage rel, string tableName)
         {
             if (_logger == null || _options.PartitionKeyColumns.Count == 0) return;
-
-            var tableName = $"{rel.Namespace}.{rel.RelationName}";
 
             if (!_options.PartitionKeyColumns.TryGetValue(tableName, out var partitionCols)) return;
 

@@ -382,6 +382,8 @@ namespace PgOutput2Json
 
                 var writer = new JsonWriter(_jsonOptions, _options);
                 var rowReader = new RowReader(_options);
+                var relations = new Relations();
+                var rowReaderOfPublisher = publisher is IRowPublisher ? rowReader : null;
                 var message = new ReplicationMessage { HasRelationChanged = true };
 
                 var lastWalEnd = default(NpgsqlLogSequenceNumber);
@@ -467,7 +469,11 @@ namespace PgOutput2Json
                         switch (msg)
                         {
                             case RelationMessage relation:
-                                if (relation.RelationId == oid) message.HasRelationChanged = true;
+                                if (relation.RelationId == oid)
+                                {
+                                    message.HasRelationChanged = true;
+                                    relations.Set(relation, rowReaderOfPublisher);
+                                }
                                 continue;
 
                             case TypeMessage type:
@@ -498,13 +504,16 @@ namespace PgOutput2Json
                             case InsertMessage or UpdateMessage or DeleteMessage:
                                 message.MessageNo++;
 
-                                if (GetRelation(msg)!.RelationId == oid)
+                                if (GetRelation(msg) is { } rowRelation && rowRelation.RelationId == oid)
                                 {
                                     message.Message = msg;
+                                    var relationEntry = relations.Get(rowRelation, rowReaderOfPublisher);
+
+                                    message.TableName = relationEntry.Name;
 
                                     if (publisher is IRowPublisher rowPublisher)
                                     {
-                                        var row = await rowReader.ReadAsync(message, token).ConfigureAwait(false);
+                                        var row = await rowReader.ReadAsync(message, relationEntry, token).ConfigureAwait(false);
 
                                         row.IsTableSync = true;
                                         message.HasRelationChanged = false;

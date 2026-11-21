@@ -29,6 +29,8 @@ The change events JSON format:
 }
 ```
 
+The table name is `schema.table`. A schema or a table name that has a dot in it is quoted, with its double quotes doubled: `"sales.eu".orders`, `public."order.items"`, so two tables are never one name. The same name is used in `WithPgColumns` and `WithPartitionKeyFields`. Versions before 2.2 joined these names without quotes: a table with a dot in its schema or table name gets a new name, and with the initial data copy it is copied again.
+
 ## Message key
 
 Besides the JSON, every message has a key: the values of the table's key columns, e.g. `[1]`. Depending on the output, it is the message key (Kafka), the routing or partition key (RabbitMQ, Redis, Kinesis, and Kafka without partition-key columns), or the message id (Azure Event Hubs, RabbitMQ Streams).

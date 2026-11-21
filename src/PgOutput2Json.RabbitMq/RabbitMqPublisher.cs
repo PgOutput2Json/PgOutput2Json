@@ -24,10 +24,10 @@ namespace PgOutput2Json.RabbitMq
             var channel = await EnsureConnectionAsync(token)
                 .ConfigureAwait(false);
 
-            // the rows of a batch are mostly of one table: its name and its routing key are not made again for each of them
-            if (!msg.TableName.Equals(_tableName.AsSpan()))
+            // the rows of a batch are mostly of one table: its routing key is not made again for each of them
+            if (msg.TableName != _tableName)
             {
-                _tableName = msg.TableName.ToString();
+                _tableName = msg.TableName;
                 _routingKey = _tableName + ".0";
             }
 

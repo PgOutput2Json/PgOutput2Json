@@ -34,7 +34,7 @@ namespace PgOutput2Json.Kinesis
 
         public Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
-            var partitionKey = string.Join("", msg.TableName.ToString(), msg.KeyKolValue.ToString());
+            var partitionKey = string.Join("", msg.TableName, msg.KeyKolValue.ToString());
 
             var entry = new PutRecordsRequestEntry
             {

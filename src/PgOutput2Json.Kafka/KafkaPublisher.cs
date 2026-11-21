@@ -27,7 +27,7 @@ namespace PgOutput2Json.Kafka
 
             // the bytes Kafka gets, made from the StringBuilders without strings of them, unless the key has the table name
             var keyBytes = _options.WriteTableNameToMessageKey
-                ? Encoding.UTF8.GetBytes(string.Concat(message.TableName.ToString(), message.KeyKolValue.ToString()))
+                ? Encoding.UTF8.GetBytes(string.Concat(message.TableName, message.KeyKolValue.ToString()))
                 : Utf8Buffer.ToArray(message.KeyKolValue);
 
             var partition = GetPartition(message, out var partitionKey);
@@ -40,7 +40,7 @@ namespace PgOutput2Json.Kafka
                 {
                     { "wal_seq_no", Encoding.UTF8.GetBytes(message.TxFinalLsn.ToString()) },
                     { "message_no", Encoding.UTF8.GetBytes(message.MessageNo.ToString()) },
-                    { "table_name", Utf8Buffer.ToArray(message.TableName) },
+                    { "table_name", Encoding.UTF8.GetBytes(message.TableName) },
                     { "partition_key", partitionKey != null ? Encoding.UTF8.GetBytes(partitionKey) : keyBytes }
                 };
             }

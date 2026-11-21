@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -92,14 +92,41 @@ namespace PgOutput2Json
     /// </summary>
     public sealed class RowTable
     {
-        /// <summary>schema.table</summary>
+        /// <summary>schema.table. A schema or a table name with a dot in it is quoted, its double quotes doubled: "x.y".table.</summary>
         public string Name { get; }
+
+        /// <summary>The schema of the table. Empty for a table made with the name only.</summary>
+        public string SchemaName { get; } = "";
+
+        /// <summary>The name of the table without the schema. The whole name for a table made with the name only.</summary>
+        public string RelationName { get; }
 
         public IReadOnlyList<RowColumn> Columns { get; }
 
         public RowTable(string name, IReadOnlyList<RowColumn> columns)
         {
             Name = name;
+            RelationName = name;
+            Columns = columns;
+        }
+
+        /// <summary>A table of the library: its joined name is made by the listener.</summary>
+        internal RowTable(string name, string schemaName, string relationName, IReadOnlyList<RowColumn> columns)
+        {
+            Name = name;
+            SchemaName = schemaName;
+            RelationName = relationName;
+            Columns = columns;
+        }
+
+        public RowTable(string schemaName, string relationName, IReadOnlyList<RowColumn> columns)
+        {
+            var name = new System.Text.StringBuilder();
+            PgName.Append(name, schemaName, relationName);
+
+            Name = name.ToString();
+            SchemaName = schemaName;
+            RelationName = relationName;
             Columns = columns;
         }
     }

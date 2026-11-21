@@ -30,7 +30,7 @@ namespace PgOutput2Json.RabbitMqStreams
                 Properties = new RabbitMQ.Stream.Client.AMQP.Properties
                 {
                     MessageId = _options.WriteTableNameToMessageKey
-                        ? string.Join("", jsonMsg.TableName.ToString(), jsonMsg.KeyKolValue.ToString())
+                        ? string.Join("", jsonMsg.TableName, jsonMsg.KeyKolValue.ToString())
                         : jsonMsg.KeyKolValue.ToString(),
                 },
             };

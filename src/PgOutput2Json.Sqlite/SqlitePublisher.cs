@@ -47,8 +47,7 @@ namespace PgOutput2Json.Sqlite
 
             using var doc = JsonDocument.Parse(_utf8.Encode(msg.Json));
 
-            // the rows of a batch are mostly of one table: its name is not made again for each of them
-            if (!msg.TableName.Equals(_tableName.AsSpan())) _tableName = msg.TableName.ToString();
+            _tableName = msg.TableName;
 
             await ApplyChangeAsync(connection, _tableName, doc, token).ConfigureAwait(false);
 

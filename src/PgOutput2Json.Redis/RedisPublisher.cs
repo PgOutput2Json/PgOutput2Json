@@ -22,7 +22,7 @@ namespace PgOutput2Json.Redis
                 .ConfigureAwait(false);
 
             var json = msg.Json.ToString();
-            var tableName = msg.TableName.ToString();
+            var tableName = msg.TableName;
             var partition = GetPartitionId(msg, tableName);
 
             string name;

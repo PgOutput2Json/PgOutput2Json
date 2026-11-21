@@ -297,7 +297,7 @@ namespace PgOutput2Json.Webhooks
 
                 _payload.Append(',');
 
-                JsonUtils.WriteText(_payload, jsonMessage.TableName.ToString());
+                JsonUtils.WriteText(_payload, jsonMessage.TableName);
                 _payload.Append(':');
                 _payload.Append(jsonMessage.KeyKolValue);
 

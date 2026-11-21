@@ -1,1 +1,10 @@
 #nullable enable
+PgOutput2Json.JsonMessage.RelationName.get -> string!
+PgOutput2Json.JsonMessage.SchemaName.get -> string!
+PgOutput2Json.ReplicationMessage.TableName.get -> string!
+PgOutput2Json.ReplicationMessage.TableName.set -> void
+PgOutput2Json.RowTable.RelationName.get -> string!
+PgOutput2Json.RowTable.RowTable(string! schemaName, string! relationName, System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowColumn!>! columns) -> void
+PgOutput2Json.RowTable.SchemaName.get -> string!
+*REMOVED*PgOutput2Json.JsonMessage.TableName.get -> System.Text.StringBuilder!
+PgOutput2Json.JsonMessage.TableName.get -> string!
