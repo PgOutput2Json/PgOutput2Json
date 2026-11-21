@@ -214,6 +214,79 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             }
         }
 
+        /// <summary>
+        /// With TimestampTimeZone a timestamp without time zone is a wall time of that zone, in the copy and the stream;
+        /// a timestamptz is not affected.
+        /// </summary>
+        [TestMethod]
+        public async Task MongoDb_should_store_timestamps_as_times_of_the_timestamp_time_zone()
+        {
+            var settings = MongoClientSettings.FromConnectionString(await Containers.GetMongoConnectionStringAsync());
+
+            using var client = new MongoClient(settings);
+
+            var database = client.GetDatabase("os_mongo_tz_db");
+
+            await Db.ExecuteAsync(@"
+                CREATE TABLE os_mongo_tz (id int PRIMARY KEY, ts timestamp, tstz timestamptz, tsa timestamp[]);
+                INSERT INTO os_mongo_tz VALUES (1, '2026-01-02 03:04:05.123456', '2026-01-02 03:04:05.123456+01', '{""2026-06-30 23:59:59"",NULL}');
+                CREATE PUBLICATION os_mongo_tz_pub FOR TABLE os_mongo_tz;");
+
+            await Db.CreateSlotAsync("os_mongo_tz_slot");
+
+            var builder = PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications("os_mongo_tz_pub")
+                .WithPgReplicationSlot("os_mongo_tz_slot")
+                .WithInitialDataCopy(true)
+                .UseMongoDb(options =>
+                {
+                    options.ClientSettings = settings;
+                    options.DatabaseName = "os_mongo_tz_db";
+                    options.TimestampTimeZone = System.TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb");
+                });
+
+            const string copied =
+                """{ "id" : 1, "ts" : { "$date" : "2026-01-02T02:04:05.123Z" }, "tsa" : [{ "$date" : "2026-06-30T21:59:59Z" }, null], "tstz" : { "$date" : "2026-01-02T02:04:05.123Z" } }""";
+
+            const string streamed =
+                """{ "id" : 2, "ts" : { "$date" : "2026-03-29T01:30:00Z" }, "tsa" : ["infinity"], "tstz" : { "$date" : "2026-06-30T21:59:59Z" } }""";
+
+            var actual = "";
+
+            async Task<bool> StoredAsync(string expected)
+            {
+                var documents = await database.GetCollection<BsonDocument>("public__os_mongo_tz")
+                    .Find(FilterDefinition<BsonDocument>.Empty)
+                    .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
+                    .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
+                    .ToListAsync();
+
+                actual = string.Join("\n", documents
+                    .Select(d => new BsonDocument(d.Elements.OrderBy(e => e.Name, System.StringComparer.Ordinal)))
+                    .Select(d => d.ToJson(new JsonWriterSettings { OutputMode = JsonOutputMode.RelaxedExtendedJson })));
+
+                return actual == expected;
+            }
+
+            await using (new RunningListener(builder))
+            {
+                try
+                {
+                    await Wait.UntilAsync(() => StoredAsync(copied), "the copied row");
+
+                    // 02:30 is skipped when the clock is set forward: the offset of before, as in PostgreSQL
+                    await Db.ExecuteAsync("INSERT INTO os_mongo_tz VALUES (2, '2026-03-29 02:30:00', '2026-06-30 23:59:59+02', '{infinity}')");
+
+                    await Wait.UntilAsync(() => StoredAsync(copied + "\n" + streamed), "the streamed row");
+                }
+                catch (System.TimeoutException e)
+                {
+                    Assert.Fail($"{e.Message}. Stored: {actual}");
+                }
+            }
+        }
+
         [TestMethod]
         public async Task Array_in_the_key_should_be_its_JSON_text_so_rows_can_share_elements()
         {

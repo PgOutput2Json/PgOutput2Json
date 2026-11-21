@@ -1,1 +1,3 @@
 #nullable enable
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.TimestampTimeZone.get -> System.TimeZoneInfo!
+PgOutput2Json.MongoDb.MongoDbPublisherOptions.TimestampTimeZone.set -> void

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Globalization;
 using System.Numerics;
@@ -740,7 +740,7 @@ namespace PgOutput2Json.ClickHouse
             }
             else if (span.Length == 0)
             {
-                utcTicks = timeZone == TimeZoneInfo.Utc ? ticks : LocalToUtcTicks(ticks, timeZone);
+                utcTicks = LocalTime.ToUtcTicks(ticks, timeZone);
             }
             else
             {
@@ -748,18 +748,6 @@ namespace PgOutput2Json.ClickHouse
             }
 
             return (utcTicks - UnixEpochTicks) / 10;
-        }
-
-        /// <summary>
-        /// A time of a time zone that is not there (when the clock is set forward) is taken at the offset of before.
-        /// </summary>
-        private static long LocalToUtcTicks(long ticks, TimeZoneInfo timeZone)
-        {
-            var local = new DateTime(ticks, DateTimeKind.Unspecified);
-
-            var offset = timeZone.IsInvalidTime(local) ? timeZone.GetUtcOffset(local.AddHours(-3)) : timeZone.GetUtcOffset(local);
-
-            return ticks - offset.Ticks;
         }
 
         // +HH, +HH:MM, +HH:MM:SS, or Z

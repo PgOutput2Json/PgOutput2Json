@@ -158,7 +158,7 @@ namespace PgOutput2Json.MongoDb
                 _namespaces[tableName] = collectionNamespace = db.GetCollectionNamespace(tableName);
             }
 
-            MongoDbExtensions.UpsertOrDelete(_batch, collectionNamespace, columns, changeType, keyElement, rowElement);
+            MongoDbExtensions.UpsertOrDelete(_batch, collectionNamespace, columns, changeType, keyElement, rowElement, _options.TimestampTimeZone);
         }
 
         private async Task TryParseSchemaAsync(IMongoDatabase db, string tableName, JsonDocument doc, CancellationToken token)
