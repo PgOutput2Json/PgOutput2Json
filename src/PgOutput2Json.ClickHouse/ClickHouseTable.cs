@@ -44,6 +44,14 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public bool IsJsonb { get; init; }
 
+        /// <summary>
+        /// For a timestamp column (or an array of them) that is a DateTime64 with its own time zone in ClickHouse, which the
+        /// output creates: that type (of the elements of an array). Its values are sent as the number ClickHouse stores,
+        /// converted by the output (PostgreSQL's rules for a time of a time zone), also in JSON. Null: the text is sent,
+        /// and ClickHouse converts it (a DateTime64 without a time zone, or another type).
+        /// </summary>
+        public ClickHouseBinaryType? DateTime64Type { get; set; }
+
         public bool IsArray => Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray or ColumnKind.TextArray;
     }
 
@@ -88,8 +96,8 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public bool UnchangedValueWarned { get; set; }
 
-        public string UpsertQuery { get; }
-        public string DeleteQuery { get; }
+        public string UpsertQuery { get; private set; }
+        public string DeleteQuery { get; private set; }
 
         public StringBuilder Upserts { get; } = new();
         public StringBuilder Deletes { get; } = new();
@@ -187,6 +195,19 @@ namespace PgOutput2Json.ClickHouse
             return null;
         }
 
+        /// <summary>
+        /// The JSON inserts read a number for a DateTime64 as the raw value, as servers before 26.8 did: the timestamps the
+        /// output converts are sent as numbers in units of the precision of the column, not as seconds.
+        /// </summary>
+        public void ReadDateTimeNumbersAsRawValues()
+        {
+            const string format = " FORMAT JSONCompactEachRow";
+            const string settings = " SETTINGS input_format_read_datetime_number_as_raw_value = 1" + format;
+
+            if (!UpsertQuery.EndsWith(settings, StringComparison.Ordinal)) UpsertQuery = UpsertQuery.Replace(format, settings);
+            if (!DeleteQuery.EndsWith(settings, StringComparison.Ordinal)) DeleteQuery = DeleteQuery.Replace(format, settings);
+        }
+
         public void UseExistingTypes(IReadOnlyDictionary<string, string> types)
         {
             foreach (var column in Columns)
@@ -197,6 +218,17 @@ namespace PgOutput2Json.ClickHouse
                 {
                     column.Kind = ColumnKind.Other;
                 }
+
+                // without the time zone of the server, a DateTime64 without its own is not parsed
+                var binaryType = column.Kind is ColumnKind.Timestamp or ColumnKind.TimestampArray && types.TryGetValue(column.Name, out var columnType)
+                    ? ClickHouseBinaryType.Parse(columnType, serverTimeZone: null)
+                    : null;
+
+                var element = binaryType?.Element ?? binaryType;
+
+                column.DateTime64Type = element?.Base == BinaryBase.DateTime64 && (binaryType!.Element != null) == (column.Kind == ColumnKind.TimestampArray)
+                    ? element
+                    : null;
             }
         }
 

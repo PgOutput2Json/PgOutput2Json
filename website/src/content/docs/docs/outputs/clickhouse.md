@@ -157,7 +157,7 @@ RowBinary has no conversion: every value must be of the type the column has. So 
 
 A table with any other column type (for example `Map`, `Tuple` or `Nested`) gets its rows as JSON (`JSONCompactEachRow`), which ClickHouse converts to the type of the column. The output logs this when it prepares the table. So does a table with a `DateTime` or `DateTime64` without a time zone when the time zone of the server is not known to .NET.
 
-A `timestamp` (without time zone) is stored as a time of `options.TimestampTimeZone` (UTC by default, for example `TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")`): the output creates its column with that time zone, so the time zone of the ClickHouse server is not used. Existing columns are not changed: a `DateTime64` without a time zone, which earlier versions created, keeps the time zone of the server.
+A `timestamp` (without time zone) is stored as a time of `options.TimestampTimeZone` (UTC by default, for example `TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")`): the output creates its column with that time zone, so the time zone of the ClickHouse server is not used. The output converts the values itself, also in JSON, as PostgreSQL's `AT TIME ZONE` does: a time skipped when the clock is set forward gets the offset of before, and a time that is there twice the offset of after (the parser of ClickHouse takes the summer offset in both cases). Existing columns are not changed: a `DateTime64` without a time zone, which earlier versions created, keeps the time zone of the server, and its values are still sent as text.
 
 ## Create a .NET Worker Service
 

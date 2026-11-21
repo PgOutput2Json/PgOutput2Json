@@ -242,7 +242,10 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         /// <summary>
         /// A timestamp without time zone is a wall time of TimestampTimeZone: its column is created with that time zone, so
         /// ClickHouse stores the same moment whatever the time zone of the server. 2026-01-01 00:00 in Zagreb is
-        /// 2025-12-31 23:00 UTC; a timestamptz is not affected.
+        /// 2025-12-31 23:00 UTC; a timestamptz is not affected. The output converts the values itself, in JSON too, by
+        /// PostgreSQL's rules: 02:30 skipped in March and 02:30 twice in October are both 01:30 UTC (the parser of ClickHouse
+        /// takes 00:30), and a fraction of a second before 1970 is added (the parser of ClickHouse, with best_effort,
+        /// subtracts it). The expected values are from PostgreSQL 16 (AT TIME ZONE 'Europe/Zagreb').
         /// </summary>
         [TestMethod]
         public async Task Timestamp_should_be_stored_as_a_time_of_the_timestamp_time_zone()
@@ -251,19 +254,56 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             var endpoint = await RunAsync("clk_tz", "clk_tz", async endpoint =>
             {
-                await Db.ExecuteAsync("INSERT INTO clk_tz VALUES (1, '2026-01-01 00:00:00', '2026-01-01 00:00:00+00', '{\"2026-07-01 00:00:00\"}')");
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_tz VALUES (1, '2026-01-01 00:00:00', '2026-01-01 00:00:00+00', '{""2026-07-01 00:00:00""}');
+                    INSERT INTO clk_tz VALUES (2, '2026-03-29 02:30:00', '1950-06-01 12:00:00.25+00', '{""2026-10-25 02:30:00"",NULL}');
+                    INSERT INTO clk_tz VALUES (3, '1950-06-01 12:00:00.25', '1969-12-31 23:59:59.999999+00', NULL);
+                    INSERT INTO clk_tz VALUES (4, '2026-10-25 02:30:00', '2026-10-25 02:30:00+02', '{}');");
 
-                await WaitForAsync(endpoint, "clk_tz", """[1,"2026-01-01 00:00:00.000000","2026-01-01 00:00:00.000000",["2026-07-01 00:00:00.000000"]]""");
+                await Wait.UntilAsync(async () => await QueryAsync(endpoint, "SELECT count() FROM clk_tz FINAL FORMAT TSVRaw") == "4", "the rows of clk_tz");
             },
             options => options.TimestampTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb"));
 
-            Assert.AreEqual("1767222000000000 1767225600000000 1782856800000000",
-                await QueryAsync(endpoint, "SELECT concat(toString(toUnixTimestamp64Micro(ts)), ' ', toString(toUnixTimestamp64Micro(tstz)), ' ', " +
-                    "toString(toUnixTimestamp64Micro(tsa[1]))) FROM clk_tz FINAL FORMAT TSVRaw"));
+            Assert.AreEqual(
+                """
+                1	1767222000000000	1767225600000000	[1782856800000000]
+                2	1774747800000000	-618062399750000	[1792891800000000,NULL]
+                3	-618065999750000	-1	[]
+                4	1792891800000000	1792888200000000	[]
+                """.ReplaceLineEndings("\n"),
+                await QueryAsync(endpoint, "SELECT id, toUnixTimestamp64Micro(ts), toUnixTimestamp64Micro(tstz), arrayMap(x -> toUnixTimestamp64Micro(x), tsa) " +
+                    "FROM clk_tz FINAL ORDER BY id FORMAT TSVRaw"));
 
             Assert.AreEqual("ts Nullable(DateTime64(6, 'Europe/Zagreb')), tsa Array(Nullable(DateTime64(6, 'Europe/Zagreb')))",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns " +
                     $"WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_tz' AND name IN ('ts', 'tsa') ORDER BY position) FORMAT TSVRaw"));
+        }
+
+        /// <summary>
+        /// A row with a timestamp key is found by the moment the output stored, for a large value an update did not change
+        /// (read back from ClickHouse) and for a delete: also at 02:30 on the day the clock is set back, which is there twice.
+        /// </summary>
+        [TestMethod]
+        public async Task Row_with_a_timestamp_key_should_be_found_by_the_moment_the_output_stored()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE clk_tzkey (ts timestamp PRIMARY KEY, v text, big text);
+                ALTER TABLE clk_tzkey ALTER COLUMN big SET STORAGE EXTERNAL;");
+
+            var endpoint = await RunAsync("clk_tzkey", "clk_tzkey", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_tzkey VALUES ('2026-10-25 02:30:00', 'one', repeat('x', 3000)), ('1950-06-01 12:00:00.25', 'two', repeat('y', 3000));
+                    UPDATE clk_tzkey SET v = 'uno';
+                    INSERT INTO clk_tzkey VALUES ('2026-03-29 02:30:00', 'three', NULL);
+                    DELETE FROM clk_tzkey WHERE ts = '2026-03-29 02:30:00';");
+
+                await Wait.UntilAsync(async () => await QueryAsync(endpoint,
+                    "SELECT arrayStringConcat(groupArray(concat(toString(toUnixTimestamp64Micro(ts)), ' ', v, ' ', toString(length(big)))), ', ') " +
+                    "FROM (SELECT * FROM clk_tzkey FINAL WHERE _deleted = 0 ORDER BY ts) FORMAT TSVRaw")
+                    == "-618065999750000 uno 3000, 1792891800000000 uno 3000", "the rows of clk_tzkey");
+            },
+            options => options.TimestampTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb"));
         }
 
         [TestMethod]

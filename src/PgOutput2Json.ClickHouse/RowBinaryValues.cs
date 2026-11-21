@@ -10,7 +10,12 @@ namespace PgOutput2Json.ClickHouse
     /// What the binary values need to know about the server: the time zone of a DateTime64 without one, and the first
     /// and the last date it can store, to which the dates of PostgreSQL that it cannot store are moved (as with text).
     /// </summary>
-    internal sealed record ClickHouseServerInfo(TimeZoneInfo? TimeZone, int Date32Min, int Date32Max, long DateTime64MinMicros, long DateTime64MaxMicros);
+    /// <param name="HasRawDateTimeNumberSetting">
+    /// The server has input_format_read_datetime_number_as_raw_value (26.8 and later), which is off by default: a number
+    /// for a DateTime64 is then read as seconds, unless it is set. Before, a number was always the raw value.
+    /// </param>
+    internal sealed record ClickHouseServerInfo(TimeZoneInfo? TimeZone, int Date32Min, int Date32Max, long DateTime64MinMicros, long DateTime64MaxMicros,
+                                                bool HasRawDateTimeNumberSetting = false);
 
     /// <summary>
     /// Writes the values of a row, as they come in the JSON of the library or from a read of ClickHouse,
@@ -557,11 +562,21 @@ namespace PgOutput2Json.ClickHouse
             if (IsMinimum(text)) return server.Date32Min;
             if (IsMaximum(text)) return server.Date32Max;
 
-            var span = text.AsSpan();
-
-            if (!TryParseDate(ref span, out var date)) throw new FormatException($"Column {column.Name}: {text} is not a date");
+            if (!PgTimestamp.TryParseDate(text, out var date)) throw new FormatException($"Column {column.Name}: {text} is not a date");
 
             return Math.Clamp(date.DayNumber - UnixEpochDay, server.Date32Min, server.Date32Max);
+        }
+
+        /// <summary>
+        /// The microseconds since 1970-01-01 00:00 UTC, within the range of a DateTime64 of the server: a time with an offset
+        /// (timestamptz) at that offset, one without in the time zone of the column.
+        /// </summary>
+        internal static long GetDateTime64Micros(ClickHouseColumn column, string text, ClickHouseBinaryType type, ClickHouseServerInfo server)
+        {
+            if (IsMinimum(text)) return server.DateTime64MinMicros;
+            if (IsMaximum(text)) return server.DateTime64MaxMicros;
+
+            return Math.Clamp(ParseMicros(column, text, type.TimeZone ?? TimeZoneInfo.Utc), server.DateTime64MinMicros, server.DateTime64MaxMicros);
         }
 
         /// <summary>
@@ -570,20 +585,7 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         internal static long GetDateTime64(ClickHouseColumn column, string text, ClickHouseBinaryType type, ClickHouseServerInfo server)
         {
-            long micros;
-
-            if (IsMinimum(text))
-            {
-                micros = server.DateTime64MinMicros;
-            }
-            else if (IsMaximum(text))
-            {
-                micros = server.DateTime64MaxMicros;
-            }
-            else
-            {
-                micros = Math.Clamp(ParseMicros(column, text, type.TimeZone ?? TimeZoneInfo.Utc), server.DateTime64MinMicros, server.DateTime64MaxMicros);
-            }
+            var micros = GetDateTime64Micros(column, text, type, server);
 
             if (type.Precision == 6) return micros;
 
@@ -608,9 +610,7 @@ namespace PgOutput2Json.ClickHouse
             if (IsMinimum(text)) return 0;
             if (IsMaximum(text)) return ushort.MaxValue;
 
-            var span = text.AsSpan();
-
-            if (!TryParseDate(ref span, out var date)) throw new FormatException($"Column {column.Name}: {text} is not a date");
+            if (!PgTimestamp.TryParseDate(text, out var date)) throw new FormatException($"Column {column.Name}: {text} is not a date");
 
             return (ushort)Math.Clamp(date.DayNumber - UnixEpochDay, 0, ushort.MaxValue);
         }
@@ -693,126 +693,15 @@ namespace PgOutput2Json.ClickHouse
         // a year of more than four digits, or infinity
         private static bool IsMaximum(string text) => text == "infinity" || text.IndexOf('-') > 4;
 
+        /// <summary>
+        /// The microseconds since 1970-01-01 00:00 UTC: at the offset of the text (timestamptz), or else as a wall time
+        /// of <paramref name="timeZone"/>, by PostgreSQL's rules.
+        /// </summary>
         private static long ParseMicros(ClickHouseColumn column, string text, TimeZoneInfo timeZone)
         {
-            var span = text.AsSpan();
-
-            if (!TryParseDate(ref span, out var date)) throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-
-            var ticks = date.ToDateTime(TimeOnly.MinValue).Ticks;
-
-            if (span.Length > 0 && span[0] is ' ' or 'T')
-            {
-                span = span[1..];
-
-                if (!TryParseNumber(ref span, 2, out var hours) || !Skip(ref span, ':')
-                    || !TryParseNumber(ref span, 2, out var minutes) || !Skip(ref span, ':')
-                    || !TryParseNumber(ref span, 2, out var seconds))
-                {
-                    throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-                }
-
-                ticks += (hours * 3600L + minutes * 60L + seconds) * TimeSpan.TicksPerSecond;
-
-                if (Skip(ref span, '.'))
-                {
-                    // up to microseconds, as PostgreSQL has them
-                    var digits = 0;
-                    var fraction = 0L;
-
-                    while (span.Length > 0 && char.IsAsciiDigit(span[0]))
-                    {
-                        if (digits++ < 7) fraction = fraction * 10 + (span[0] - '0');
-                        span = span[1..];
-                    }
-
-                    for (; digits < 7; digits++) fraction *= 10;
-
-                    ticks += fraction / 10 * 10;
-                }
-            }
-
-            long utcTicks;
-
-            if (span.Length > 0 && span[0] is '+' or '-' or 'Z')
-            {
-                utcTicks = ticks - ParseOffsetSeconds(column, text, span) * TimeSpan.TicksPerSecond;
-            }
-            else if (span.Length == 0)
-            {
-                utcTicks = LocalTime.ToUtcTicks(ticks, timeZone);
-            }
-            else
-            {
-                throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-            }
+            if (!PgTimestamp.TryGetUtcTicks(text, timeZone, out var utcTicks)) throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
 
             return (utcTicks - UnixEpochTicks) / 10;
-        }
-
-        // +HH, +HH:MM, +HH:MM:SS, or Z
-        private static long ParseOffsetSeconds(ClickHouseColumn column, string text, ReadOnlySpan<char> span)
-        {
-            if (span is "Z") return 0;
-
-            var sign = span[0] == '-' ? -1 : 1;
-
-            span = span[1..];
-
-            if (!TryParseNumber(ref span, 2, out var hours)) throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-
-            var minutes = 0;
-            var seconds = 0;
-
-            if (Skip(ref span, ':') && !TryParseNumber(ref span, 2, out minutes)) throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-            if (Skip(ref span, ':') && !TryParseNumber(ref span, 2, out seconds)) throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-
-            if (span.Length > 0) throw new FormatException($"Column {column.Name}: {text} is not a timestamp");
-
-            return sign * (hours * 3600L + minutes * 60L + seconds);
-        }
-
-        // YYYY-MM-DD
-        private static bool TryParseDate(ref ReadOnlySpan<char> span, out DateOnly date)
-        {
-            date = default;
-
-            if (!TryParseNumber(ref span, 4, out var year) || !Skip(ref span, '-')
-                || !TryParseNumber(ref span, 2, out var month) || !Skip(ref span, '-')
-                || !TryParseNumber(ref span, 2, out var day))
-            {
-                return false;
-            }
-
-            if (year < 1 || month < 1 || month > 12 || day < 1 || day > DateTime.DaysInMonth(year, month)) return false;
-
-            date = new DateOnly(year, month, day);
-            return true;
-        }
-
-        private static bool TryParseNumber(ref ReadOnlySpan<char> span, int digits, out int number)
-        {
-            number = 0;
-
-            if (span.Length < digits) return false;
-
-            for (var i = 0; i < digits; i++)
-            {
-                if (!char.IsAsciiDigit(span[i])) return false;
-
-                number = number * 10 + (span[i] - '0');
-            }
-
-            span = span[digits..];
-            return true;
-        }
-
-        private static bool Skip(ref ReadOnlySpan<char> span, char c)
-        {
-            if (span.Length == 0 || span[0] != c) return false;
-
-            span = span[1..];
-            return true;
         }
 
         /// <summary>

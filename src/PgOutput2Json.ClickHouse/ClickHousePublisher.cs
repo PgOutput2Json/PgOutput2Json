@@ -153,7 +153,7 @@ namespace PgOutput2Json.ClickHouse
                 }
                 else
                 {
-                    AppendValue(line, table.Columns[i], _row[i]);
+                    AppendValue(line, table.Columns[i], _row[i], _server);
                 }
             }
 
@@ -358,7 +358,7 @@ namespace PgOutput2Json.ClickHouse
         }
 
         /// <summary>
-        /// A value of a row of the library, from its text, as <see cref="AppendValue(StringBuilder, ClickHouseColumn, JsonElement)"/>
+        /// A value of a row of the library, from its text, as <see cref="AppendValue(StringBuilder, ClickHouseColumn, JsonElement, ClickHouseServerInfo?)"/>
         /// writes the same value from the JSON.
         /// </summary>
         private void AppendValue(StringBuilder line, ClickHouseColumn column, RowValue value)
@@ -373,6 +373,10 @@ namespace PgOutput2Json.ClickHouse
 
             switch (column.Kind)
             {
+                case ColumnKind.Timestamp when column.DateTime64Type is { } type && _server != null:
+                    line.Append(RowBinaryValues.GetDateTime64(column, text, type, _server));
+                    break;
+
                 case ColumnKind.Date or ColumnKind.Timestamp:
                     // the text of a date or a time has nothing to escape
                     line.Append('"').Append(Clamp(column.Kind, text)).Append('"');
@@ -393,7 +397,7 @@ namespace PgOutput2Json.ClickHouse
 
                     using (var doc = JsonDocument.Parse(_json.ToString()))
                     {
-                        AppendValue(line, column, doc.RootElement);
+                        AppendValue(line, column, doc.RootElement, _server);
                     }
                     break;
             }
@@ -535,10 +539,13 @@ namespace PgOutput2Json.ClickHouse
 
             table.UseExistingTypes(types);
 
+            // the range of its dates, also for the timestamps the JSON has as numbers
+            _server ??= await GetServerInfoAsync(token).ConfigureAwait(false);
+
+            if (_server.HasRawDateTimeNumberSetting) table.ReadDateTimeNumbersAsRawValues();
+
             if (_options.UseRowBinary)
             {
-                _server ??= await GetServerInfoAsync(token).ConfigureAwait(false);
-
                 if (table.UseRowBinary(types, _server.TimeZone) is { } column)
                 {
                     _logger?.LogInformation("The rows of {Table} are sent as JSON: RowBinary does not cover the column {Column}", table.QuotedName, column);
@@ -557,7 +564,8 @@ namespace PgOutput2Json.ClickHouse
             // an older server saturates the dates it cannot store, so these are its own first and last ones
             var result = await _client.ExecuteAsync(
                 "SELECT timezone(), toInt32(toDate32('0001-01-01')), toInt32(toDate32('9999-12-31')), " +
-                "toUnixTimestamp64Micro(toDateTime64('0001-01-01 00:00:00', 6, 'UTC')), toUnixTimestamp64Micro(toDateTime64('9999-12-31 23:59:59.999999', 6, 'UTC')) " +
+                "toUnixTimestamp64Micro(toDateTime64('0001-01-01 00:00:00', 6, 'UTC')), toUnixTimestamp64Micro(toDateTime64('9999-12-31 23:59:59.999999', 6, 'UTC')), " +
+                "(SELECT count() FROM system.settings WHERE name = 'input_format_read_datetime_number_as_raw_value') " +
                 "FORMAT JSONCompactEachRow", null, null, token).ConfigureAwait(false);
 
             using var doc = JsonDocument.Parse(result);
@@ -574,7 +582,7 @@ namespace PgOutput2Json.ClickHouse
 
             static long Number(JsonElement value) => value.ValueKind == JsonValueKind.String ? long.Parse(value.GetString()!, System.Globalization.CultureInfo.InvariantCulture) : value.GetInt64();
 
-            return new ClickHouseServerInfo(timeZone, (int)Number(row[1]), (int)Number(row[2]), Number(row[3]), Number(row[4]));
+            return new ClickHouseServerInfo(timeZone, (int)Number(row[1]), (int)Number(row[2]), Number(row[3]), Number(row[4]), Number(row[5]) > 0);
         }
 
         private async Task<Dictionary<string, string>> GetColumnTypesAsync(ClickHouseTable table, CancellationToken token)
@@ -622,7 +630,7 @@ namespace PgOutput2Json.ClickHouse
 
             for (var i = 0; i < table.KeyColumns.Count; i++)
             {
-                AppendValue(line, table.KeyColumns[i], keyElement[i]);
+                AppendValue(line, table.KeyColumns[i], keyElement[i], _server);
 
                 line.Append(',');
             }
@@ -630,11 +638,11 @@ namespace PgOutput2Json.ClickHouse
             line.Append('"').Append(version).Append("\",1]\n");
         }
 
-        internal static void AppendValue(StringBuilder line, ClickHouseColumn column, JsonElement value)
+        internal static void AppendValue(StringBuilder line, ClickHouseColumn column, JsonElement value, ClickHouseServerInfo? server = null)
         {
             if (column.IsArray && value.ValueKind == JsonValueKind.Array)
             {
-                AppendArray(line, column, value);
+                AppendArray(line, column, value, server);
             }
             else if (column.Kind == ColumnKind.TextArray && value.ValueKind == JsonValueKind.String)
             {
@@ -644,11 +652,16 @@ namespace PgOutput2Json.ClickHouse
 
                 using var doc = JsonDocument.Parse(json.ToString());
 
-                AppendArray(line, column, doc.RootElement);
+                AppendArray(line, column, doc.RootElement, server);
             }
             else if (column.Kind == ColumnKind.Json && value.ValueKind == JsonValueKind.String)
             {
                 AppendJson(line, value.GetString()!, checkDuplicateKeys: !column.IsJsonb);
+            }
+            else if (column.Kind == ColumnKind.Timestamp && column.DateTime64Type is { } type && server != null && value.ValueKind == JsonValueKind.String)
+            {
+                // the number ClickHouse stores: PostgreSQL's rules for a time of a time zone, which ClickHouse's parser does not follow
+                line.Append(RowBinaryValues.GetDateTime64(column, value.GetString()!, type, server));
             }
             else if (column.Kind is ColumnKind.Date or ColumnKind.Timestamp && value.ValueKind == JsonValueKind.String)
             {
@@ -664,7 +677,7 @@ namespace PgOutput2Json.ClickHouse
         /// A ClickHouse array has the dimensions of its type, and PostgreSQL does not send the dimensions of a column:
         /// the type has one, and a value with more is an error that says what to do. Dates are clamped one by one.
         /// </summary>
-        private static void AppendArray(StringBuilder line, ClickHouseColumn column, JsonElement value)
+        private static void AppendArray(StringBuilder line, ClickHouseColumn column, JsonElement value, ClickHouseServerInfo? server)
         {
             line.Append('[');
 
@@ -681,7 +694,11 @@ namespace PgOutput2Json.ClickHouse
                 if (!first) line.Append(',');
                 first = false;
 
-                if (column.Kind is ColumnKind.DateArray or ColumnKind.TimestampArray && element.ValueKind == JsonValueKind.String)
+                if (column.Kind == ColumnKind.TimestampArray && column.DateTime64Type is { } type && server != null && element.ValueKind == JsonValueKind.String)
+                {
+                    line.Append(RowBinaryValues.GetDateTime64(column, element.GetString()!, type, server));
+                }
+                else if (column.Kind is ColumnKind.DateArray or ColumnKind.TimestampArray && element.ValueKind == JsonValueKind.String)
                 {
                     line.Append('"').Append(Clamp(column.Kind == ColumnKind.DateArray ? ColumnKind.Date : ColumnKind.Timestamp, element.GetString()!)).Append('"');
                 }
@@ -929,6 +946,15 @@ namespace PgOutput2Json.ClickHouse
                 var keyValue = keyElement != null ? keyElement.Value[keyIndex] : rowElement[i];
 
                 var text = keyValue.ValueKind == JsonValueKind.String ? keyValue.GetString()! : keyValue.GetRawText();
+
+                if (column.Kind == ColumnKind.Timestamp && column.DateTime64Type is { } type && _server != null)
+                {
+                    // the moment, as the row has it: the text would be parsed by ClickHouse's rules
+                    conditions.Add($"{column.QuotedName} = fromUnixTimestamp64Micro({{k{keyIndex}:Int64}})");
+                    parameters.Add(new($"k{keyIndex}", RowBinaryValues.GetDateTime64Micros(column, text, type, _server).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                    keyIndex++;
+                    continue;
+                }
 
                 if (column.Kind is ColumnKind.Date or ColumnKind.Timestamp) text = Clamp(column.Kind, text);
 

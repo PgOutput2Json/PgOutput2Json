@@ -216,7 +216,7 @@ namespace PgOutput2Json.MongoDb
                 case JsonValueKind.String:
                     if (column.PgOid.IsTimestamp())
                     {
-                        return ConvertTimestamp(valElement.GetString()!, column.PgOid == PgOid.TIMESTAMPOID, timestampTimeZone);
+                        return ConvertTimestamp(valElement.GetString()!, timestampTimeZone);
                     }
                     else if (column.PgOid.IsByte())
                     {
@@ -249,7 +249,7 @@ namespace PgOutput2Json.MongoDb
                 case JsonValueKind.Array:
                     if (column.PgOid.IsArrayOfTimestamp())
                     {
-                        return ConvertArray(valElement, v => ConvertTimestamp(v, column.PgOid == PgOid.A_TIMESTAMPOID, timestampTimeZone));
+                        return ConvertArray(valElement, v => ConvertTimestamp(v, timestampTimeZone));
                     }
                     else if (column.PgOid.IsArrayOfByte())
                     {
@@ -273,32 +273,20 @@ namespace PgOutput2Json.MongoDb
         }
 
         /// <summary>
-        /// A BSON date (UTC, milliseconds) from PostgreSQL's text of a timestamp. A <c>timestamp</c> (without time zone)
-        /// has no offset in the text and is taken as a wall time of <paramref name="timeZone"/> (by default UTC, so the
-        /// wall time is stored as it is); a <c>timestamptz</c> has its offset (UTC in the replication session). The local
-        /// time zone of the machine is never used. A value a BSON date cannot hold here (infinity, a date BC, a year after
-        /// 9999) is stored as PostgreSQL's text.
+        /// A BSON date (UTC, milliseconds) from PostgreSQL's text of a timestamp. A <c>timestamptz</c> has its offset in
+        /// the text (UTC in the replication session); a <c>timestamp</c> (without time zone) has none and is taken as a
+        /// wall time of <paramref name="timeZone"/> (by default UTC, so the wall time is stored as it is). The time zone of
+        /// the machine is never used. A value a BSON date cannot hold here (infinity, a date BC, a year after 9999) is
+        /// stored as PostgreSQL's text.
         /// </summary>
-        internal static BsonValue ConvertTimestamp(string text, bool withoutTimeZone, TimeZoneInfo timeZone)
+        internal static BsonValue ConvertTimestamp(string text, TimeZoneInfo timeZone)
         {
-            if (withoutTimeZone)
-            {
-                // no offset in the text, and AdjustToUniversal is not set: the kind is Unspecified, nothing is converted
-                if (!DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dateTime)
-                    || dateTime.Kind != DateTimeKind.Unspecified)
-                {
-                    return new BsonString(text);
-                }
+            if (!PgTimestamp.TryGetUtcTicks(text, timeZone, out var utcTicks)) return new BsonString(text);
 
-                // the milliseconds since 1970, rounded down also before it
-                var ticks = LocalTime.ToUtcTicks(dateTime.Ticks, timeZone) - DateTime.UnixEpoch.Ticks;
+            // the milliseconds since 1970, rounded down also before it
+            var ticks = utcTicks - DateTime.UnixEpoch.Ticks;
 
-                return new BsonDateTime(Math.DivRem(ticks, TimeSpan.TicksPerMillisecond, out var rest) - (rest < 0 ? 1 : 0));
-            }
-
-            return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dateTimeOffset)
-                ? new BsonDateTime(dateTimeOffset.ToUnixTimeMilliseconds())
-                : new BsonString(text);
+            return new BsonDateTime(Math.DivRem(ticks, TimeSpan.TicksPerMillisecond, out var rest) - (rest < 0 ? 1 : 0));
         }
 
         /// <summary>
