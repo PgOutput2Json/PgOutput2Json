@@ -215,8 +215,7 @@ namespace PgOutput2Json.MongoDb
                 case JsonValueKind.String:
                     if (column.PgOid.IsTimestamp())
                     {
-                        var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
-                        return new BsonDateTime(dateTime.ToUnixTimeMilliseconds());
+                        return ConvertTimestamp(valElement.GetString()!);
                     }
                     else if (column.PgOid.IsByte())
                     {
@@ -249,7 +248,7 @@ namespace PgOutput2Json.MongoDb
                 case JsonValueKind.Array:
                     if (column.PgOid.IsArrayOfTimestamp())
                     {
-                        return ConvertArray(valElement, v => new BsonDateTime(DateTimeOffset.Parse(v, CultureInfo.InvariantCulture).ToUnixTimeMilliseconds()), "1970-01-01 00:00:00");
+                        return ConvertArray(valElement, ConvertTimestamp);
                     }
                     else if (column.PgOid.IsArrayOfByte())
                     {
@@ -270,6 +269,19 @@ namespace PgOutput2Json.MongoDb
                 default:
                     return ConvertJsonElementToBsonValue(valElement);
             }
+        }
+
+        /// <summary>
+        /// A BSON date (UTC, milliseconds) from PostgreSQL's text of a timestamp. A <c>timestamp</c> (without time zone)
+        /// has no offset in the text and is taken as that wall time in UTC, so it reads back as the same wall time on any
+        /// machine; a <c>timestamptz</c> has its offset (UTC in the replication session). The local time zone is never used.
+        /// A value a BSON date cannot hold here (infinity, a date BC, a year after 9999) is stored as PostgreSQL's text.
+        /// </summary>
+        internal static BsonValue ConvertTimestamp(string text)
+        {
+            return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dateTime)
+                ? new BsonDateTime(dateTime.ToUnixTimeMilliseconds())
+                : new BsonString(text);
         }
 
         /// <summary>

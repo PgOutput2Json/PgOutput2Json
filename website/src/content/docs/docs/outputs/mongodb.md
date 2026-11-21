@@ -10,6 +10,8 @@ The PgOutput2Json library will create the MongoDB database if it does not alread
 
 Arrays are stored as BSON arrays. Arrays of enums, user-defined types and domains over arrays are arrays of strings; before version 2.1 they were a string with the PostgreSQL array literal (`{sad,happy}`), and documents written before keep it until their row changes.
 
+A `timestamp` (without time zone) is stored as a BSON date at its wall time in UTC (`2026-01-02 03:04:05` as `2026-01-02T03:04:05Z`), so the MongoDB driver reads it back as the same wall time, whatever the time zone of the machine running the output. A `timestamptz` is stored at its own moment. BSON dates have milliseconds, so the microseconds are cut off. A value a BSON date cannot hold here (`infinity`, a date BC, a year after 9999) is stored as PostgreSQL's text, and a null in an array of timestamps as null. Earlier versions stored a `timestamp` shifted by the UTC offset of the machine running the output (an hour earlier in Central Europe in January), a null in an array of timestamps as 1970-01-01, and stopped the replication on a value they could not read. Documents already written keep their values until their row changes, or until the table is copied again.
+
 A changed row replaces its document (found by the key), so the document has exactly the columns of the row: a field that is not a column of the table is not kept. An update that did not change a large value (TOAST), which PostgreSQL does not send, sets the other fields instead, and keeps that one. Writing a change to MongoDB costs it a look-up of the key and a write of the document, so its own speed is the limit of this output.
 
 > **Important:** First set up PostgreSQL as described in [Getting started](../../getting-started/).

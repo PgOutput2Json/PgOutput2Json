@@ -22,6 +22,7 @@
     <ProjectReference Include="..\PgOutput2Json.AzureEventHubs\PgOutput2Json.AzureEventHubs.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Kafka\PgOutput2Json.Kafka.csproj" />
     <ProjectReference Include="..\PgOutput2Json.ClickHouse\PgOutput2Json.ClickHouse.csproj" />
+    <ProjectReference Include="..\PgOutput2Json.MongoDb\PgOutput2Json.MongoDb.csproj" />
     <ProjectReference Include="..\PgOutput2Json.Sqlite\PgOutput2Json.Sqlite.csproj" />
     <ProjectReference Include="..\PgOutput2Json.DynamoDb\PgOutput2Json.DynamoDb.csproj" />
   </ItemGroup>

@@ -3,7 +3,7 @@
 #   test      builds, runs the unit tests and the PostgreSQL tests on PostgreSQL 16
 #   outputs   runs the tests of the outputs (Kafka, RabbitMQ, Redis, MongoDB, DynamoDB, Kinesis, webhooks, SQLite, ClickHouse),
 #             the ClickHouse tests again with RowBinary (UseRowBinary), which is off by default,
-#             and the SQLite tests again with TZ=Europe/Zagreb
+#             and the SQLite and MongoDB tests again with TZ=Europe/Zagreb
 #   postgres  repeats the PostgreSQL tests on the other supported versions
 # A change of only the website, the docs (*.md), the docker files for manual testing or the license does not run them.
 name: Tests
@@ -82,12 +82,12 @@ jobs:
 
       # the runners are in UTC, which hides a local offset added to a timestamp (without time zone);
       # this job has not built the unit tests yet, so they are built here
-      - name: SQLite tests in a time zone with an offset and DST
+      - name: SQLite and MongoDB tests in a time zone with an offset and DST
         env:
           TZ: Europe/Zagreb
         run: |
-          dotnet test src/PgOutput2Json.Tests/PgOutput2Json.Tests.csproj --configuration Release --filter "FullyQualifiedName~Sqlite" --logger "console;verbosity=normal"
-          dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --filter "FullyQualifiedName~.Outputs.Sqlite" --logger "console;verbosity=normal"
+          dotnet test src/PgOutput2Json.Tests/PgOutput2Json.Tests.csproj --configuration Release --filter "FullyQualifiedName~Sqlite|FullyQualifiedName~MongoDb" --logger "console;verbosity=normal"
+          dotnet test src/PgOutput2Json.IntegrationTests/PgOutput2Json.IntegrationTests.csproj --configuration Release --no-build --filter "FullyQualifiedName~.Outputs.Sqlite|FullyQualifiedName~.Outputs.MongoDb" --logger "console;verbosity=normal"
 
   postgres:
     name: PostgreSQL ${{ matrix.postgres }}
