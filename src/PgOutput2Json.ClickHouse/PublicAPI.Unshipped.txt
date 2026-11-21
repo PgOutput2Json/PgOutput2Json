@@ -1,1 +1,3 @@
 #nullable enable
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.TimestampTimeZone.get -> System.TimeZoneInfo!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.TimestampTimeZone.set -> void

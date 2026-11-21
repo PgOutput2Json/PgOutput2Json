@@ -602,6 +602,8 @@ The PgOutput2Json library will create the MongoDB database if it does not alread
 
 Arrays are stored as BSON arrays. Arrays of enums, user-defined types and domains over arrays are arrays of strings; before version 2.1 they were a string with the PostgreSQL array literal (`{sad,happy}`), and documents written before keep it until their row changes.
 
+A `timestamp` (without time zone) has no time zone in PostgreSQL, but a BSON date is always a moment in UTC. By default the wall time is stored as if it were UTC (`2026-01-02 03:04:05` as `2026-01-02T03:04:05Z`), so the MongoDB driver reads it back as the same wall time, whatever the time zone of the machine running the output: the `Z` only stands for "no time zone". If your timestamps are times of a known zone, set `options.TimestampTimeZone` (for example `TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")`), and they are stored as the moments they are (`2026-01-02T02:04:05Z`), converted as PostgreSQL's `AT TIME ZONE` does: a time skipped when the clock is set forward gets the offset of before, and a time that is there twice the offset of after. A `timestamptz` is stored at its own moment, whatever the option. BSON dates have milliseconds, so the microseconds are cut off. A value a BSON date cannot hold here (`infinity`, a date BC, a year after 9999) is stored as PostgreSQL's text, and a null in an array of timestamps as null. Earlier versions stored a `timestamp` shifted by the UTC offset of the machine running the output (an hour earlier in Central Europe in January), a null in an array of timestamps as 1970-01-01, and stopped the replication on a value they could not read. Documents already written keep their values until their row changes, or until the table is copied again.
+
 A changed row replaces its document (found by the key), so the document has exactly the columns of the row: a field that is not a column of the table is not kept. An update that did not change a large value (TOAST), which PostgreSQL does not send, sets the other fields instead, and keeps that one. Writing a change to MongoDB costs it a look-up of the key and a write of the document, so its own speed is the limit of this output.
 
 > ⚠️ **Important:** Be sure to set up the PostgreSQL database first, as described in the **QuickStart** section above.
@@ -1039,7 +1041,7 @@ The options are used only when the output creates the table: ClickHouse cannot c
 | `numeric` without precision | `Decimal(76, 38)` |
 | `uuid` | `UUID` |
 | `date` | `Date32` |
-| `timestamp` | `DateTime64(6)` |
+| `timestamp` | `DateTime64(6, 'UTC')`, or the zone of `TimestampTimeZone` |
 | `timestamptz` | `DateTime64(6, 'UTC')` |
 | arrays of the types above, and of `text`, `bytea` and the other types sent as text | `Array(Nullable(...))` of the element type, e.g. `integer[]` is `Array(Nullable(Int32))` (see [Arrays](#arrays)) |
 | arrays of enums and user-defined types | `Array(Nullable(String))`, e.g. `['sad','happy']` |
@@ -1100,7 +1102,7 @@ RowBinary has no conversion: every value must be of the type the column has. So 
 
 A table with any other column type (for example `Map`, `Tuple` or `Nested`) gets its rows as JSON (`JSONCompactEachRow`), which ClickHouse converts to the type of the column. The output logs this when it prepares the table. So does a table with a `DateTime` or `DateTime64` without a time zone when the time zone of the server is not known to .NET.
 
-A `timestamp` (without time zone) is written as a time of the time zone of the column, or of the server if the column has none, as ClickHouse reads the text of a time.
+A `timestamp` (without time zone) is stored as a time of `options.TimestampTimeZone` (UTC by default, for example `TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")`): the output creates its column with that time zone, so the time zone of the ClickHouse server is not used. The output converts the values itself, also in JSON, as PostgreSQL's `AT TIME ZONE` does: a time skipped when the clock is set forward gets the offset of before, and a time that is there twice the offset of after (the parser of ClickHouse takes the summer offset in both cases). Existing columns are not changed: a `DateTime64` without a time zone, which earlier versions created, keeps the time zone of the server, and its values are still sent as text.
 
 ### Create a .NET Worker Service
 

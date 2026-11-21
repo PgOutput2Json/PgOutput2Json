@@ -102,11 +102,12 @@ namespace PgOutput2Json.MongoDb
                                           IReadOnlyList<ColumnInfo> columns,
                                           string? changeType,
                                           JsonElement[]? keyElement,
-                                          JsonElement[] rowElement)
+                                          JsonElement[] rowElement,
+                                          TimeZoneInfo timestampTimeZone)
         {
             var model = changeType == "D"
-                ? Delete(collectionNamespace, columns, keyElement)
-                : Upsert(collectionNamespace, columns, keyElement, rowElement);
+                ? Delete(collectionNamespace, columns, keyElement, timestampTimeZone)
+                : Upsert(collectionNamespace, columns, keyElement, rowElement, timestampTimeZone);
 
             if (model != null)
             {
@@ -140,7 +141,7 @@ namespace PgOutput2Json.MongoDb
         /// field. A row with a large value that an update did not change (TOAST) sets the other fields, and keeps that one.
         /// The filters and the documents are BsonDocuments: the builders of the driver are rendered again for every row.
         /// </summary>
-        public static BulkWriteModel? Upsert(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement[]? keyElement, JsonElement[] rowElement)
+        public static BulkWriteModel? Upsert(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement[]? keyElement, JsonElement[] rowElement, TimeZoneInfo timestampTimeZone)
         {
             var filter = new BsonDocument();
 
@@ -153,7 +154,7 @@ namespace PgOutput2Json.MongoDb
                 {
                     if (!columns[i].IsKey) continue;
 
-                    filter[columns[i].Name] = GetColumnValue(keyElement[keyIndex++], columns[i]);
+                    filter[columns[i].Name] = GetColumnValue(keyElement[keyIndex++], columns[i], timestampTimeZone);
                 }
             }
 
@@ -168,7 +169,7 @@ namespace PgOutput2Json.MongoDb
                 var value = rowElement[i];
 
                 // the key is in the filter even when it is a large value that was not sent: never an empty filter
-                if (column.IsKey && !hasFilter) filter[column.Name] = GetColumnValue(value, column);
+                if (column.IsKey && !hasFilter) filter[column.Name] = GetColumnValue(value, column, timestampTimeZone);
 
                 if (value.ValueKind == JsonValueKind.String && value.ValueEquals(ToastValue))
                 {
@@ -176,7 +177,7 @@ namespace PgOutput2Json.MongoDb
                     continue; // unchanged, so not sent
                 }
 
-                document[column.Name] = GetColumnValue(value, column);
+                document[column.Name] = GetColumnValue(value, column, timestampTimeZone);
             }
 
             if (document.ElementCount == 0) return null;
@@ -186,7 +187,7 @@ namespace PgOutput2Json.MongoDb
                 : new BulkWriteReplaceOneModel<BsonDocument>(collectionName, filter, document, isUpsert: true);
         }
 
-        public static BulkWriteDeleteOneModel<BsonDocument>? Delete(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement[]? keyElement)
+        public static BulkWriteDeleteOneModel<BsonDocument>? Delete(string collectionName, IReadOnlyList<ColumnInfo> columns, JsonElement[]? keyElement, TimeZoneInfo timestampTimeZone)
         {
             if (keyElement == null) return null;
 
@@ -198,13 +199,13 @@ namespace PgOutput2Json.MongoDb
             {
                 if (!columns[i].IsKey) continue;
 
-                filter[columns[i].Name] = GetColumnValue(keyElement[keyIndex++], columns[i]);
+                filter[columns[i].Name] = GetColumnValue(keyElement[keyIndex++], columns[i], timestampTimeZone);
             }
 
             return new BulkWriteDeleteOneModel<BsonDocument>(collectionName, filter);
         }
 
-        private static BsonValue GetColumnValue(JsonElement valElement, ColumnInfo column)
+        private static BsonValue GetColumnValue(JsonElement valElement, ColumnInfo column, TimeZoneInfo timestampTimeZone)
         {
             // the unique index of the key indexes each element of an array field, so two rows that share an element
             // would be duplicates: an array in a key column is stored as its JSON text
@@ -215,8 +216,7 @@ namespace PgOutput2Json.MongoDb
                 case JsonValueKind.String:
                     if (column.PgOid.IsTimestamp())
                     {
-                        var dateTime = DateTimeOffset.Parse(valElement.GetString() ?? "1970-01-01 00:00:00", CultureInfo.InvariantCulture);
-                        return new BsonDateTime(dateTime.ToUnixTimeMilliseconds());
+                        return ConvertTimestamp(valElement.GetString()!, timestampTimeZone);
                     }
                     else if (column.PgOid.IsByte())
                     {
@@ -249,7 +249,7 @@ namespace PgOutput2Json.MongoDb
                 case JsonValueKind.Array:
                     if (column.PgOid.IsArrayOfTimestamp())
                     {
-                        return ConvertArray(valElement, v => new BsonDateTime(DateTimeOffset.Parse(v, CultureInfo.InvariantCulture).ToUnixTimeMilliseconds()), "1970-01-01 00:00:00");
+                        return ConvertArray(valElement, v => ConvertTimestamp(v, timestampTimeZone));
                     }
                     else if (column.PgOid.IsArrayOfByte())
                     {
@@ -270,6 +270,23 @@ namespace PgOutput2Json.MongoDb
                 default:
                     return ConvertJsonElementToBsonValue(valElement);
             }
+        }
+
+        /// <summary>
+        /// A BSON date (UTC, milliseconds) from PostgreSQL's text of a timestamp. A <c>timestamptz</c> has its offset in
+        /// the text (UTC in the replication session); a <c>timestamp</c> (without time zone) has none and is taken as a
+        /// wall time of <paramref name="timeZone"/> (by default UTC, so the wall time is stored as it is). The time zone of
+        /// the machine is never used. A value a BSON date cannot hold here (infinity, a date BC, a year after 9999) is
+        /// stored as PostgreSQL's text.
+        /// </summary>
+        internal static BsonValue ConvertTimestamp(string text, TimeZoneInfo timeZone)
+        {
+            if (!PgTimestamp.TryGetUtcTicks(text, timeZone, out var utcTicks)) return new BsonString(text);
+
+            // the milliseconds since 1970, rounded down also before it
+            var ticks = utcTicks - DateTime.UnixEpoch.Ticks;
+
+            return new BsonDateTime(Math.DivRem(ticks, TimeSpan.TicksPerMillisecond, out var rest) - (rest < 0 ? 1 : 0));
         }
 
         /// <summary>

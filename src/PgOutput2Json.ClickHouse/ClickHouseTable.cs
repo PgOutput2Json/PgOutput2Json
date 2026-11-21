@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -44,6 +44,14 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public bool IsJsonb { get; init; }
 
+        /// <summary>
+        /// For a timestamp column (or an array of them) that is a DateTime64 with its own time zone in ClickHouse, which the
+        /// output creates: that type (of the elements of an array). Its values are sent as the number ClickHouse stores,
+        /// converted by the output (PostgreSQL's rules for a time of a time zone), also in JSON. Null: the text is sent,
+        /// and ClickHouse converts it (a DateTime64 without a time zone, or another type).
+        /// </summary>
+        public ClickHouseBinaryType? DateTime64Type { get; set; }
+
         public bool IsArray => Kind is ColumnKind.Array or ColumnKind.DateArray or ColumnKind.TimestampArray or ColumnKind.TextArray;
     }
 
@@ -88,8 +96,8 @@ namespace PgOutput2Json.ClickHouse
         /// </summary>
         public bool UnchangedValueWarned { get; set; }
 
-        public string UpsertQuery { get; }
-        public string DeleteQuery { get; }
+        public string UpsertQuery { get; private set; }
+        public string DeleteQuery { get; private set; }
 
         public StringBuilder Upserts { get; } = new();
         public StringBuilder Deletes { get; } = new();
@@ -187,6 +195,19 @@ namespace PgOutput2Json.ClickHouse
             return null;
         }
 
+        /// <summary>
+        /// The JSON inserts read a number for a DateTime64 as the raw value, as servers before 26.8 did: the timestamps the
+        /// output converts are sent as numbers in units of the precision of the column, not as seconds.
+        /// </summary>
+        public void ReadDateTimeNumbersAsRawValues()
+        {
+            const string format = " FORMAT JSONCompactEachRow";
+            const string settings = " SETTINGS input_format_read_datetime_number_as_raw_value = 1" + format;
+
+            if (!UpsertQuery.EndsWith(settings, StringComparison.Ordinal)) UpsertQuery = UpsertQuery.Replace(format, settings);
+            if (!DeleteQuery.EndsWith(settings, StringComparison.Ordinal)) DeleteQuery = DeleteQuery.Replace(format, settings);
+        }
+
         public void UseExistingTypes(IReadOnlyDictionary<string, string> types)
         {
             foreach (var column in Columns)
@@ -197,6 +218,17 @@ namespace PgOutput2Json.ClickHouse
                 {
                     column.Kind = ColumnKind.Other;
                 }
+
+                // without the time zone of the server, a DateTime64 without its own is not parsed
+                var binaryType = column.Kind is ColumnKind.Timestamp or ColumnKind.TimestampArray && types.TryGetValue(column.Name, out var columnType)
+                    ? ClickHouseBinaryType.Parse(columnType, serverTimeZone: null)
+                    : null;
+
+                var element = binaryType?.Element ?? binaryType;
+
+                column.DateTime64Type = element?.Base == BinaryBase.DateTime64 && (binaryType!.Element != null) == (column.Kind == ColumnKind.TimestampArray)
+                    ? element
+                    : null;
             }
         }
 
@@ -330,7 +362,7 @@ namespace PgOutput2Json.ClickHouse
         /// Reads the schema of the compact write mode: the table name, then [name, isKey, type oid, type modifier, type name] per column.
         /// The type modifier and the type name are optional; the type name is there for the types that are not built in.
         /// </summary>
-        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null)
+        public static ClickHouseTable FromSchema(string tableName, JsonElement schemaElement, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null, string timestampTimeZone = "UTC")
         {
             if (schemaElement.ValueKind != JsonValueKind.Array) throw new Exception("Invalid schema - expected array");
 
@@ -354,19 +386,20 @@ namespace PgOutput2Json.ClickHouse
                             columnElement.GetArrayLength() > 4 ? columnElement[4].GetString() : null));
             }
 
-            return FromColumns(tableName, schema, useJsonType, useArrayTypes, options);
+            return FromColumns(tableName, schema, useJsonType, useArrayTypes, options, timestampTimeZone);
         }
 
         /// <summary>
         /// The table of the columns of a <see cref="RowTable"/>, as <see cref="FromSchema"/> makes it from the same columns in JSON.
         /// </summary>
-        public static ClickHouseTable FromRowTable(string tableName, RowTable rowTable, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null)
+        public static ClickHouseTable FromRowTable(string tableName, RowTable rowTable, bool useJsonType, bool useArrayTypes, ClickHouseTableOptions? options = null, string timestampTimeZone = "UTC")
         {
             var table = FromColumns(tableName,
                                     rowTable.Columns.Select(c => (c.Name, c.IsKey, c.TypeId, c.TypeModifier, c.TypeName)),
                                     useJsonType,
                                     useArrayTypes,
-                                    options);
+                                    options,
+                                    timestampTimeZone);
 
             table.Source = rowTable;
 
@@ -377,7 +410,8 @@ namespace PgOutput2Json.ClickHouse
                                                    IEnumerable<(string Name, bool IsKey, uint Oid, int TypeModifier, string? TypeName)> schema,
                                                    bool useJsonType,
                                                    bool useArrayTypes,
-                                                   ClickHouseTableOptions? options)
+                                                   ClickHouseTableOptions? options,
+                                                   string timestampTimeZone)
         {
             var columns = new List<ClickHouseColumn>();
 
@@ -388,7 +422,7 @@ namespace PgOutput2Json.ClickHouse
                 var isJson = useJsonType && !isKey && oid is (uint)PgOid.JSONOID or (uint)PgOid.JSONBOID;
 
                 // the same for an array: a key column cannot be Nullable inside
-                var elementType = useArrayTypes && !isKey ? GetArrayElementType(oid, typeModifier) : null;
+                var elementType = useArrayTypes && !isKey ? GetArrayElementType(oid, typeModifier, timestampTimeZone) : null;
 
                 // PostgreSQL names the array of a type after it, with an underscore: _mood is mood[].
                 // The library sends its value as the PostgreSQL text, and the output turns it into an array of strings.
@@ -403,7 +437,7 @@ namespace PgOutput2Json.ClickHouse
                     IsKey = isKey,
                     TypeId = oid,
                     IsJsonb = oid == (uint)PgOid.JSONBOID,
-                    Type = isJson ? "JSON" : elementType != null ? $"Array(Nullable({elementType}))" : GetType(oid, typeModifier),
+                    Type = isJson ? "JSON" : elementType != null ? $"Array(Nullable({elementType}))" : GetType(oid, typeModifier, timestampTimeZone),
                     Kind = isTextArray ? ColumnKind.TextArray
                         : elementType != null ? (oid == (uint)PgOid.A_DATEOID ? ColumnKind.DateArray
                                                   : oid is (uint)PgOid.A_TIMESTAMPOID or (uint)PgOid.A_TIMESTAMPTZOID ? ColumnKind.TimestampArray
@@ -426,7 +460,7 @@ namespace PgOutput2Json.ClickHouse
         /// <summary>An array type of PostgreSQL that the library writes as a JSON array.</summary>
         internal static bool IsArray(PgOid oid) => oid.IsArrayOfNumber() || oid.IsArrayOfByte() || oid.IsArrayOfBoolean() || oid.IsArrayOfText();
 
-        internal static string? GetArrayElementType(uint oid, int typeModifier)
+        internal static string? GetArrayElementType(uint oid, int typeModifier, string timestampTimeZone = "UTC")
         {
             switch ((PgOid)oid)
             {
@@ -440,7 +474,7 @@ namespace PgOutput2Json.ClickHouse
                 case PgOid.A_NUMERICOID: return GetNumericType(typeModifier);
                 case PgOid.A_UUIDOID: return "UUID";
                 case PgOid.A_DATEOID: return "Date32";
-                case PgOid.A_TIMESTAMPOID: return "DateTime64(6)";
+                case PgOid.A_TIMESTAMPOID: return $"DateTime64(6, '{timestampTimeZone}')";
                 case PgOid.A_TIMESTAMPTZOID: return "DateTime64(6, 'UTC')";
                 case PgOid.A_BYTEAOID: return "String";
                 default: return ((PgOid)oid).IsArrayOfText() ? "String" : null;
@@ -451,7 +485,7 @@ namespace PgOutput2Json.ClickHouse
         /// Anything without a type of its own in ClickHouse is a String with the text PostgreSQL sends.
         /// So are the arrays that are not ClickHouse arrays (see GetArrayElementType), with the JSON text, and json when the JSON type is not used.
         /// </summary>
-        internal static string GetType(uint oid, int typeModifier)
+        internal static string GetType(uint oid, int typeModifier, string timestampTimeZone = "UTC")
         {
             switch ((PgOid)oid)
             {
@@ -464,11 +498,25 @@ namespace PgOutput2Json.ClickHouse
                 case PgOid.FLOAT8OID: return "Float64";
                 case PgOid.UUIDOID: return "UUID";
                 case PgOid.DATEOID: return "Date32";
-                case PgOid.TIMESTAMPOID: return "DateTime64(6)";
+                case PgOid.TIMESTAMPOID: return $"DateTime64(6, '{timestampTimeZone}')";
                 case PgOid.TIMESTAMPTZOID: return "DateTime64(6, 'UTC')";
                 case PgOid.NUMERICOID: return GetNumericType(typeModifier);
                 default: return "String";
             }
+        }
+
+        /// <summary>
+        /// The IANA name ClickHouse knows a time zone by (a time zone of Windows is converted).
+        /// </summary>
+        internal static string GetTimeZoneName(TimeZoneInfo timeZone)
+        {
+            if (timeZone == TimeZoneInfo.Utc) return "UTC";
+
+            if (timeZone.HasIanaId) return timeZone.Id;
+
+            return TimeZoneInfo.TryConvertWindowsIdToIanaId(timeZone.Id, out var ianaId)
+                ? ianaId
+                : throw new ArgumentException($"TimestampTimeZone: the time zone {timeZone.Id} has no IANA name, which ClickHouse needs");
         }
 
         private static string GetNumericType(int typeModifier)

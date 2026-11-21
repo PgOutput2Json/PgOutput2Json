@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -165,7 +165,8 @@ namespace PgOutput2Json.IntegrationTests
         {
             if (_clickHouse == null)
             {
-                var container = new ClickHouseBuilder("clickhouse/clickhouse-server:latest")
+                // CLICKHOUSE_IMAGE runs the tests on another version, e.g. clickhouse/clickhouse-server:25.8
+                var container = new ClickHouseBuilder(Environment.GetEnvironmentVariable("CLICKHOUSE_IMAGE") ?? "clickhouse/clickhouse-server:latest")
                     .WithDatabase(ClickHouseDatabase)
                     .WithUsername(ClickHouseUsername)
                     .WithPassword(ClickHousePassword)

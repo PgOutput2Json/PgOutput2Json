@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -137,6 +137,19 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             return endpoint;
         }
 
+        /// <summary>
+        /// The first and the last Date32 and DateTime64 (UTC) the server can store: 0001-01-01 and 9999-12-31 in recent
+        /// versions, 1900-01-01 and 2299-12-31 before. ClickHouse saturates a date out of its range, so these are its limits,
+        /// which the output takes for the dates ClickHouse cannot store.
+        /// </summary>
+        private static async Task<(string FirstDate, string LastDate, string FirstTime, string LastTime)> DateLimitsAsync(string endpoint)
+        {
+            var limits = (await QueryAsync(endpoint, "SELECT toString(toDate32('0001-01-01')), toString(toDate32('9999-12-31')), " +
+                "toString(toDateTime64('0001-01-01 00:00:00', 6, 'UTC')), toString(toDateTime64('9999-12-31 23:59:59.999999', 6, 'UTC')) FORMAT TSVRaw")).Split('\t');
+
+            return (limits[0], limits[1], limits[2], limits[3]);
+        }
+
         private static async Task WaitForAsync(string endpoint, string table, string expected, string orderBy = "id", bool final = true)
         {
             expected = expected.ReplaceLineEndings("\n");
@@ -222,21 +235,90 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     INSERT INTO clk_types (id, num, f8, d, ts, tstz) VALUES (2, 'NaN', 'NaN', 'infinity', '-infinity', 'infinity');
                     INSERT INTO clk_types (id, d, ts, tstz) VALUES (3, '0044-03-15 BC', '10000-01-01 00:00:00', '0044-03-15 12:00:00+00 BC');");
 
+                var (firstDate, lastDate, firstTime, lastTime) = await DateLimitsAsync(endpoint);
+
                 // NaN is null, as in the JSON; a date ClickHouse cannot store is the first or the last one it can
                 await WaitForAsync(endpoint, "clk_types",
-                    """
+                    $$"""
                     [1,-2,9223372036854775807,12345678901234567890.123456789,1.5,1.5,1e300,true,"deadbeef","quote\" back\\ nl\n tab\t unié 😀","a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11","2024-02-29","2024-02-29 12:34:56.789000","2024-02-29 10:34:56.789000","12:34:56","1 day",{"a":1},[1,null,3],"happy"]
-                    [2,null,null,null,null,null,null,null,null,null,null,"9999-12-31","0001-01-01 00:00:00.000000","9999-12-31 23:59:59.999999",null,null,null,[],null]
-                    [3,null,null,null,null,null,null,null,null,null,null,"0001-01-01","9999-12-31 23:59:59.999999","0001-01-01 00:00:00.000000",null,null,null,[],null]
+                    [2,null,null,null,null,null,null,null,null,null,null,"{{lastDate}}","{{firstTime}}","{{lastTime}}",null,null,null,[],null]
+                    [3,null,null,null,null,null,null,null,null,null,null,"{{firstDate}}","{{lastTime}}","{{firstTime}}",null,null,null,[],null]
                     """);
             });
 
             Assert.AreEqual(
                 "id Int32, i2 Nullable(Int16), i8 Nullable(Int64), num Nullable(Decimal(76, 38)), n2 Nullable(Decimal(12, 4)), f4 Nullable(Float32), " +
                 "f8 Nullable(Float64), b Nullable(Bool), by Nullable(String), t Nullable(String), u Nullable(UUID), d Nullable(Date32), " +
-                "ts Nullable(DateTime64(6)), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
+                "ts Nullable(DateTime64(6, 'UTC')), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
                 "a Array(Nullable(Int32)), mood Nullable(String), _version UInt128, _deleted UInt8, _synced_at DateTime64(6, 'UTC')",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_types' ORDER BY position) FORMAT TSVRaw"));
+        }
+
+        /// <summary>
+        /// A timestamp without time zone is a wall time of TimestampTimeZone: its column is created with that time zone, so
+        /// ClickHouse stores the same moment whatever the time zone of the server. 2026-01-01 00:00 in Zagreb is
+        /// 2025-12-31 23:00 UTC; a timestamptz is not affected. The output converts the values itself, in JSON too, by
+        /// PostgreSQL's rules: 02:30 skipped in March and 02:30 twice in October are both 01:30 UTC (the parser of ClickHouse
+        /// takes 00:30), and a fraction of a second before 1970 is added (the parser of ClickHouse, with best_effort,
+        /// subtracts it). The expected values are from PostgreSQL 16 (AT TIME ZONE 'Europe/Zagreb').
+        /// </summary>
+        [TestMethod]
+        public async Task Timestamp_should_be_stored_as_a_time_of_the_timestamp_time_zone()
+        {
+            await Db.ExecuteAsync("CREATE TABLE clk_tz (id int PRIMARY KEY, ts timestamp, tstz timestamptz, tsa timestamp[])");
+
+            var endpoint = await RunAsync("clk_tz", "clk_tz", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_tz VALUES (1, '2026-01-01 00:00:00', '2026-01-01 00:00:00+00', '{""2026-07-01 00:00:00""}');
+                    INSERT INTO clk_tz VALUES (2, '2026-03-29 02:30:00', '1950-06-01 12:00:00.25+00', '{""2026-10-25 02:30:00"",NULL}');
+                    INSERT INTO clk_tz VALUES (3, '1950-06-01 12:00:00.25', '1969-12-31 23:59:59.999999+00', NULL);
+                    INSERT INTO clk_tz VALUES (4, '2026-10-25 02:30:00', '2026-10-25 02:30:00+02', '{}');");
+
+                await Wait.UntilAsync(async () => await QueryAsync(endpoint, "SELECT count() FROM clk_tz FINAL FORMAT TSVRaw") == "4", "the rows of clk_tz");
+            },
+            options => options.TimestampTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb"));
+
+            Assert.AreEqual(
+                """
+                1	1767222000000000	1767225600000000	[1782856800000000]
+                2	1774747800000000	-618062399750000	[1792891800000000,NULL]
+                3	-618065999750000	-1	[]
+                4	1792891800000000	1792888200000000	[]
+                """.ReplaceLineEndings("\n"),
+                await QueryAsync(endpoint, "SELECT id, toUnixTimestamp64Micro(ts), toUnixTimestamp64Micro(tstz), arrayMap(x -> toUnixTimestamp64Micro(x), tsa) " +
+                    "FROM clk_tz FINAL ORDER BY id FORMAT TSVRaw"));
+
+            Assert.AreEqual("ts Nullable(DateTime64(6, 'Europe/Zagreb')), tsa Array(Nullable(DateTime64(6, 'Europe/Zagreb')))",
+                await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns " +
+                    $"WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_tz' AND name IN ('ts', 'tsa') ORDER BY position) FORMAT TSVRaw"));
+        }
+
+        /// <summary>
+        /// A row with a timestamp key is found by the moment the output stored, for a large value an update did not change
+        /// (read back from ClickHouse) and for a delete: also at 02:30 on the day the clock is set back, which is there twice.
+        /// </summary>
+        [TestMethod]
+        public async Task Row_with_a_timestamp_key_should_be_found_by_the_moment_the_output_stored()
+        {
+            await Db.ExecuteAsync(@"
+                CREATE TABLE clk_tzkey (ts timestamp PRIMARY KEY, v text, big text);
+                ALTER TABLE clk_tzkey ALTER COLUMN big SET STORAGE EXTERNAL;");
+
+            var endpoint = await RunAsync("clk_tzkey", "clk_tzkey", async endpoint =>
+            {
+                await Db.ExecuteAsync(@"
+                    INSERT INTO clk_tzkey VALUES ('2026-10-25 02:30:00', 'one', repeat('x', 3000)), ('1950-06-01 12:00:00.25', 'two', repeat('y', 3000));
+                    UPDATE clk_tzkey SET v = 'uno';
+                    INSERT INTO clk_tzkey VALUES ('2026-03-29 02:30:00', 'three', NULL);
+                    DELETE FROM clk_tzkey WHERE ts = '2026-03-29 02:30:00';");
+
+                await Wait.UntilAsync(async () => await QueryAsync(endpoint,
+                    "SELECT arrayStringConcat(groupArray(concat(toString(toUnixTimestamp64Micro(ts)), ' ', v, ' ', toString(length(big)))), ', ') " +
+                    "FROM (SELECT * FROM clk_tzkey FINAL WHERE _deleted = 0 ORDER BY ts) FORMAT TSVRaw")
+                    == "-618065999750000 uno 3000, 1792891800000000 uno 3000", "the rows of clk_tzkey");
+            },
+            options => options.TimestampTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb"));
         }
 
         [TestMethod]
@@ -393,7 +475,9 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             Assert.AreEqual(
                 "clk_opt_history MergeTree  (id)\nclk_opt_null Null  \nclk_opt_order ReplacingMergeTree intDiv(tenant, 100) tenant, id",
-                await QueryAsync(endpoint, $"SELECT name, engine, partition_key, sorting_key FROM system.tables WHERE database = '{Containers.ClickHouseDatabase}' AND name LIKE 'clk_opt_%' ORDER BY name FORMAT TSVRaw").ContinueWith(t => t.Result.Replace('\t', ' ')));
+                // a sorting key of one column is "(id)" in recent versions, "id" before
+                await QueryAsync(endpoint, $"SELECT name, engine, partition_key, if(sorting_key != '' AND position(sorting_key, ',') = 0 AND NOT startsWith(sorting_key, '('), concat('(', sorting_key, ')'), sorting_key) FROM system.tables " +
+                    $"WHERE database = '{Containers.ClickHouseDatabase}' AND name LIKE 'clk_opt_%' ORDER BY name FORMAT TSVRaw").ContinueWith(t => t.Result.Replace('\t', ' ')));
 
             Assert.AreEqual("0", await QueryAsync(endpoint, "SELECT count() FROM clk_opt_null"));
         }
@@ -418,9 +502,11 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             {
                 await Db.ExecuteAsync($"INSERT INTO clk_arr VALUES {values}");
 
+                var (firstDate, lastDate, _, _) = await DateLimitsAsync(endpoint);
+
                 await WaitForAsync(endpoint, "clk_arr",
-                    """
-                    [1,["a",null,"b c"],["2024-02-29","9999-12-31","0001-01-01"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],["sad","so so",null],["1","2"]]
+                    $$"""
+                    [1,["a",null,"b c"],["2024-02-29","{{lastDate}}","{{firstDate}}"],["2024-02-29 10:00:00.000000"],[1.5,null],["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],[true,false],[1.5,null],["sad","so so",null],["1","2"]]
                     [2,[],[],[],[],[],[],[],[],[]]
                     """);
             });

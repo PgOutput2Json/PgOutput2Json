@@ -1,3 +1,4 @@
+﻿using System.Collections.Generic;
 using System;
 using System.Linq;
 using System.Text;
@@ -110,6 +111,39 @@ namespace PgOutput2Json.Tests
                 "ENGINE = MergeTree PARTITION BY a ORDER BY (`b`) SETTINGS allow_nullable_key = 1");
         }
 
+        /// <summary>
+        /// A timestamp column that is a DateTime64 with its own time zone gets its values as the number ClickHouse stores,
+        /// converted by the output, also in JSON; one without a time zone, or of another type, gets the text.
+        /// </summary>
+        [TestMethod]
+        [DataRow("Nullable(DateTime64(6, 'Europe/Zagreb'))", false, "\"2026-03-29 02:30:00\"", "1774747800000000")]
+        [DataRow("DateTime64(6, 'UTC')", false, "\"2026-03-29 02:30:00\"", "1774751400000000")]
+        [DataRow("DateTime64(3, 'Europe/Zagreb')", false, "\"1950-06-01 12:00:00.25\"", "-618065999750")]
+        [DataRow("Nullable(DateTime64(6, 'UTC'))", false, "\"1969-12-31 23:59:59.999999+00\"", "-1")]
+        [DataRow("Nullable(DateTime64(6, 'UTC'))", false, "\"infinity\"", "253402300799999999")]
+        [DataRow("Nullable(DateTime64(6, 'UTC'))", false, "null", "null")]
+        [DataRow("Array(Nullable(DateTime64(6, 'Europe/Zagreb')))", true, "[\"2026-10-25 02:30:00\",null]", "[1792891800000000,null]")]
+        [DataRow("Nullable(DateTime64(6))", false, "\"2026-03-29 02:30:00\"", "\"2026-03-29 02:30:00\"")]
+        [DataRow("Nullable(String)", false, "\"2026-03-29 02:30:00\"", "\"2026-03-29 02:30:00\"")]
+        [DataRow("Array(Nullable(DateTime64(6)))", true, "[\"2026-10-25 02:30:00\"]", "[\"2026-10-25 02:30:00\"]")]
+        public void Timestamp_with_a_time_zone_in_ClickHouse_should_be_sent_as_the_number_it_stores(string type, bool isArray, string json, string expected)
+        {
+            var column = new ClickHouseColumn { Name = "a", QuotedName = "`a`", IsKey = false, Type = type, Kind = isArray ? ColumnKind.TimestampArray : ColumnKind.Timestamp };
+            var table = new ClickHouseTable("t", [Column("id", true), column], null);
+
+            table.UseExistingTypes(new Dictionary<string, string> { ["id"] = "Int32", ["a"] = type });
+
+            var server = new ClickHouseServerInfo(TimeZoneInfo.Utc, -25567, 120529, -2208988800000000, 253402300799999999);
+
+            using var doc = JsonDocument.Parse(json);
+
+            var line = new StringBuilder();
+
+            ClickHousePublisher.AppendValue(line, column, doc.RootElement, server);
+
+            Assert.AreEqual(expected, line.ToString());
+        }
+
         private static string Append(string type, ColumnKind kind, string json)
         {
             var column = new ClickHouseColumn { Name = "a", QuotedName = "`a`", IsKey = false, Type = type, Kind = kind };
@@ -126,6 +160,13 @@ namespace PgOutput2Json.Tests
         [TestMethod]
         public void Array_types_should_map_the_arrays_the_library_sends_as_JSON_arrays()
         {
+            Assert.AreEqual("DateTime64(6, 'UTC')", ClickHouseTable.GetArrayElementType((uint)PgOid.A_TIMESTAMPOID, -1));
+            Assert.AreEqual("DateTime64(6, 'Europe/Zagreb')", ClickHouseTable.GetArrayElementType((uint)PgOid.A_TIMESTAMPOID, -1, "Europe/Zagreb"));
+            Assert.AreEqual("DateTime64(6, 'UTC')", ClickHouseTable.GetType((uint)PgOid.TIMESTAMPOID, -1));
+            Assert.AreEqual("DateTime64(6, 'Europe/Zagreb')", ClickHouseTable.GetType((uint)PgOid.TIMESTAMPOID, -1, "Europe/Zagreb"));
+            Assert.AreEqual("DateTime64(6, 'UTC')", ClickHouseTable.GetType((uint)PgOid.TIMESTAMPTZOID, -1, "Europe/Zagreb"));
+            Assert.AreEqual("UTC", ClickHouseTable.GetTimeZoneName(TimeZoneInfo.Utc));
+            Assert.AreEqual("Europe/Zagreb", ClickHouseTable.GetTimeZoneName(TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")));
             Assert.AreEqual("Int32", ClickHouseTable.GetArrayElementType((uint)PgOid.A_INT4OID, -1));
             Assert.AreEqual("Decimal(10, 2)", ClickHouseTable.GetArrayElementType((uint)PgOid.A_NUMERICOID, (10 << 16 | 2) + 4));
             Assert.AreEqual("String", ClickHouseTable.GetArrayElementType((uint)PgOid.A_INTERVALOID, -1));
