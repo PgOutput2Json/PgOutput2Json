@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -234,9 +234,36 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             Assert.AreEqual(
                 "id Int32, i2 Nullable(Int16), i8 Nullable(Int64), num Nullable(Decimal(76, 38)), n2 Nullable(Decimal(12, 4)), f4 Nullable(Float32), " +
                 "f8 Nullable(Float64), b Nullable(Bool), by Nullable(String), t Nullable(String), u Nullable(UUID), d Nullable(Date32), " +
-                "ts Nullable(DateTime64(6)), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
+                "ts Nullable(DateTime64(6, 'UTC')), tstz Nullable(DateTime64(6, 'UTC')), tm Nullable(String), iv Nullable(String), j Nullable(JSON), " +
                 "a Array(Nullable(Int32)), mood Nullable(String), _version UInt128, _deleted UInt8, _synced_at DateTime64(6, 'UTC')",
                 await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_types' ORDER BY position) FORMAT TSVRaw"));
+        }
+
+        /// <summary>
+        /// A timestamp without time zone is a wall time of TimestampTimeZone: its column is created with that time zone, so
+        /// ClickHouse stores the same moment whatever the time zone of the server. 2026-01-01 00:00 in Zagreb is
+        /// 2025-12-31 23:00 UTC; a timestamptz is not affected.
+        /// </summary>
+        [TestMethod]
+        public async Task Timestamp_should_be_stored_as_a_time_of_the_timestamp_time_zone()
+        {
+            await Db.ExecuteAsync("CREATE TABLE clk_tz (id int PRIMARY KEY, ts timestamp, tstz timestamptz, tsa timestamp[])");
+
+            var endpoint = await RunAsync("clk_tz", "clk_tz", async endpoint =>
+            {
+                await Db.ExecuteAsync("INSERT INTO clk_tz VALUES (1, '2026-01-01 00:00:00', '2026-01-01 00:00:00+00', '{\"2026-07-01 00:00:00\"}')");
+
+                await WaitForAsync(endpoint, "clk_tz", """[1,"2026-01-01 00:00:00.000000","2026-01-01 00:00:00.000000",["2026-07-01 00:00:00.000000"]]""");
+            },
+            options => options.TimestampTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb"));
+
+            Assert.AreEqual("1767222000000000 1767225600000000 1782856800000000",
+                await QueryAsync(endpoint, "SELECT concat(toString(toUnixTimestamp64Micro(ts)), ' ', toString(toUnixTimestamp64Micro(tstz)), ' ', " +
+                    "toString(toUnixTimestamp64Micro(tsa[1]))) FROM clk_tz FINAL FORMAT TSVRaw"));
+
+            Assert.AreEqual("ts Nullable(DateTime64(6, 'Europe/Zagreb')), tsa Array(Nullable(DateTime64(6, 'Europe/Zagreb')))",
+                await QueryAsync(endpoint, $"SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') FROM (SELECT name, type FROM system.columns " +
+                    $"WHERE database = '{Containers.ClickHouseDatabase}' AND table = 'clk_tz' AND name IN ('ts', 'tsa') ORDER BY position) FORMAT TSVRaw"));
         }
 
         [TestMethod]

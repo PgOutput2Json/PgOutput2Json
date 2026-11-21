@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net.Http;
 
@@ -48,6 +48,16 @@ namespace PgOutput2Json.ClickHouse
         /// JSON (JSONCompactEachRow), which ClickHouse parses itself.
         /// </summary>
         public bool UseRowBinary { get; set; }
+
+        /// <summary>
+        /// The time zone of the values of <c>timestamp</c> (without time zone) columns, which PostgreSQL sends without one.
+        /// The output creates their columns as <c>DateTime64(6, '&lt;zone&gt;')</c>, so ClickHouse stores the moment of
+        /// that wall time in this zone, never in the time zone of the server. Default is UTC. Columns that already exist
+        /// are not changed: a <c>DateTime64</c> without a time zone (created by versions before 2.2) keeps the time zone of
+        /// the server. A <c>timestamptz</c> has its own offset and is not affected.
+        /// For example <c>TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")</c>.
+        /// </summary>
+        public TimeZoneInfo TimestampTimeZone { get; set; } = TimeZoneInfo.Utc;
 
         /// <summary>
         /// Removes the rows of deleted PostgreSQL rows from ClickHouse when no new rows have arrived in a table for this

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
@@ -33,6 +33,9 @@ namespace PgOutput2Json.ClickHouse
         // the time zone and the date range of the server, read once
         private ClickHouseServerInfo? _server;
 
+        // the IANA name of TimestampTimeZone, in the type of the timestamp columns the output creates
+        private readonly string _timestampTimeZone;
+
         // the values of the row being written
         private JsonElement[] _row = new JsonElement[16];
 
@@ -65,6 +68,7 @@ namespace PgOutput2Json.ClickHouse
             _options = options;
             _client = client;
             _logger = logger;
+            _timestampTimeZone = ClickHouseTable.GetTimeZoneName(options.TimestampTimeZone);
         }
 
         public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
@@ -488,7 +492,7 @@ namespace PgOutput2Json.ClickHouse
                 return _tables.TryGetValue(tableName, out var cached) ? cached : throw new Exception("Missing table schema: " + tableName);
             }
 
-            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType, _options.UseArrayTypes, _options.Tables.GetValueOrDefault(tableName));
+            var table = ClickHouseTable.FromSchema(_options.GetTableName(tableName), schemaElement, _options.UseJsonType, _options.UseArrayTypes, _options.Tables.GetValueOrDefault(tableName), _timestampTimeZone);
 
             return await PrepareTableAsync(tableName, table, token).ConfigureAwait(false);
         }
@@ -500,7 +504,7 @@ namespace PgOutput2Json.ClickHouse
         {
             if (_tables.TryGetValue(rowTable.Name, out var cached) && cached.Source == rowTable) return cached;
 
-            var table = ClickHouseTable.FromRowTable(_options.GetTableName(rowTable.Name), rowTable, _options.UseJsonType, _options.UseArrayTypes, _options.Tables.GetValueOrDefault(rowTable.Name));
+            var table = ClickHouseTable.FromRowTable(_options.GetTableName(rowTable.Name), rowTable, _options.UseJsonType, _options.UseArrayTypes, _options.Tables.GetValueOrDefault(rowTable.Name), _timestampTimeZone);
 
             return await PrepareTableAsync(rowTable.Name, table, token).ConfigureAwait(false);
         }

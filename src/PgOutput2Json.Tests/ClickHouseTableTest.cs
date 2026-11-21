@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -126,6 +126,13 @@ namespace PgOutput2Json.Tests
         [TestMethod]
         public void Array_types_should_map_the_arrays_the_library_sends_as_JSON_arrays()
         {
+            Assert.AreEqual("DateTime64(6, 'UTC')", ClickHouseTable.GetArrayElementType((uint)PgOid.A_TIMESTAMPOID, -1));
+            Assert.AreEqual("DateTime64(6, 'Europe/Zagreb')", ClickHouseTable.GetArrayElementType((uint)PgOid.A_TIMESTAMPOID, -1, "Europe/Zagreb"));
+            Assert.AreEqual("DateTime64(6, 'UTC')", ClickHouseTable.GetType((uint)PgOid.TIMESTAMPOID, -1));
+            Assert.AreEqual("DateTime64(6, 'Europe/Zagreb')", ClickHouseTable.GetType((uint)PgOid.TIMESTAMPOID, -1, "Europe/Zagreb"));
+            Assert.AreEqual("DateTime64(6, 'UTC')", ClickHouseTable.GetType((uint)PgOid.TIMESTAMPTZOID, -1, "Europe/Zagreb"));
+            Assert.AreEqual("UTC", ClickHouseTable.GetTimeZoneName(TimeZoneInfo.Utc));
+            Assert.AreEqual("Europe/Zagreb", ClickHouseTable.GetTimeZoneName(TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")));
             Assert.AreEqual("Int32", ClickHouseTable.GetArrayElementType((uint)PgOid.A_INT4OID, -1));
             Assert.AreEqual("Decimal(10, 2)", ClickHouseTable.GetArrayElementType((uint)PgOid.A_NUMERICOID, (10 << 16 | 2) + 4));
             Assert.AreEqual("String", ClickHouseTable.GetArrayElementType((uint)PgOid.A_INTERVALOID, -1));
