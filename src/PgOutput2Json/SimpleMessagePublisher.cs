@@ -36,10 +36,10 @@ namespace PgOutput2Json
         {
             if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
-                _logger?.LogDebug("Message for {Table}: {Json}", message.TableName.ToString(), message.Json.ToString());
+                _logger?.LogDebug("Message for {Table}: {Json}", message.TableName, message.Json.ToString());
             }
 
-            return _messageHandler.Invoke(message.Json.ToString(), message.TableName.ToString(), message.KeyKolValue.ToString(), message.PartitionKolValue.ToString());
+            return _messageHandler.Invoke(message.Json.ToString(), message.TableName, message.KeyKolValue.ToString(), message.PartitionKolValue.ToString());
         }
 
         public override Task ConfirmAsync(CancellationToken token)

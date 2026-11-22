@@ -24,7 +24,14 @@ namespace PgOutput2Json
         public bool IsTableSync { get; internal set; }
 
         public StringBuilder Json { get; internal set; } = new(256);
-        public StringBuilder TableName { get; internal set; } = new(256); 
+        /// <summary>schema.table. A schema or a table name with a dot in it is quoted, its double quotes doubled: "x.y".table.</summary>
+        public string TableName { get; internal set; } = "";
+
+        /// <summary>The schema of the table, empty for a message that is not a row (a logical decoding message).</summary>
+        public string SchemaName { get; internal set; } = "";
+
+        /// <summary>The name of the table without the schema, empty for a message that is not a row (a logical decoding message).</summary>
+        public string RelationName { get; internal set; } = "";
         public StringBuilder KeyKolValue { get; internal set; } = new(256);
         public StringBuilder PartitionKolValue { get; internal set; } = new(256);
 
@@ -35,7 +42,9 @@ namespace PgOutput2Json
             IsTableSync = false;
 
             Json.Clear(); 
-            TableName.Clear(); 
+            TableName = "";
+            SchemaName = "";
+            RelationName = "";
             KeyKolValue.Clear(); 
             PartitionKolValue.Clear();
         }
@@ -44,7 +53,6 @@ namespace PgOutput2Json
     public class JsonWriter
     {
         private StringBuilder JsonBuilder => _result.Json;
-        private StringBuilder TableNameBuilder => _result.TableName;
         private StringBuilder KeyColValueBuilder => _result.KeyKolValue;
         private StringBuilder PartitionColValueBuilder => _result.PartitionKolValue;
 
@@ -202,12 +210,12 @@ namespace PgOutput2Json
                                                 ReplicationMessage replMessage,
                                                 CancellationToken cancellationToken)
         {
-            TableNameBuilder.Clear();
-            TableNameBuilder.Append(relation.Namespace);
-            TableNameBuilder.Append('.');
-            TableNameBuilder.Append(relation.RelationName);
-            
-            var tableName = TableNameBuilder.ToString();
+            // the joined name, from the listener; strings, which do not change: the relation message is reused by Npgsql and is not kept
+            var tableName = replMessage.TableName;
+
+            _result.TableName = tableName;
+            _result.SchemaName = relation.Namespace;
+            _result.RelationName = relation.RelationName;
 
             JsonBuilder.Clear();
             JsonBuilder.Append("{\"c\":\"");
@@ -240,9 +248,7 @@ namespace PgOutput2Json
             if (_jsonOptions.WriteTableNames)
             {
                 JsonBuilder.Append(",\"t\":\"");
-                JsonUtils.EscapeText(JsonBuilder, relation.Namespace);
-                JsonBuilder.Append('.');
-                JsonUtils.EscapeText(JsonBuilder, relation.RelationName);
+                JsonUtils.EscapeText(JsonBuilder, tableName);
                 JsonBuilder.Append('"');
             }
 
@@ -264,11 +270,11 @@ namespace PgOutput2Json
                 JsonBuilder.Append(',');
                 if (_jsonOptions.WriteMode == JsonWriteMode.Compact)
                 {
-                    WriteSchemaCompact(relation, includedCols);
+                    WriteSchemaCompact(relation, tableName, includedCols);
                 }
                 else
                 {
-                    WriteSchema(relation, includedCols);
+                    WriteSchema(relation, tableName, includedCols);
                 }
             }
 
@@ -481,15 +487,13 @@ namespace PgOutput2Json
             return false;
         }
 
-        private void WriteSchema(RelationMessage relation, IReadOnlyList<string>? includedCols)
+        private void WriteSchema(RelationMessage relation, string tableName, IReadOnlyList<string>? includedCols)
         {
             JsonBuilder.Append("\"schema\":{");
 
             JsonBuilder.Append("\"tableName\":");
             JsonBuilder.Append('"');
-            JsonUtils.EscapeText(JsonBuilder, relation.Namespace);
-            JsonBuilder.Append('.');
-            JsonUtils.EscapeText(JsonBuilder, relation.RelationName);
+            JsonUtils.EscapeText(JsonBuilder, tableName);
             JsonBuilder.Append('"');
 
             JsonBuilder.Append(",\"columns\":[");
@@ -538,13 +542,11 @@ namespace PgOutput2Json
             JsonBuilder.Append('}'); // schema
         }
 
-        private void WriteSchemaCompact(RelationMessage relation, IReadOnlyList<string>? includedCols)
+        private void WriteSchemaCompact(RelationMessage relation, string tableName, IReadOnlyList<string>? includedCols)
         {
             JsonBuilder.Append("\"s\":[");
             JsonBuilder.Append('"');
-            JsonUtils.EscapeText(JsonBuilder, relation.Namespace);
-            JsonBuilder.Append('.');
-            JsonUtils.EscapeText(JsonBuilder, relation.RelationName);
+            JsonUtils.EscapeText(JsonBuilder, tableName);
             JsonBuilder.Append('"');
 
             foreach (var col in relation.Columns)

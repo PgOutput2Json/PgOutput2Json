@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,9 +21,6 @@ namespace PgOutput2Json
         // the names of the types that are not built in, from the Type messages that pgoutput sends before a Relation message
         private readonly Dictionary<uint, string> _typeNames = [];
 
-        // by relation id: the table, and the index of each column of the relation in it (-1 for a column left out)
-        private readonly Dictionary<uint, (RowTable Table, int[] Indexes)> _tables = [];
-
         public RowReader(ReplicationListenerOptions options)
         {
             _options = options;
@@ -35,9 +32,9 @@ namespace PgOutput2Json
         }
 
         /// <summary>
-        /// The row of an insert, update or delete. <see cref="ReplicationMessage.HasRelationChanged"/> makes a new <see cref="RowTable"/>.
+        /// The row of an insert, update or delete, in the table of its relation (made on the Relation message, see <see cref="Relations"/>).
         /// </summary>
-        public async Task<ChangeRow> ReadAsync(ReplicationMessage message, CancellationToken token)
+        public async Task<ChangeRow> ReadAsync(ReplicationMessage message, RelationEntry entry, CancellationToken token)
         {
             var (changeType, relation, newRow, oldRow) = message.Message switch
             {
@@ -50,15 +47,15 @@ namespace PgOutput2Json
                 _ => throw new InvalidOperationException($"Not a row: {message.Message?.GetType().Name}"),
             };
 
-            if (message.HasRelationChanged || !_tables.TryGetValue(relation.RelationId, out var table))
-            {
-                _tables[relation.RelationId] = table = CreateTable(relation);
-            }
+            // made on the Relation message if the publisher took rows then
+            if (entry.Table == null) (entry.Table, entry.Indexes) = CreateTable(relation, entry.Name);
+
+            var indexes = entry.Indexes!;
 
             var row = _row;
 
             row.ChangeType = changeType;
-            row.Table = table.Table;
+            row.Table = entry.Table;
             row.TxFinalLsn = message.TransactionFinalLsn;
             row.MessageNo = message.MessageNo;
             row.IsTableSync = false;
@@ -66,8 +63,8 @@ namespace PgOutput2Json
             row.ServerClock = ((TransactionalMessage)message.Message).ServerClock;
 
             // the old row comes first in the message
-            row.OldValues = oldRow == null ? null : await ReadValuesAsync(oldRow, table.Indexes, row.OldValueList, token).ConfigureAwait(false);
-            row.NewValues = newRow == null ? null : await ReadValuesAsync(newRow, table.Indexes, row.NewValueList, token).ConfigureAwait(false);
+            row.OldValues = oldRow == null ? null : await ReadValuesAsync(oldRow, indexes, row.OldValueList, token).ConfigureAwait(false);
+            row.NewValues = newRow == null ? null : await ReadValuesAsync(newRow, indexes, row.NewValueList, token).ConfigureAwait(false);
 
             return row;
         }
@@ -107,9 +104,9 @@ namespace PgOutput2Json
             return values;
         }
 
-        private (RowTable, int[]) CreateTable(RelationMessage relation)
+        /// <summary>The table of a relation, with the columns after <see cref="PgOutput2JsonBuilder.WithPgColumns"/>.</summary>
+        public (RowTable, int[]) CreateTable(RelationMessage relation, string name)
         {
-            var name = $"{relation.Namespace}.{relation.RelationName}";
 
             _options.IncludedColumns.TryGetValue(name, out var includedColumns);
             _options.PartitionKeyColumns.TryGetValue(name, out var partitionKeyColumns);
@@ -140,7 +137,7 @@ namespace PgOutput2Json
                 });
             }
 
-            return (new RowTable(name, columns), indexes);
+            return (new RowTable(name, relation.Namespace, relation.RelationName, columns), indexes);
         }
 
         internal static bool Contains(IReadOnlyList<string> names, string name)

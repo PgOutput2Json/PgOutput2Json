@@ -57,7 +57,7 @@ namespace PgOutput2Json.Benchmark
                 if (inner != null) await inner.PublishAsync(jsonMessage, token).ConfigureAwait(false);
 
                 // the table name is a StringBuilder: compared without making a string of it
-                if (jsonMessage.TableName.Equals(owner._tableName.AsSpan())) _unconfirmed++;
+                if (jsonMessage.TableName == owner._tableName) _unconfirmed++;
             }
 
             public override async Task ConfirmAsync(CancellationToken token)

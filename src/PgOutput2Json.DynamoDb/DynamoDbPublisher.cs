@@ -58,8 +58,7 @@ namespace PgOutput2Json.DynamoDb
         {
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
-            // the rows of a batch are mostly of one table: its name is not made again for each of them
-            if (!msg.TableName.Equals(_tableName.AsSpan())) _tableName = msg.TableName.ToString();
+            _tableName = msg.TableName;
 
             var tableName = _tableName;
 

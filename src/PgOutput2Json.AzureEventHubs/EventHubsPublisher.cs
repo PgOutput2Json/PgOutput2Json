@@ -38,11 +38,7 @@ namespace PgOutput2Json.AzureEventHubs
 
         public async Task PublishAsync(JsonMessage msg, CancellationToken token)
         {
-            // the table name of the previous message, so that the rows of a table do not each make a string of it
-            if (_tableName == null || !msg.TableName.Equals(_tableName.AsSpan()))
-            {
-                _tableName = msg.TableName.ToString();
-            }
+            _tableName = msg.TableName;
 
             var keyColValue = msg.KeyKolValue.ToString();
 

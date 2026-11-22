@@ -172,7 +172,7 @@ namespace PgOutput2Json.Tests
         {
             var msg = new JsonMessage { TxFinalLsn = 100, MessageNo = 1 };
 
-            msg.TableName.Append(table);
+            msg.TableName = table;
             msg.Json.Append(json);
 
             return msg;
@@ -311,7 +311,7 @@ namespace PgOutput2Json.Tests
         {
             var msg = new JsonMessage { TxFinalLsn = txFinalLsn, MessageNo = messageNo, IsTableSync = isTableSync };
 
-            msg.TableName.Append("test_table");
+            msg.TableName = "test_table";
             msg.Json.Append(json);
 
             return msg;

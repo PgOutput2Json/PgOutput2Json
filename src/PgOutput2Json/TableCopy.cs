@@ -226,7 +226,9 @@ namespace PgOutput2Json
         {
             var jsonMessage = new JsonMessage { IsTableSync = true };
 
-            jsonMessage.TableName.Append(context.Table.TableName);
+            jsonMessage.TableName = context.Table.TableName;
+            jsonMessage.SchemaName = context.Table.SchemaName;
+            jsonMessage.RelationName = context.Table.RelationName;
 
             // every publisher gets the schema with its first row
             var schemaWritten = false;
@@ -357,7 +359,7 @@ namespace PgOutput2Json
                 });
             }
 
-            return (new RowTable(table.TableName, rowColumns), indexes);
+            return (new RowTable(table.TableName, table.SchemaName, table.RelationName, rowColumns), indexes);
         }
 
         private static ChangeRow GetRow(ChangeRow row, List<string?> values, CopyContext context)
