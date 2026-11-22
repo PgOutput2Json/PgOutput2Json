@@ -528,6 +528,8 @@ Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` wh
 
 The PgOutput2Json library will create the SQLite database if it does not already exist, along with any table included in logical replication. A table is created the first time a row belonging to that table is changed. If a table already exists, it is not modified, but new columns will be created automatically, if a new column is added to the source PostgreSQL table.
 
+A table of the `public` schema keeps its name in SQLite (`orders`), a table of another schema is named `schema_table` (`sales_orders`). Set `options.GetTableName` to choose the names yourself: it gets the schema and the table name apart. Two PostgreSQL tables with the same SQLite name are an error. Versions before 2.2 dropped the schema, so tables with the same name in two schemas shared one SQLite table: after the upgrade the rows of a table of another schema than `public` go into a table with the new name, which starts empty. To keep the old names, set `options.GetTableName = (schema, table) => table;`.
+
 The output writes through a connection of its own, opened without pooling, so it neither gets nor leaves connection settings in the pool your application uses (for example `PRAGMA query_only`). On that connection it turns off the foreign key checks, like PostgreSQL's own logical replication: the rows arrive in the order of the table syncs and the batches, not in the order of the foreign keys, so a child row can come before its parent. Your application's connections still check them. To check them on the output's connection too, run `PRAGMA foreign_keys = ON` in `options.PostConnectionSetup`.
 
 Triggers on the tables fire for the replicated rows too: SQLite cannot turn them off for one connection, as PostgreSQL's replication does. A trigger can tell the output's writes apart by the foreign key setting of the connection that fires it:
@@ -601,6 +603,8 @@ PgOutput2Json supports copying modified PostgreSQL rows to MongoDB collections. 
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create the MongoDB database if it does not already exist, along with one collection for each table included in logical replication. Collections are created the first time a row belonging to the respective table is changed. Additionally, one unique index is created for each collection, covering the fields that are a part of the primary key. A key field that is an array is stored as its JSON text (`["a","b"]`): a unique index on an array field indexes each element, so two rows whose keys share an element would be duplicates.
+
+A table of the `public` schema gives its name to its collection (`orders`), a table of another schema is named `schema.table` (`sales.orders`). Set `options.GetTableName` to choose the names yourself: it gets the schema and the table name apart, for example `options.GetTableName = (schema, table) => $"{schema}_{table}";`. Two PostgreSQL tables with the same collection name are an error. Versions before 2.2 named the collections `schema__table` (`public__orders`): after the upgrade the rows go into the collections with the new names, which start empty. To keep the old names, set `options.GetTableName = (schema, table) => $"{schema}__{table}";`.
 
 Arrays are stored as BSON arrays. Arrays of enums, user-defined types and domains over arrays are arrays of strings; before version 2.1 they were a string with the PostgreSQL array literal (`{sad,happy}`), and documents written before keep it until their row changes.
 
@@ -726,6 +730,8 @@ PgOutput2Json supports copying modified PostgreSQL rows to Amazon DynamoDB table
 Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` when configuring the builder.
 
 The PgOutput2Json library will create DynamoDB tables for each table included in logical replication. 
+
+A table of the `public` schema gives its name to its DynamoDB table (`orders`), a table of another schema is named `schema.table` (`sales.orders`). Set `options.GetTableName` to choose the names yourself: it gets the schema and the table name apart. Two PostgreSQL tables with the same DynamoDB name are an error. `TableBillingModes` is by the PostgreSQL table (`schema.table`). Versions before 2.2 named every table `schema.table`, also `public.orders`: after the upgrade the rows of a table of the `public` schema go into a table with the new name, which starts empty. To keep the old names, set `options.GetTableName = (schema, table) => $"{schema}.{table}";`.
 
 Tables are created the first time a row belonging to the respective table is changed. 
 The first PK column is used as partition key. The other PK columns are joined with `|` into a string, stored in the sort key attribute `SK`. An array column is stored as a string with its JSON text.
@@ -993,7 +999,7 @@ The row of a delete stays in the table, marked deleted. `FINAL` hides it, but it
 
 ### Tables
 
-- A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself.
+- A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself: it gets the schema and the table name apart, for example `options.GetTableName = (schema, table) => $"pg_{schema}_{table}";` (before 2.2 it got the joined name). Two PostgreSQL tables with the same ClickHouse name are an error.
 - A table that already exists is used as it is. To choose the column types or an engine the options do not offer (for example a replicated one), create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`. With RowBinary, a column type it does not cover makes the rows of the table go as JSON: see [Insert format](#insert-format).
 - A column added in PostgreSQL is added in ClickHouse. A column dropped in PostgreSQL stays. A changed column type is not followed: change the ClickHouse table yourself. Neither is a changed primary key definition (other key columns), because ClickHouse cannot change the order of an existing table: drop the ClickHouse table and copy it again. An update that changes the key value of a row is followed.
 - The database must exist.
@@ -1164,5 +1170,5 @@ public class Worker : BackgroundService
 | `CleanUpDeletedRowsAfter` | none | Removes the deleted rows. See [Deleted rows](#deleted-rows). |
 | `Tables` | empty | The order, partitions and engine per table. See [Order, partitions and engine](#order-partitions-and-engine). |
 | `Settings` | empty | ClickHouse settings sent with every request, e.g. `options.Settings["insert_quorum"] = "2"`. |
-| `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table (`schema.table`). |
+| `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table, from its schema and its name. |
 | `HttpClient` | none | Your own `HttpClient`, e.g. with a proxy or a client certificate. |

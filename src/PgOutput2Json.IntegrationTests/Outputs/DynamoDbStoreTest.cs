@@ -79,7 +79,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
                 try
                 {
-                    items = (await client.ScanAsync(new ScanRequest { TableName = $"public.{table}", ConsistentRead = true })).Items;
+                    items = (await client.ScanAsync(new ScanRequest { TableName = table, ConsistentRead = true })).Items;
                 }
                 catch (ResourceNotFoundException)
                 {

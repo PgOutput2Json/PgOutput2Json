@@ -34,6 +34,14 @@ namespace PgOutput2Json.DynamoDb
         private readonly Utf8Buffer _utf8 = new();
 
         private string _tableName = "";
+        private string _schemaName = "";
+        private string _relationName = "";
+
+        // the DynamoDB table of each PostgreSQL table (GetTableName), shared by the publishers of the factory
+        internal TargetNames Names { get; init; }
+
+        /// <summary>The DynamoDB table of the table of the current message.</summary>
+        private string DynamoTableName() => Names.Get(_tableName, _schemaName, _relationName);
 
         // the values of the row and of the key of the change being written
         private JsonElement[] _row = [];
@@ -50,6 +58,7 @@ namespace PgOutput2Json.DynamoDb
         public DynamoDbPublisher(DynamoDbPublisherOptions options, ILogger<DynamoDbPublisher>? logger, bool useDeduplication = true)
         {
             _options = options;
+            Names = new TargetNames(options.GetTableName);
             _logger = logger;
             _useDeduplication = useDeduplication;
         }
@@ -59,6 +68,8 @@ namespace PgOutput2Json.DynamoDb
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
             _tableName = msg.TableName;
+            _schemaName = msg.SchemaName;
+            _relationName = msg.RelationName;
 
             var tableName = _tableName;
 
@@ -156,7 +167,7 @@ namespace PgOutput2Json.DynamoDb
                     DeleteRequest = new DeleteRequest { Key = keyAttributes }
                 };
 
-                await AddToBatchAsync(client, tableName, request, keyAttributes, token)
+                await AddToBatchAsync(client, DynamoTableName(), request, keyAttributes, token)
                     .ConfigureAwait(false);
             }
 
@@ -181,7 +192,7 @@ namespace PgOutput2Json.DynamoDb
 
                     if (itemAttributes.Count == 0) return;
 
-                    var request = BuildUpdateItemRequest(tableName, keyAttributes, itemAttributes);
+                    var request = BuildUpdateItemRequest(DynamoTableName(), keyAttributes, itemAttributes);
 
                     await client.UpdateItemAsync(request, token)
                         .ConfigureAwait(false);
@@ -201,7 +212,7 @@ namespace PgOutput2Json.DynamoDb
                         PutRequest = new PutRequest { Item = itemAttributes },
                     };
 
-                    await AddToBatchAsync(client, tableName, request, keyAttributes, token)
+                    await AddToBatchAsync(client, DynamoTableName(), request, keyAttributes, token)
                         .ConfigureAwait(false);
                 }
             }
@@ -525,16 +536,17 @@ namespace PgOutput2Json.DynamoDb
 
             _tableColumns[tableName] = columns;
 
-            await CreateTableIfNotExistsAsync(client, tableName, columns, _options, token)
+            await CreateTableIfNotExistsAsync(client, tableName, DynamoTableName(), columns, _options, token)
                 .ConfigureAwait(false);
 
             await client.SetSchemaAsync(tableName, columns, token)
                 .ConfigureAwait(false);
         }
 
-        // Create the table with composite key (joined keys with "|")
+        // Create the table with composite key (joined keys with "|"); the billing mode is by the name of the PostgreSQL table
         public static async Task CreateTableIfNotExistsAsync(AmazonDynamoDBClient client,
                                                              string tableName,
+                                                             string dynamoTableName,
                                                              IReadOnlyList<ColumnInfo> columns,
                                                              DynamoDbPublisherOptions options,
                                                              CancellationToken token)
@@ -553,7 +565,7 @@ namespace PgOutput2Json.DynamoDb
 
             var request = new CreateTableRequest
             {
-                TableName = tableName,
+                TableName = dynamoTableName,
                 KeySchema = keySchema,
                 AttributeDefinitions = attributeDefinitions,
                 BillingMode = options.TableBillingModes.TryGetValue(tableName, out var billingMode)

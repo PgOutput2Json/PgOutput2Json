@@ -26,6 +26,14 @@ namespace PgOutput2Json.MongoDb
         private readonly Utf8Buffer _utf8 = new();
 
         private string _tableName = "";
+        private string _schemaName = "";
+        private string _relationName = "";
+
+        // the collection of each PostgreSQL table (GetTableName), shared by the publishers of the factory
+        internal TargetNames Names { get; init; }
+
+        /// <summary>The collection of the table of the current message.</summary>
+        private string CollectionName() => Names.Get(_tableName, _schemaName, _relationName);
 
         private readonly Dictionary<string, string> _namespaces = [];
 
@@ -54,6 +62,7 @@ namespace PgOutput2Json.MongoDb
         public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger, bool useDeduplication = true)
         {
             _options = options;
+            Names = new TargetNames(options.GetTableName);
             _logger = logger;
             _useDeduplication = useDeduplication;
         }
@@ -63,6 +72,8 @@ namespace PgOutput2Json.MongoDb
             var client = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
             _tableName = msg.TableName;
+            _schemaName = msg.SchemaName;
+            _relationName = msg.RelationName;
 
             var tableName = _tableName;
 
@@ -154,7 +165,7 @@ namespace PgOutput2Json.MongoDb
 
             if (!_namespaces.TryGetValue(tableName, out var collectionNamespace))
             {
-                _namespaces[tableName] = collectionNamespace = db.GetCollectionNamespace(tableName);
+                _namespaces[tableName] = collectionNamespace = db.GetCollectionNamespace(CollectionName());
             }
 
             MongoDbExtensions.UpsertOrDelete(_batch, collectionNamespace, columns, changeType, keyElement, rowElement, _options.TimestampTimeZone);
@@ -194,7 +205,7 @@ namespace PgOutput2Json.MongoDb
 
             _tableColumns[tableName] = columns;
 
-            await db.EnsureUniqueKeyIndexAsync(tableName, columns, token).ConfigureAwait(false);
+            await db.EnsureUniqueKeyIndexAsync(CollectionName(), columns, token).ConfigureAwait(false);
 
             await db.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
         }

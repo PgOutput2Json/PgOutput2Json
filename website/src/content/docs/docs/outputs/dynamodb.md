@@ -8,6 +8,8 @@ Optionally, initial data copy can be enabled with `WithInitialDataCopy(true)` wh
 
 The PgOutput2Json library will create DynamoDB tables for each table included in logical replication.
 
+A table of the `public` schema gives its name to its DynamoDB table (`orders`), a table of another schema is named `schema.table` (`sales.orders`). Set `options.GetTableName` to choose the names yourself: it gets the schema and the table name apart. Two PostgreSQL tables with the same DynamoDB name are an error. `TableBillingModes` is by the PostgreSQL table (`schema.table`). Versions before 2.2 named every table `schema.table`, also `public.orders`: after the upgrade the rows of a table of the `public` schema go into a table with the new name, which starts empty. To keep the old names, set `options.GetTableName = (schema, table) => $"{schema}.{table}";`.
+
 Tables are created the first time a row belonging to the respective table is changed.
 The first PK column is used as partition key. The other PK columns are joined with `|` into a string, stored in the sort key attribute `SK`. An array column is stored as a string with its JSON text.
 

@@ -6,9 +6,13 @@ namespace PgOutput2Json.DynamoDb
     {
         private readonly DynamoDbPublisherOptions _options;
 
+        // shared by the publishers: the main stream and the sync workers
+        private readonly TargetNames _names;
+
         public DynamoDbPublisherFactory(DynamoDbPublisherOptions options)
         {
             _options = options;
+            _names = new TargetNames(options.GetTableName);
         }
 
         // the compact write mode has the column types, and the JSON is not seen outside the output
@@ -16,7 +20,7 @@ namespace PgOutput2Json.DynamoDb
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new DynamoDbPublisher(_options, loggerFactory?.CreateLogger<DynamoDbPublisher>(), listenerOptions.UseDeduplication);
+            return new DynamoDbPublisher(_options, loggerFactory?.CreateLogger<DynamoDbPublisher>(), listenerOptions.UseDeduplication) { Names = _names };
         }
     }
 }

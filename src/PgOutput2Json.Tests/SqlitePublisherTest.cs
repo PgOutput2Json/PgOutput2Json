@@ -173,6 +173,8 @@ namespace PgOutput2Json.Tests
             var msg = new JsonMessage { TxFinalLsn = 100, MessageNo = 1 };
 
             msg.TableName = table;
+            msg.SchemaName = table.Contains('.') ? table[..table.IndexOf('.')] : "public";
+            msg.RelationName = table.Contains('.') ? table[(table.IndexOf('.') + 1)..] : table;
             msg.Json.Append(json);
 
             return msg;
@@ -311,7 +313,9 @@ namespace PgOutput2Json.Tests
         {
             var msg = new JsonMessage { TxFinalLsn = txFinalLsn, MessageNo = messageNo, IsTableSync = isTableSync };
 
-            msg.TableName = "test_table";
+            msg.TableName = "public.test_table";
+            msg.SchemaName = "public";
+            msg.RelationName = "test_table";
             msg.Json.Append(json);
 
             return msg;

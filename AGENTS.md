@@ -78,6 +78,8 @@ Each adapter in `src/PgOutput2Json.<Name>/` provides:
 
 Available adapters: `RabbitMq`, `RabbitMqStreams`, `Kafka`, `Redis`, `Sqlite`, `MongoDb`, `Kinesis`, `DynamoDb`, `ClickHouse`, `AzureEventHubs`, `Webhooks`.
 
+The stores (SQLite, MongoDB, DynamoDB, ClickHouse) name their tables with `GetTableName(schema, table)` (the parts from `JsonMessage`/`RowTable`, never a split of the joined name): by default a table of `public` keeps its name, any other is `schema.table` (MongoDB, DynamoDB) or `schema_table` (SQLite, ClickHouse). `TargetNames` (core) makes each name once and fails when two PostgreSQL tables get the same one; one instance per factory, shared by the main stream's and the sync workers' publishers (they copy tables at the same time).
+
 ### Delivery and Deduplication
 
 Delivery is at-least-once: a batch is confirmed to PostgreSQL only after the output acknowledged it, and PostgreSQL replays unconfirmed changes after a reconnect. Each published message carries a deduplication key: the transaction final LSN ("w" in the JSON) plus a counter ("n") that is reset at every `BeginMessage`. Consumers deduplicate with it.

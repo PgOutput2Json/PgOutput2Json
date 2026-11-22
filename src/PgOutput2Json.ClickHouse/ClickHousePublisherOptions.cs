@@ -80,26 +80,16 @@ namespace PgOutput2Json.ClickHouse
         public Dictionary<string, string> Settings { get; } = [];
 
         /// <summary>
-        /// Returns the name of the ClickHouse table for a PostgreSQL table ("schema.table").
+        /// Returns the name of the ClickHouse table for a PostgreSQL table, from its schema and its name.
         /// By default a table of the public schema keeps its name, and any other becomes "schema_table".
+        /// Two PostgreSQL tables with the same ClickHouse name are an error.
         /// </summary>
-        public Func<string, string> GetTableName { get; set; } = DefaultTableName;
+        public Func<string, string, string> GetTableName { get; set; } = (schemaName, tableName) => TargetNames.Default(schemaName, tableName, "_");
 
         /// <summary>
         /// Optional. The client to use instead of the one the output creates, e.g. with a proxy or a client certificate.
         /// It is not disposed by the output.
         /// </summary>
         public HttpClient? HttpClient { get; set; }
-
-        private static string DefaultTableName(string fullTableName)
-        {
-            var dot = fullTableName.IndexOf('.');
-
-            if (dot < 0) return fullTableName;
-
-            return fullTableName.AsSpan(0, dot).SequenceEqual("public")
-                ? fullTableName[(dot + 1)..]
-                : string.Concat(fullTableName.AsSpan(0, dot), "_", fullTableName.AsSpan(dot + 1));
-        }
     }
 }

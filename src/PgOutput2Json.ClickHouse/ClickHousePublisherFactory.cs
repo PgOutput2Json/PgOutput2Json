@@ -10,12 +10,16 @@ namespace PgOutput2Json.ClickHouse
     {
         private readonly ClickHousePublisherOptions _options;
 
+        // shared by the publishers: the main stream and the sync workers
+        private readonly TargetNames _names;
+
         // one client for the publishers of the main stream and of the table syncs
         private readonly Lazy<ClickHouseClient> _client;
 
         public ClickHousePublisherFactory(ClickHousePublisherOptions options)
         {
             _options = options;
+            _names = new TargetNames(options.GetTableName);
 
             _client = new Lazy<ClickHouseClient>(
                 () => new ClickHouseClient(options, options.HttpClient ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan }),
@@ -27,7 +31,7 @@ namespace PgOutput2Json.ClickHouse
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new ClickHousePublisher(_options, _client.Value, loggerFactory?.CreateLogger<ClickHousePublisher>());
+            return new ClickHousePublisher(_options, _client.Value, loggerFactory?.CreateLogger<ClickHousePublisher>()) { Names = _names };
         }
     }
 }

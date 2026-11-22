@@ -14,6 +14,9 @@ namespace PgOutput2Json.Sqlite
     public class SqlitePublisher : MessagePublisher, IRowPublisher
     {
         private readonly SqlitePublisherOptions _options;
+
+        // the SQLite name of each PostgreSQL table (GetTableName), shared by the publishers of the factory
+        internal TargetNames Names { get; init; }
         private readonly ILogger<SqlitePublisher>? _logger;
 
         private SqliteConnection? _connection;
@@ -38,6 +41,7 @@ namespace PgOutput2Json.Sqlite
         public SqlitePublisher(SqlitePublisherOptions options, ILogger<SqlitePublisher>? logger)
         {
             _options = options;
+            Names = new TargetNames(options.GetTableName);
             _logger = logger;
         }
 
@@ -49,7 +53,7 @@ namespace PgOutput2Json.Sqlite
 
             _tableName = msg.TableName;
 
-            await ApplyChangeAsync(connection, _tableName, doc, token).ConfigureAwait(false);
+            await ApplyChangeAsync(connection, _tableName, msg.SchemaName, msg.RelationName, doc, token).ConfigureAwait(false);
 
             SetPosition(msg.IsTableSync, msg.TxFinalLsn, msg.MessageNo);
         }
@@ -117,7 +121,7 @@ namespace PgOutput2Json.Sqlite
             return result;
         }
 
-        private async Task ApplyChangeAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task ApplyChangeAsync(SqliteConnection connection, string tableName, string schemaName, string relationName, JsonDocument doc, CancellationToken token)
         {
             doc.RootElement.TryGetProperty("c", out var changeTypeElement);
 
@@ -127,7 +131,7 @@ namespace PgOutput2Json.Sqlite
 
             if (tableName.Length == 0) throw new Exception($"Missing table name for change type '{changeType}'");
 
-            var table = await EnsureTableAsync(connection, tableName, doc, token).ConfigureAwait(false);
+            var table = await EnsureTableAsync(connection, tableName, schemaName, relationName, doc, token).ConfigureAwait(false);
 
             // read once: indexing a JSON array walks it from the start when it has arrays or objects in it
             var keyElement = doc.RootElement.TryGetProperty("k", out var key) && key.ValueKind == JsonValueKind.Array ? ReadValues(key, ref _key) : null;
@@ -153,7 +157,7 @@ namespace PgOutput2Json.Sqlite
             else if (changeType == "U")
             {
                 // an update of the key comes with the old key: the row is moved first, or the old one would stay
-                await connection.UpdateKeyAsync(table.Commands, table.FullTableName, keyElement, rowElement, token).ConfigureAwait(false);
+                await connection.UpdateKeyAsync(table.Commands, table.Name, keyElement, rowElement, token).ConfigureAwait(false);
 
                 await UpdateRowAsync(connection, table, rowElement, token).ConfigureAwait(false);
             }
@@ -249,7 +253,7 @@ namespace PgOutput2Json.Sqlite
             var hasToast = HasUnchangedToast(rowElement);
 
             var updatedCount = hasToast
-                ? await connection.FallbackUpdateAsync(table.Commands, table.FullTableName, rowElement, token).ConfigureAwait(false)
+                ? await connection.FallbackUpdateAsync(table.Commands, table.Name, rowElement, token).ConfigureAwait(false)
                 : await connection.UpdateAsync(table.Commands, rowElement, token).ConfigureAwait(false);
 
             if (updatedCount == 0)
@@ -269,13 +273,13 @@ namespace PgOutput2Json.Sqlite
             return false;
         }
 
-        private async Task<TableContext> EnsureTableAsync(SqliteConnection connection, string tableName, JsonDocument doc, CancellationToken token)
+        private async Task<TableContext> EnsureTableAsync(SqliteConnection connection, string tableName, string schemaName, string relationName, JsonDocument doc, CancellationToken token)
         {
             if (doc.RootElement.TryGetProperty("s", out var schemaElement))
             {
                 // relation message - schema changed, rebuild the cached commands
 
-                return await CreateTableContextAsync(connection, tableName, ParseSchema(schemaElement), null, token).ConfigureAwait(false);
+                return await CreateTableContextAsync(connection, tableName, schemaName, relationName, ParseSchema(schemaElement), null, token).ConfigureAwait(false);
             }
 
             if (_tables.TryGetValue(tableName, out var cached)) return cached;
@@ -286,7 +290,9 @@ namespace PgOutput2Json.Sqlite
 
             if (storedColumns == null) throw new Exception("Missing table schema: " + tableName);
 
-            var restored = new TableContext(tableName, connection.CreatePreparedCommands(tableName, storedColumns));
+            var sqliteName = Names.Get(tableName, schemaName, relationName);
+
+            var restored = new TableContext(tableName, sqliteName, connection.CreatePreparedCommands(sqliteName, storedColumns));
 
             _tables[tableName] = restored;
 
@@ -307,12 +313,15 @@ namespace PgOutput2Json.Sqlite
                 columns.Add(new ColumnInfo { Name = column.Name, DataType = column.TypeId, TypeModifier = column.TypeModifier, IsKey = column.IsKey });
             }
 
-            return await CreateTableContextAsync(connection, rowTable.Name, columns, rowTable, token).ConfigureAwait(false);
+            return await CreateTableContextAsync(connection, rowTable.Name, rowTable.SchemaName, rowTable.RelationName, columns, rowTable, token).ConfigureAwait(false);
         }
 
-        private async Task<TableContext> CreateTableContextAsync(SqliteConnection connection, string tableName, List<ColumnInfo> columns, RowTable? source, CancellationToken token)
+        private async Task<TableContext> CreateTableContextAsync(SqliteConnection connection, string tableName, string schemaName, string relationName,
+                                                                 List<ColumnInfo> columns, RowTable? source, CancellationToken token)
         {
-            var table = new TableContext(tableName, connection.CreatePreparedCommands(tableName, columns)) { Source = source };
+            var sqliteName = Names.Get(tableName, schemaName, relationName);
+
+            var table = new TableContext(tableName, sqliteName, connection.CreatePreparedCommands(sqliteName, columns)) { Source = source };
 
             if (_tables.Remove(tableName, out var existing))
             {
@@ -321,7 +330,7 @@ namespace PgOutput2Json.Sqlite
 
             _tables[tableName] = table;
 
-            await connection.CreateOrAlterTableAsync(tableName, columns, token).ConfigureAwait(false);
+            await connection.CreateOrAlterTableAsync(sqliteName, columns, token).ConfigureAwait(false);
 
             await connection.SetSchemaAsync(tableName, columns, token).ConfigureAwait(false);
 
@@ -416,14 +425,18 @@ namespace PgOutput2Json.Sqlite
         {
             public string FullTableName { get; }
 
+            /// <summary>The name of the SQLite table (GetTableName).</summary>
+            public string Name { get; }
+
             public PreparedCommands Commands { get; }
 
             /// <summary>The <see cref="RowTable"/> of the rows, for an <see cref="IRowPublisher"/> row.</summary>
             public RowTable? Source { get; init; }
 
-            public TableContext(string fullTableName, PreparedCommands commands)
+            public TableContext(string fullTableName, string name, PreparedCommands commands)
             {
                 FullTableName = fullTableName;
+                Name = name;
                 Commands = commands;
             }
 
