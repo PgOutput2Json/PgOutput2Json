@@ -19,5 +19,12 @@ namespace PgOutput2Json.MongoDb
         /// For example <c>TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb")</c>.
         /// </summary>
         public TimeZoneInfo TimestampTimeZone { get; set; } = TimeZoneInfo.Utc;
+
+        /// <summary>
+        /// Returns the name of the MongoDB collection for a PostgreSQL table, from its schema and its name.
+        /// By default a table of the public schema keeps its name, and any other becomes "schema.table".
+        /// Two PostgreSQL tables with the same collection name are an error.
+        /// </summary>
+        public Func<string, string, string> GetTableName { get; set; } = (schemaName, tableName) => TargetNames.Default(schemaName, tableName, ".");
     }
 }

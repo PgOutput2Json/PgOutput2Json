@@ -1,1 +1,3 @@
 #nullable enable
+PgOutput2Json.Sqlite.SqlitePublisherOptions.GetTableName.get -> System.Func<string!, string!, string!>!
+PgOutput2Json.Sqlite.SqlitePublisherOptions.GetTableName.set -> void

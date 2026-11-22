@@ -34,5 +34,12 @@ namespace PgOutput2Json.Sqlite
         public bool UseWal { get; set; }
         public WalCheckpointType WalCheckpointType { get; set; } = WalCheckpointType.Automatic;
         public int WalCheckpointTryCount { get; set; } = 10;
+
+        /// <summary>
+        /// Returns the name of the SQLite table for a PostgreSQL table, from its schema and its name.
+        /// By default a table of the public schema keeps its name, and any other becomes "schema_table".
+        /// Two PostgreSQL tables with the same SQLite name are an error.
+        /// </summary>
+        public Func<string, string, string> GetTableName { get; set; } = (schemaName, tableName) => TargetNames.Default(schemaName, tableName, "_");
     }
 }

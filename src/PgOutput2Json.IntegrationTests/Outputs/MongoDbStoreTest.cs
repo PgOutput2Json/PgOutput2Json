@@ -24,7 +24,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             // the documents of the collection of a table, without the _id, ordered by id, with the fields in name order
             async Task<string> ReadAsync(string table)
             {
-                var documents = await database.GetCollection<BsonDocument>($"public__{table}")
+                var documents = await database.GetCollection<BsonDocument>(table)
                     .Find(FilterDefinition<BsonDocument>.Empty)
                     .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
                     .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
@@ -122,7 +122,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 {
                     await Wait.UntilAsync(async () =>
                     {
-                        var documents = await database.GetCollection<BsonDocument>("public__os_mongo_arr")
+                        var documents = await database.GetCollection<BsonDocument>("os_mongo_arr")
                             .Find(FilterDefinition<BsonDocument>.Empty)
                             .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
                             .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
@@ -184,7 +184,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             async Task<bool> StoredAsync(string expected)
             {
-                var documents = await database.GetCollection<BsonDocument>("public__os_mongo_ts")
+                var documents = await database.GetCollection<BsonDocument>("os_mongo_ts")
                     .Find(FilterDefinition<BsonDocument>.Empty)
                     .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
                     .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
@@ -256,7 +256,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             async Task<bool> StoredAsync(string expected)
             {
-                var documents = await database.GetCollection<BsonDocument>("public__os_mongo_tz")
+                var documents = await database.GetCollection<BsonDocument>("os_mongo_tz")
                     .Find(FilterDefinition<BsonDocument>.Empty)
                     .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
                     .Sort(Builders<BsonDocument>.Sort.Ascending("id"))
@@ -349,7 +349,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     {
                         var documents = new List<BsonDocument>();
 
-                        foreach (var collection in new[] { "public__os_mongo_akey", "public__os_mongo_akey_enum" })
+                        foreach (var collection in new[] { "os_mongo_akey", "os_mongo_akey_enum" })
                         {
                             documents.AddRange(await database.GetCollection<BsonDocument>(collection)
                                 .Find(FilterDefinition<BsonDocument>.Empty)
@@ -463,7 +463,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 {
                     await Wait.UntilAsync(async () =>
                     {
-                        var documents = await database.GetCollection<BsonDocument>("public__os_mongo_json")
+                        var documents = await database.GetCollection<BsonDocument>("os_mongo_json")
                             .Find(FilterDefinition<BsonDocument>.Empty)
                             .Project(Builders<BsonDocument>.Projection.Exclude("_id"))
                             .Sort(Builders<BsonDocument>.Sort.Ascending("id"))

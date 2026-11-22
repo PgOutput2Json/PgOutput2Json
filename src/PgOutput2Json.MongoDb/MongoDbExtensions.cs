@@ -83,18 +83,12 @@ namespace PgOutput2Json.MongoDb
             return cfg?.Value;
         }
 
-        private static string GetCollectionName(string fullTableName)
-        {
-            var nameParts = fullTableName.Split('.');
-            return nameParts.Length > 1 ? $"{nameParts[0]}__{nameParts[1]}" : nameParts[0];
-        }
-
         /// <summary>
-        /// The name of the collection of a table (schema__table), and its namespace in the database (database.collection).
+        /// The namespace of a collection in the database (database.collection).
         /// </summary>
-        public static string GetCollectionNamespace(this IMongoDatabase db, string fullTableName)
+        public static string GetCollectionNamespace(this IMongoDatabase db, string collectionName)
         {
-            return $"{db.DatabaseNamespace.DatabaseName}.{GetCollectionName(fullTableName)}";
+            return $"{db.DatabaseNamespace.DatabaseName}.{collectionName}";
         }
 
         public static void UpsertOrDelete(List<BulkWriteModel> batch,
@@ -402,12 +396,10 @@ namespace PgOutput2Json.MongoDb
         }
 
         public static async Task EnsureUniqueKeyIndexAsync(this IMongoDatabase db,
-                                                           string fullTableName,
+                                                           string collectionName,
                                                            IReadOnlyList<ColumnInfo> columns,
                                                            CancellationToken token = default)
         {
-            var collectionName = GetCollectionName(fullTableName);
-
             var collection = db.GetCollection<BsonDocument>(collectionName);
 
             var indexKeysDef = Builders<BsonDocument>.IndexKeys;

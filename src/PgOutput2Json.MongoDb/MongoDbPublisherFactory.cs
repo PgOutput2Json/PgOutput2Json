@@ -6,9 +6,13 @@ namespace PgOutput2Json.MongoDb
     {
         private readonly MongoDbPublisherOptions _options;
 
+        // shared by the publishers: the main stream and the sync workers
+        private readonly TargetNames _names;
+
         public MongoDbPublisherFactory(MongoDbPublisherOptions options)
         {
             _options = options;
+            _names = new TargetNames(options.GetTableName);
         }
 
         // the compact write mode has the column types, and the JSON is not seen outside the output
@@ -16,7 +20,7 @@ namespace PgOutput2Json.MongoDb
 
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
-            return new MongoDbPublisher(_options, loggerFactory?.CreateLogger<MongoDbPublisher>(), listenerOptions.UseDeduplication);
+            return new MongoDbPublisher(_options, loggerFactory?.CreateLogger<MongoDbPublisher>(), listenerOptions.UseDeduplication) { Names = _names };
         }
     }
 }

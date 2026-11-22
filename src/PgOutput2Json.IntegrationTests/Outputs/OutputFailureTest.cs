@@ -339,7 +339,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 {
                     try
                     {
-                        var documents = await client.GetDatabase("of_mongo_db").GetCollection<BsonDocument>("public__of_mongo")
+                        var documents = await client.GetDatabase("of_mongo_db").GetCollection<BsonDocument>("of_mongo")
                             .Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
 
                         return documents.Select(d => d["id"].ToInt32()).ToList();
@@ -365,7 +365,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 {
                     try
                     {
-                        var items = (await client.ScanAsync(new ScanRequest { TableName = "public.of_dynamo", ConsistentRead = true })).Items;
+                        var items = (await client.ScanAsync(new ScanRequest { TableName = "of_dynamo", ConsistentRead = true })).Items;
 
                         return items.Select(item => int.Parse(item["id"].N)).ToList();
                     }

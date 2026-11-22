@@ -164,9 +164,8 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        public static async Task CreateOrAlterTableAsync(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
+        public static async Task CreateOrAlterTableAsync(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns, CancellationToken token)
         {
-            var tableName = GetTableName(fullTableName);
 
             var exists = false;
 
@@ -252,13 +251,6 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
 
-        /// <summary>The table name without the schema: what follows the first dot, so a table name can have dots too.</summary>
-        internal static string GetTableName(string fullTableName)
-        {
-            var dot = fullTableName.IndexOf('.');
-            return dot >= 0 ? fullTableName[(dot + 1)..] : fullTableName;
-        }
-
         /// <summary>
         /// An identifier for SQL: in double quotes, with each double quote doubled. Table and column names come from PostgreSQL,
         /// where they can have any character, and whoever can create a table that the publication picks up chooses them.
@@ -275,9 +267,8 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// requires the command's transaction to match the connection's current one - use
         /// <see cref="PreparedCommands.SetTransaction"/> to re-bind cached commands to a new transaction.
         /// </summary>
-        public static PreparedCommands CreatePreparedCommands(this SqliteConnection cn, string fullTableName, IReadOnlyList<ColumnInfo> columns)
+        public static PreparedCommands CreatePreparedCommands(this SqliteConnection cn, string tableName, IReadOnlyList<ColumnInfo> columns)
         {
-            var tableName = GetTableName(fullTableName);
 
             var keyCount = 0;
             var nonKeyCount = 0;
@@ -437,9 +428,8 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Used when some row values are toasted (unchanged and not sent by PostgreSQL).
         /// Returns the number of updated rows.
         /// </summary>
-        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, SqliteValue[] rowElement, CancellationToken token)
+        public static async Task<int> FallbackUpdateAsync(this SqliteConnection cn, PreparedCommands commands, string tableName, SqliteValue[] rowElement, CancellationToken token)
         {
-            var tableName = GetTableName(fullTableName);
             var columns = commands.Columns;
 
             var setCols = new List<int>();
@@ -500,7 +490,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
         /// Moves a row to its new key, if the update changed the key. The key element holds the old values of
         /// the key columns, the row element the new row. The other columns are written by the update that follows.
         /// </summary>
-        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string fullTableName, SqliteValue[]? keyElement, SqliteValue[] rowElement, CancellationToken token)
+        public static async Task UpdateKeyAsync(this SqliteConnection cn, PreparedCommands commands, string tableName, SqliteValue[]? keyElement, SqliteValue[] rowElement, CancellationToken token)
         {
             if (keyElement == null) return;
 
@@ -531,7 +521,7 @@ CREATE TABLE IF NOT EXISTS __pg2j_config (
             if (setColumns.Count == 0) return;
 
             // OR REPLACE: a replayed key change may find the new key already there
-            var sqlBuilder = new StringBuilder($"UPDATE OR REPLACE {Quote(GetTableName(fullTableName))} SET ");
+            var sqlBuilder = new StringBuilder($"UPDATE OR REPLACE {Quote(tableName)} SET ");
 
             for (var j = 0; j < setColumns.Count; j++)
             {

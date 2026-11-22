@@ -1,1 +1,5 @@
 #nullable enable
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.GetTableName.get -> System.Func<string!, string!, string!>!
+PgOutput2Json.DynamoDb.DynamoDbPublisherOptions.GetTableName.set -> void
+static PgOutput2Json.DynamoDb.DynamoDbPublisher.CreateTableIfNotExistsAsync(Amazon.DynamoDBv2.AmazonDynamoDBClient! client, string! tableName, string! dynamoTableName, System.Collections.Generic.IReadOnlyList<PgOutput2Json.DynamoDb.ColumnInfo>! columns, PgOutput2Json.DynamoDb.DynamoDbPublisherOptions! options, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
+*REMOVED*static PgOutput2Json.DynamoDb.DynamoDbPublisher.CreateTableIfNotExistsAsync(Amazon.DynamoDBv2.AmazonDynamoDBClient! client, string! tableName, System.Collections.Generic.IReadOnlyList<PgOutput2Json.DynamoDb.ColumnInfo>! columns, PgOutput2Json.DynamoDb.DynamoDbPublisherOptions! options, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!

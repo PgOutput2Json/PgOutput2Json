@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:PgOutput2Json.ClickHouse.ClickHousePublisherOptions.get_GetTableName</Target>
+    <Left>lib/net10.0/PgOutput2Json.ClickHouse.dll</Left>
+    <Right>lib/net10.0/PgOutput2Json.ClickHouse.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:PgOutput2Json.ClickHouse.ClickHousePublisherOptions.get_GetTableName</Target>
+    <Left>lib/net8.0/PgOutput2Json.ClickHouse.dll</Left>
+    <Right>lib/net8.0/PgOutput2Json.ClickHouse.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:PgOutput2Json.ClickHouse.ClickHousePublisherOptions.get_GetTableName</Target>
+    <Left>lib/net9.0/PgOutput2Json.ClickHouse.dll</Left>
+    <Right>lib/net9.0/PgOutput2Json.ClickHouse.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

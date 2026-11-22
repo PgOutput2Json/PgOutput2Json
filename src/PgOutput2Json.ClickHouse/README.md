@@ -223,7 +223,7 @@ The row of a delete stays in the table, marked deleted. `FINAL` hides it, but it
 
 ### Tables
 
-- A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself.
+- A table of the `public` schema keeps its name. A table of another schema is named `schema_table`. Set `options.GetTableName` to choose the names yourself: it gets the schema and the table name apart, for example `options.GetTableName = (schema, table) => $"pg_{schema}_{table}";` (before 2.2 it got the joined name). Two PostgreSQL tables with the same ClickHouse name are an error.
 - A table that already exists is used as it is. To choose the column types or an engine the options do not offer (for example a replicated one), create the table before the first row arrives. It needs the columns `_version UInt128` and `_deleted UInt8`. With RowBinary, a column type it does not cover makes the rows of the table go as JSON: see [Insert format](#insert-format).
 - A column added in PostgreSQL is added in ClickHouse. A column dropped in PostgreSQL stays. A changed column type is not followed: change the ClickHouse table yourself. Neither is a changed primary key definition (other key columns), because ClickHouse cannot change the order of an existing table: drop the ClickHouse table and copy it again. An update that changes the key value of a row is followed.
 - The database must exist.
@@ -396,7 +396,7 @@ public class Worker : BackgroundService
 | `CleanUpDeletedRowsAfter` | none | Removes the deleted rows. See [Deleted rows](#deleted-rows). |
 | `Tables` | empty | The order, partitions and engine per table. See [Order, partitions and engine](#order-partitions-and-engine). |
 | `Settings` | empty | ClickHouse settings sent with every request, e.g. `options.Settings["insert_quorum"] = "2"`. |
-| `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table (`schema.table`). |
+| `GetTableName` | see [Tables](#tables) | Returns the ClickHouse table name for a PostgreSQL table, from its schema and its name. |
 | `HttpClient` | none | Your own `HttpClient`, e.g. with a proxy or a client certificate. |
 
 ## Working with Permanent Replication Slots
