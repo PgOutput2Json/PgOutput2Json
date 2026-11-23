@@ -9,6 +9,12 @@ namespace PgOutput2Json.DynamoDb
     {
         public required AmazonDynamoDBConfig ClientConfig { get; set; }
 
+        /// <summary>
+        /// Required. The name of this subscription (one source database and replication slot) in the store: the position
+        /// of the last saved change is kept under it. Every source that writes into the same store needs its own.
+        /// </summary>
+        public string SubscriptionName { get; set; } = "";
+
         public BillingMode DefaultBillingMode { get; set; } = BillingMode.PAY_PER_REQUEST;
         /// <summary>The billing mode of a table the output creates, by the PostgreSQL table (schema.table).</summary>
         public Dictionary<string, BillingMode> TableBillingModes { get; set; } = [];

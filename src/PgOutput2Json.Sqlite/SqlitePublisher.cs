@@ -176,7 +176,7 @@ namespace PgOutput2Json.Sqlite
                 // nothing to save if the batch had only table sync messages
                 if (_connection != null && (_lastWalEnd != 0 || _lastMessageNo != 0))
                 {
-                    await _connection.SetWalEndAsync(_lastWalEnd, _lastMessageNo, token).ConfigureAwait(false);
+                    await _connection.SetWalEndAsync(_options.SubscriptionName, _lastWalEnd, _lastMessageNo, token).ConfigureAwait(false);
                 }
 
                 await _transaction.CommitAsync(token).ConfigureAwait(false);
@@ -207,7 +207,7 @@ namespace PgOutput2Json.Sqlite
         {
             var cn = await EnsureConnectionAsync(token).ConfigureAwait(false);
 
-            return await cn.GetWalEndAsync(token).ConfigureAwait(false);
+            return await cn.GetWalEndAsync(_options.SubscriptionName, token).ConfigureAwait(false);
         }
 
         public override async ValueTask DisposeAsync()

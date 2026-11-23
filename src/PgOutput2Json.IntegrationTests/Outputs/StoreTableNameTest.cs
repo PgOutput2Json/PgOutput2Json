@@ -78,7 +78,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             try
             {
                 await RunAsync("stn_sqlite",
-                    b => b.UseSqlite(o => o.ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False")),
+                    b => b.UseSqlite(o => { o.ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False"); o.SubscriptionName = "test"; }),
                     async () => await SqliteValueAsync(path, "stn_sqlite_a.b") == "one");
             }
             finally
@@ -97,6 +97,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 await RunAsync("stn_custom",
                     b => b.UseSqlite(o =>
                     {
+                        o.SubscriptionName = "test";
                         o.ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False");
                         o.GetTableName = (schema, table) => $"{schema}|{table}";
                     }),
@@ -136,6 +137,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithInitialDataCopy(true)
                 .UseSqlite(o =>
                 {
+                    o.SubscriptionName = "test";
                     o.ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False");
                     o.GetTableName = (schema, table) => "same";
                 });
@@ -168,6 +170,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             await RunAsync("stn_mongo",
                 b => b.UseMongoDb(o =>
                 {
+                    o.SubscriptionName = "test";
                     o.ClientSettings = settings;
                     o.DatabaseName = "stn_mongo_db";
                 }),
@@ -183,7 +186,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             using var client = new AmazonDynamoDBClient(config);
 
             await RunAsync("stn_dynamo",
-                b => b.UseDynamoDb(o => o.ClientConfig = config),
+                b => b.UseDynamoDb(o => { o.ClientConfig = config; o.SubscriptionName = "test"; }),
                 async () =>
                 {
                     try

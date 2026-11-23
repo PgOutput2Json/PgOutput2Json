@@ -63,7 +63,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             try
             {
                 await StoreScenario.RunAsync("os_sqlite",
-                    builder => builder.UseSqlite(options => options.ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString)),
+                    builder => builder.UseSqlite(options => { options.ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString); options.SubscriptionName = "test"; }),
                     ReadAsync,
                     expectedAfterCopy: "1|one|1.5|1|[\"a\",\"b c\"]|x0102|x*3000\n2|two|NULL|0|NULL|NULL|NULL",
                     expected: "1|uno|1.5|1|[\"a\",\"b c\"]|x0102|x*3000\n2|NULL|2.25|0|[\"x\"]|NULL|NULL\n30|three|3|NULL|[]|xFF|NULL",
@@ -131,7 +131,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithPgPublications($"{name}_pub")
                 .WithPgReplicationSlot($"{name}_slot")
                 .WithInitialDataCopy(true)
-                .UseSqlite(options => options.ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString));
+                .UseSqlite(options => { options.ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString); options.SubscriptionName = "test"; });
 
             const string copied = "1|2026-01-02T03:04:05.1234560|Unspecified|2026-01-02T02:04:05.1234560+00:00|2026-01-02|03:04:05.123456|03:04:05+02";
 

@@ -98,7 +98,7 @@ namespace PgOutput2Json.DynamoDb
             // Data exporter messages have no LSN info (0,0) - they must not overwrite the replication position
             if (_lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0))
             {
-                await client.SaveConfigAsync(ConfigKey.Position, DynamoDbExtensions.FormatPosition(_lastWal.Value, _lastMessageNo), token)
+                await client.SaveConfigAsync(ConfigKey.PositionOf(_options.SubscriptionName), DynamoDbExtensions.FormatPosition(_lastWal.Value, _lastMessageNo), token)
                     .ConfigureAwait(false);
             }
         }
@@ -107,7 +107,7 @@ namespace PgOutput2Json.DynamoDb
         {
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
-            return await client.GetWalEndAsync(token).ConfigureAwait(false);
+            return await client.GetWalEndAsync(_options.SubscriptionName, token).ConfigureAwait(false);
         }
 
         public override ValueTask DisposeAsync()

@@ -51,6 +51,7 @@ public class Worker : BackgroundService
             .WithPgPublications("my_publication")
             .UseMongoDb(options =>
             {
+                options.SubscriptionName = "my_subscription"; // one per source database and slot
                 options.DatabaseName = "my_mongo_database";
                 options.ClientSettings = new MongoClientSettings
                 {

@@ -12,8 +12,11 @@ namespace PgOutput2Json.DynamoDb
     internal static class ConfigKey
     {
         /// <summary>
-        /// The position of the last saved change: "w/n", one value, so that it is saved at once.
+        /// The key of the position of the last saved change of a subscription: "w/n", one value, so that it is saved at once.
         /// </summary>
+        public static string PositionOf(string subscriptionName) => $"Position:{subscriptionName}";
+
+        // before version 2.2 the store had one position, under this key
         public const string Position = "Position";
 
         // before version 2.1 the two parts of the position had keys of their own, and were not saved at once
@@ -26,18 +29,29 @@ namespace PgOutput2Json.DynamoDb
 
     internal static class DynamoDbExtensions
     {
-        public static async Task<(ulong, ulong)> GetWalEndAsync(this AmazonDynamoDBClient client, CancellationToken token)
+        public static async Task<(ulong, ulong)> GetWalEndAsync(this AmazonDynamoDBClient client, string subscriptionName, CancellationToken token)
         {
-            var position = await client.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
+            var position = await client.GetConfigAsync(ConfigKey.PositionOf(subscriptionName), token).ConfigureAwait(false);
 
             if (position != null) return ParsePosition(position);
 
-            // saved before version 2.1: the next confirm saves the position under its new key
+            // before version 2.2 the store had one position: the first subscription takes it. The old keys are removed first,
+            // so that no other subscription takes it too; a stop in between only loses it, and the changes are written again
+            var oldPosition = await client.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
             var walEndValue = await client.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
             var messageNoValue = await client.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
 
-            return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
-                    messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+            if (oldPosition == null && walEndValue == null && messageNoValue == null) return (0, 0);
+
+            var walEnd = oldPosition != null
+                ? ParsePosition(oldPosition)
+                : (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
+                   messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+
+            await client.DeleteConfigAsync([ConfigKey.Position, ConfigKey.WalEnd, ConfigKey.MessageNo], token).ConfigureAwait(false);
+            await client.SaveConfigAsync(ConfigKey.PositionOf(subscriptionName), FormatPosition(walEnd.Item1, walEnd.Item2), token).ConfigureAwait(false);
+
+            return walEnd;
         }
 
         internal static string FormatPosition(ulong walEnd, ulong messageNo)
@@ -84,6 +98,18 @@ namespace PgOutput2Json.DynamoDb
             };
 
             await client.PutItemAsync(request, token).ConfigureAwait(false);
+        }
+
+        public static async Task DeleteConfigAsync(this AmazonDynamoDBClient client, IEnumerable<string> keys, CancellationToken token)
+        {
+            foreach (var key in keys)
+            {
+                await client.DeleteItemAsync(new DeleteItemRequest
+                {
+                    TableName = ConfigKey.ConfigTable,
+                    Key = new Dictionary<string, AttributeValue> { ["ConfigKey"] = new AttributeValue { S = key } },
+                }, token).ConfigureAwait(false);
+            }
         }
 
         public static async Task<string?> GetConfigAsync(this AmazonDynamoDBClient client, string key, CancellationToken token)

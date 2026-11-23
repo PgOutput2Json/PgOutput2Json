@@ -10,6 +10,12 @@ namespace PgOutput2Json.MongoDb
         public required MongoClientSettings ClientSettings { get; set; }
         public required string DatabaseName { get; set; }
 
+        /// <summary>
+        /// Required. The name of this subscription (one source database and replication slot) in the store: the position
+        /// of the last saved change is kept under it. Every source that writes into the same store needs its own.
+        /// </summary>
+        public string SubscriptionName { get; set; } = "";
+
         public Func<MongoClient, Task>? PostConnectionSetup { get; set; }
 
         /// <summary>

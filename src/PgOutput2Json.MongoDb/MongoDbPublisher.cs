@@ -98,7 +98,7 @@ namespace PgOutput2Json.MongoDb
                 ? _lastWal
                 : null;
 
-            await db.ConfirmBatchAsync(walEnd, _lastMessageNo, _batch, token).ConfigureAwait(false);
+            await db.ConfirmBatchAsync(_options.SubscriptionName, walEnd, _lastMessageNo, _batch, token).ConfigureAwait(false);
 
             _batch.Clear();
         }
@@ -107,7 +107,7 @@ namespace PgOutput2Json.MongoDb
         {
             var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            return await db.GetWalEndAsync(token).ConfigureAwait(false);
+            return await db.GetWalEndAsync(_options.SubscriptionName, token).ConfigureAwait(false);
         }
 
         public override ValueTask DisposeAsync()

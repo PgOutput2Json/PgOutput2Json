@@ -110,5 +110,26 @@ namespace PgOutput2Json.Tests
             Assert.AreEqual(JsonWriteMode.Default, named.JsonOptions.WriteMode);
             Assert.AreEqual(JsonWriteMode.Compact, compact.JsonOptions.WriteMode);
         }
+
+        /// <summary>
+        /// A store keeps the position of each subscription under its name, and only the user knows which sources write into it.
+        /// </summary>
+        [TestMethod]
+        [DataRow("SQLite")]
+        [DataRow("MongoDB")]
+        [DataRow("DynamoDB")]
+        public void Store_should_need_a_subscription_name(string store)
+        {
+            Action use = store switch
+            {
+                "SQLite" => () => Valid().UseSqlite(),
+                "MongoDB" => () => Valid().UseMongoDb(),
+                _ => () => Valid().UseDynamoDb(options => options.SubscriptionName = " "),
+            };
+
+            var e = Assert.ThrowsExactly<ArgumentException>(use);
+
+            StringAssert.Contains(e.Message, "SubscriptionName");
+        }
     }
 }

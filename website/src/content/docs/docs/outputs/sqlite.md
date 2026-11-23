@@ -68,6 +68,7 @@ public class Worker : BackgroundService
             .WithPgPublications("my_publication")
             .UseSqlite(options =>
             {
+                options.SubscriptionName = "my_subscription"; // one per source database and slot
                 options.ConnectionStringBuilder.DataSource = "my_database.s3db";
             })
             .Build();

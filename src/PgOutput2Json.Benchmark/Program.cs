@@ -320,6 +320,7 @@ try
 
             builder.UseMongoDb(o =>
             {
+                o.SubscriptionName = "test";
                 o.ClientSettings = settings;
                 o.DatabaseName = BenchmarkStream;
             });
@@ -336,6 +337,7 @@ try
 
             builder.UseDynamoDb(o =>
             {
+                o.SubscriptionName = "test";
                 o.ClientConfig = config;
 
                 if (options.DynamoDbParallel != null) o.MaxParallelBatchWrites = options.DynamoDbParallel.Value;
@@ -347,6 +349,7 @@ try
 
             builder.UseSqlite(o =>
             {
+                o.SubscriptionName = "test";
                 o.ConnectionStringBuilder.DataSource = options.SqliteFile;
                 o.UseWal = options.SqliteWal;
             });

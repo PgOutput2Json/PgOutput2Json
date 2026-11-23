@@ -89,10 +89,12 @@ namespace PgOutput2Json.TestWorker
                 //})
                 //.UseSqlite(options =>
                 //{
+                //    options.SubscriptionName = "test_subscription";
                 //    options.ConnectionStringBuilder.DataSource = "test_database.s3db";
                 //})
                 //.UseMongoDb(options =>
                 //{
+                //    options.SubscriptionName = "test_subscription";
                 //    options.DatabaseName = "test_database";
                 //    options.ClientSettings = new MongoClientSettings
                 //    {
@@ -112,6 +114,7 @@ namespace PgOutput2Json.TestWorker
                 //})
                 //.UseDynamoDb(options =>
                 //{
+                //    options.SubscriptionName = "test_subscription";
                 //    options.ClientConfig = new AmazonDynamoDBConfig
                 //    {
                 //        ServiceURL = "http://localhost:8000",                              // for local DynamoDB, change/remove for AWS

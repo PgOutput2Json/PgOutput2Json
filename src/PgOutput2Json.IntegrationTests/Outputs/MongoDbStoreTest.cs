@@ -47,6 +47,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             await StoreScenario.RunAsync("os_mongo",
                 builder => builder.UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "os_mongo_db";
                 }),
@@ -100,6 +101,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithInitialDataCopy(true)
                 .UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "os_mongo_arr_db";
                 });
@@ -170,6 +172,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithInitialDataCopy(true)
                 .UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "os_mongo_ts_db";
                 });
@@ -241,6 +244,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithInitialDataCopy(true)
                 .UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "os_mongo_tz_db";
                     options.TimestampTimeZone = System.TimeZoneInfo.FindSystemTimeZoneById("Europe/Zagreb");
@@ -317,6 +321,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithInitialDataCopy(true)
                 .UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "os_mongo_akey_db";
                 });
@@ -373,7 +378,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
-        public async Task Position_saved_in_two_values_should_be_read_and_saved_again_as_one()
+        public async Task Position_of_an_earlier_version_should_become_the_position_of_the_subscription()
         {
             var settings = MongoClientSettings.FromConnectionString(await Containers.GetMongoConnectionStringAsync());
 
@@ -384,7 +389,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             // a store of an earlier version: the two parts of the position under keys of their own
             await config.InsertManyAsync([new BsonDocument { ["_id"] = "WalEnd", ["Value"] = "200" }, new BsonDocument { ["_id"] = "MessageNo", ["Value"] = "5" }]);
 
-            var options = new global::PgOutput2Json.MongoDb.MongoDbPublisherOptions { ClientSettings = settings, DatabaseName = "os_mongo_pos_db" };
+            var options = new global::PgOutput2Json.MongoDb.MongoDbPublisherOptions { ClientSettings = settings, DatabaseName = "os_mongo_pos_db", SubscriptionName = "orders" };
 
             await using (var publisher = new global::PgOutput2Json.MongoDb.MongoDbPublisher(options, null))
             {
@@ -394,13 +399,22 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 await publisher.ConfirmAsync(default);
             }
 
-            var position = await config.Find(Builders<BsonDocument>.Filter.Eq("_id", "Position")).FirstAsync();
+            var position = await config.Find(Builders<BsonDocument>.Filter.Eq("_id", "Position:orders")).FirstAsync();
 
             Assert.AreEqual("300/1", position["Value"].AsString);
+            Assert.AreEqual(0, await config.CountDocumentsAsync(Builders<BsonDocument>.Filter.In("_id", new[] { "Position", "WalEnd", "MessageNo" })));
 
             await using (var publisher = new global::PgOutput2Json.MongoDb.MongoDbPublisher(options, null))
             {
                 Assert.AreEqual((300UL, 1UL), await publisher.GetLastPublishedWalSeqAsync(default));
+            }
+
+            // another subscription into the same store starts from nothing
+            options.SubscriptionName = "customers";
+
+            await using (var publisher = new global::PgOutput2Json.MongoDb.MongoDbPublisher(options, null))
+            {
+                Assert.AreEqual((0UL, 0UL), await publisher.GetLastPublishedWalSeqAsync(default));
             }
         }
 
@@ -433,6 +447,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithPgReplicationSlot("os_mongo_json_slot")
                 .UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "os_mongo_json_db";
                 });

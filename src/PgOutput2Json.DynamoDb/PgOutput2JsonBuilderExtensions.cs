@@ -23,6 +23,11 @@ namespace PgOutput2Json
 
             configureAction?.Invoke(options);
 
+            if (string.IsNullOrWhiteSpace(options.SubscriptionName))
+            {
+                throw new ArgumentException("SubscriptionName must be provided: the store keeps the position of each subscription under its name", nameof(options.SubscriptionName));
+            }
+
             builder.WithMessagePublisherFactory(new DynamoDbPublisherFactory(options));
 
             return builder;
