@@ -8,3 +8,7 @@ PgOutput2Json.RowTable.RowTable(string! schemaName, string! relationName, System
 PgOutput2Json.RowTable.SchemaName.get -> string!
 *REMOVED*PgOutput2Json.JsonMessage.TableName.get -> System.Text.StringBuilder!
 PgOutput2Json.JsonMessage.TableName.get -> string!
+PgOutput2Json.IMessagePublisherFactory.Validate(PgOutput2Json.ReplicationListenerOptions! listenerOptions) -> void
+*REMOVED*PgOutput2Json.PgOutput2JsonBuilder.WithDeduplication(bool useDeduplication) -> PgOutput2Json.PgOutput2JsonBuilder!
+*REMOVED*PgOutput2Json.ReplicationListenerOptions.UseDeduplication.get -> bool
+*REMOVED*PgOutput2Json.ReplicationListenerOptions.UseDeduplication.set -> void

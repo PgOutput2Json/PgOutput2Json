@@ -74,6 +74,219 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             }
         }
 
+        /// <summary>
+        /// The ids of the rows in the stream, in its order.
+        /// </summary>
+        private static async Task<List<int>> ReadIdsAsync(StreamSystem system, string stream, int count)
+        {
+            var ids = new ConcurrentQueue<int>();
+
+            var consumer = await Consumer.Create(new ConsumerConfig(system, stream)
+            {
+                OffsetSpec = new OffsetTypeFirst(),
+                MessageHandler = (_, _, _, message) =>
+                {
+                    using var json = System.Text.Json.JsonDocument.Parse(message.Data.Contents);
+
+                    ids.Enqueue(json.RootElement.GetProperty("r").GetProperty("id").GetInt32());
+
+                    return Task.CompletedTask;
+                },
+            });
+
+            try
+            {
+                await Wait.UntilAsync(() => ids.Count >= count, $"{count} messages in the stream", 60);
+            }
+            finally
+            {
+                await consumer.Close();
+            }
+
+            return ids.ToList();
+        }
+
+        /// <summary>
+        /// A listener writes rows 1 to 501 to an empty stream, then one on a slot that stayed at the start gets them
+        /// again, and row 502. With deduplication it skips what the stream has (its last message), else publishes it again.
+        /// </summary>
+        [TestMethod]
+        [DataRow("om_dedup", true, 502)]
+        [DataRow("om_dedup_off", false, 1003)]
+        public async Task Deduplication_should_skip_what_the_stream_has_after_a_restart(string name, bool deduplication, int expectedCount)
+        {
+            await Containers.GetRabbitMqAsync();
+
+            var system = await StreamSystem.Create(CreateConfig());
+
+            await system.CreateStream(new StreamSpec(name));
+
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int PRIMARY KEY, v text);
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+            await Db.CreateSlotAsync($"{name}_replay_slot");
+
+            PgOutput2JsonBuilder CreateBuilder(string slotName) => PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications($"{name}_pub")
+                .WithPgReplicationSlot(slotName)
+                .UseRabbitMqStreams(options =>
+                {
+                    options.StreamName = name;
+                    options.StreamSystemConfig = CreateConfig();
+                    options.UseDeduplication = deduplication;
+                });
+
+            try
+            {
+                await using (new RunningListener(CreateBuilder($"{name}_slot")))
+                {
+                    await Db.ExecuteAsync($"INSERT INTO {name} SELECT i, 'a' FROM generate_series(1, 500) i");
+                    await Db.ExecuteAsync($"INSERT INTO {name} VALUES (501, 'b')");
+
+                    await ReadIdsAsync(system, name, 501);
+                }
+
+                await Db.ExecuteAsync($"INSERT INTO {name} VALUES (502, 'c')");
+
+                await using (new RunningListener(CreateBuilder($"{name}_replay_slot")))
+                {
+                    // 502 is last in the WAL, after any replayed row
+                    await ReadIdsAsync(system, name, expectedCount);
+                }
+
+                var expected = deduplication
+                    ? Enumerable.Range(1, 502)
+                    : Enumerable.Range(1, 501).Concat(Enumerable.Range(1, 502));
+
+                CollectionAssert.AreEqual(expected.ToList(), await ReadIdsAsync(system, name, expectedCount));
+            }
+            finally
+            {
+                await system.Close();
+            }
+        }
+
+        /// <summary>
+        /// Retention removes whole segments of the stream, never the one it writes to: the last message stays,
+        /// so a restart finds it although the first messages are gone.
+        /// </summary>
+        [TestMethod]
+        public async Task Deduplication_should_find_the_last_message_after_retention()
+        {
+            const string name = "om_dedup_ret";
+
+            await Containers.GetRabbitMqAsync();
+
+            var system = await StreamSystem.Create(CreateConfig());
+
+            // segments of about 20 messages, and only two of them kept
+            await system.CreateStream(new StreamSpec(name) { MaxSegmentSizeBytes = 5_000, MaxLengthBytes = 10_000 });
+
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int PRIMARY KEY, v text);
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+            await Db.CreateSlotAsync($"{name}_replay_slot");
+
+            PgOutput2JsonBuilder CreateBuilder(string slotName) => PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications($"{name}_pub")
+                .WithPgReplicationSlot(slotName)
+                .UseRabbitMqStreams(options =>
+                {
+                    options.StreamName = name;
+                    options.StreamSystemConfig = CreateConfig();
+                    options.LastPositionTimeout = System.TimeSpan.FromSeconds(10);
+                    options.UseDeduplication = true;
+                });
+
+            // what is in the stream up to the given id: retention can remove the first ones while it is read
+            async Task<List<int>> IdsUntilAsync(int lastId)
+            {
+                var ids = new ConcurrentQueue<int>();
+
+                var consumer = await Consumer.Create(new ConsumerConfig(system, name)
+                {
+                    OffsetSpec = new OffsetTypeFirst(),
+                    MessageHandler = (_, _, _, message) =>
+                    {
+                        using var json = System.Text.Json.JsonDocument.Parse(message.Data.Contents);
+
+                        ids.Enqueue(json.RootElement.GetProperty("r").GetProperty("id").GetInt32());
+
+                        return Task.CompletedTask;
+                    },
+                });
+
+                try
+                {
+                    await Wait.UntilAsync(() => ids.Contains(lastId), $"{lastId} in the stream", 60);
+                }
+                finally
+                {
+                    await consumer.Close();
+                }
+
+                return ids.ToList();
+            }
+
+            try
+            {
+                await using (new RunningListener(CreateBuilder($"{name}_slot")))
+                {
+                    // one transaction each, so that the messages go in many chunks
+                    for (var i = 1; i <= 500; i++) await Db.ExecuteAsync($"INSERT INTO {name} VALUES ({i}, 'a')");
+
+                    await IdsUntilAsync(500);
+                }
+
+                var stats = await system.StreamStats(name);
+
+                Assert.IsTrue(stats.FirstOffset() > 0, "retention removed nothing");
+
+                await Db.ExecuteAsync($"INSERT INTO {name} VALUES (501, 'b')");
+
+                await using (new RunningListener(CreateBuilder($"{name}_replay_slot")))
+                {
+                    await IdsUntilAsync(501);
+                }
+
+                // what retention left, then 501: nothing replayed
+                var ids = await IdsUntilAsync(501);
+
+                CollectionAssert.AreEqual(Enumerable.Range(ids[0], 502 - ids[0]).ToList(), ids, string.Join(" ", ids));
+            }
+            finally
+            {
+                await system.Close();
+            }
+        }
+
+        [TestMethod]
+        [DataRow(true, false, "super stream")]
+        [DataRow(false, true, "initial data copy")]
+        public void Deduplication_should_not_build_with_a_super_stream_or_the_initial_copy(bool superStream, bool copy, string expected)
+        {
+            var builder = PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString("Host=localhost")
+                .WithPgPublications("p")
+                .WithPgReplicationSlot("s")
+                .WithInitialDataCopy(copy)
+                .UseRabbitMqStreams(options =>
+                {
+                    options.IsSuperStream = superStream;
+                    options.UseDeduplication = true;
+                });
+
+            var e = Assert.ThrowsExactly<System.InvalidOperationException>(() => builder.Build());
+
+            StringAssert.Contains(e.Message, expected);
+        }
+
         [TestMethod]
         public async Task Super_stream_should_keep_a_row_in_one_partition_in_order()
         {

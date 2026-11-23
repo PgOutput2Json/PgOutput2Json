@@ -128,12 +128,6 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithDeduplication(bool useDeduplication)
-        {
-            _listenerOptions.UseDeduplication = useDeduplication;
-            return this;
-        }
-
         public PgOutput2JsonBuilder WithIdleWalMessageInterval(TimeSpan interval)
         {
             _listenerOptions.IdleWalMessageInterval = interval;
@@ -206,6 +200,8 @@ namespace PgOutput2Json
             {
                 _listenerOptions.BatchWaitTime = TimeSpan.FromMilliseconds(10);
             }
+
+            _messagePublisherFactory.Validate(_listenerOptions);
 
             var listener = new ReplicationListener(_messagePublisherFactory, _listenerOptions, _jsonOptions, _loggerFactory);
 

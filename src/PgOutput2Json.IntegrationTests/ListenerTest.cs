@@ -205,16 +205,15 @@ namespace PgOutput2Json.IntegrationTests
         }
 
         [TestMethod]
-        public async Task Publisher_that_saves_its_position_should_not_get_replayed_changes_unless_deduplication_is_off()
+        public async Task Publisher_that_saves_its_position_should_not_get_replayed_changes()
         {
             await Db.ExecuteAsync(@"
                 CREATE TABLE ls_dedup (id int PRIMARY KEY, v text);
                 CREATE PUBLICATION ls_dedup_pub FOR TABLE ls_dedup;");
 
-            // the other two slots stay at the start, so a listener on them gets every change again
+            // the other slot stays at the start, so a listener on it gets every change again
             await Db.CreateSlotAsync("ls_dedup_slot");
             await Db.CreateSlotAsync("ls_dedup_replay_slot");
-            await Db.CreateSlotAsync("ls_dedup_off_slot");
 
             // this publisher returns its last confirmed position from GetLastPublishedWalSeqAsync, as the stores do
             var publisher = new CollectingPublisherFactory();
@@ -238,13 +237,6 @@ namespace PgOutput2Json.IntegrationTests
 
             Assert.AreEqual("[1] [2] [3] [4]", Keys(publisher));
             Assert.IsTrue(logs.Contains(LogLevel.Warning, "skipped 3 already published messages"));
-
-            await using (new RunningListener(CreateBuilder("ls_dedup", publisher).WithPgReplicationSlot("ls_dedup_off_slot").WithDeduplication(false)))
-            {
-                await Wait.UntilAsync(() => publisher.Messages.Count >= 8, "everything again");
-            }
-
-            Assert.AreEqual("[1] [2] [3] [4] [1] [2] [3] [4]", Keys(publisher));
         }
 
         [TestMethod]

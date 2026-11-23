@@ -16,7 +16,6 @@ namespace PgOutput2Json.DynamoDb
         private readonly DynamoDbPublisherOptions _options;
         private readonly ILogger<DynamoDbPublisher>? _logger;
 
-        private readonly bool _useDeduplication;
 
         private AmazonDynamoDBClient? _client;
 
@@ -55,12 +54,11 @@ namespace PgOutput2Json.DynamoDb
         private ulong? _lastWal;
         private ulong _lastMessageNo;
 
-        public DynamoDbPublisher(DynamoDbPublisherOptions options, ILogger<DynamoDbPublisher>? logger, bool useDeduplication = true)
+        public DynamoDbPublisher(DynamoDbPublisherOptions options, ILogger<DynamoDbPublisher>? logger)
         {
             _options = options;
             Names = new TargetNames(options.GetTableName);
             _logger = logger;
-            _useDeduplication = useDeduplication;
         }
 
         public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
@@ -98,7 +96,7 @@ namespace PgOutput2Json.DynamoDb
             // it may still need persisting here even with an empty _batch, e.g. a transaction with only
             // logical decoding messages.
             // Data exporter messages have no LSN info (0,0) - they must not overwrite the replication position
-            if (_useDeduplication && _lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0))
+            if (_lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0))
             {
                 await client.SaveConfigAsync(ConfigKey.Position, DynamoDbExtensions.FormatPosition(_lastWal.Value, _lastMessageNo), token)
                     .ConfigureAwait(false);
@@ -107,9 +105,6 @@ namespace PgOutput2Json.DynamoDb
 
         public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            // without deduplication there is no need to read the last published position
-            if (!_useDeduplication) return (0UL, 0UL);
-
             var client = await EnsureClientAsync(token).ConfigureAwait(false);
 
             return await client.GetWalEndAsync(token).ConfigureAwait(false);
