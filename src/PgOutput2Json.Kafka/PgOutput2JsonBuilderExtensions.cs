@@ -12,6 +12,9 @@ namespace PgOutput2Json
             // more than ten times faster than the 100 of the library. WithBatchSize after UseKafka changes it
             builder.WithBatchSize(10_000);
 
+            // it does not know its last position: nothing to skip. WithDeduplication after UseKafka changes it
+            builder.WithDeduplication(false);
+
             var options = new KafkaPublisherOptions();
 
             configureAction?.Invoke(options);

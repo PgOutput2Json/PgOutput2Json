@@ -13,6 +13,9 @@ namespace PgOutput2Json
                 throw new ArgumentException("WebhookUrl must be provided", nameof(webhookUrl));
             }
 
+            // it does not know its last position: nothing to skip. WithDeduplication after UseWebhook changes it
+            builder.WithDeduplication(false);
+
             var options = new WebhookPublisherOptions() { WebhookUrl = webhookUrl };
 
             configureAction?.Invoke(options);

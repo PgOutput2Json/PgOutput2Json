@@ -13,6 +13,10 @@ namespace PgOutput2Json
             // 10,000 messages are about 2.5 times faster than the 100 of the library. WithBatchSize after UseRabbitMqStreams changes it
             builder.WithBatchSize(10_000);
 
+            // off unless asked for: WithDeduplication(true) after UseRabbitMqStreams reads the last message of the
+            // stream when connecting and skips what it already has (a single stream, without the initial copy)
+            builder.WithDeduplication(false);
+
             var options = new RabbitMqStreamsPublisherOptions();
 
             configureAction?.Invoke(options);

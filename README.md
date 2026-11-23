@@ -121,7 +121,7 @@ Every message carries a deduplication key: the transaction final LSN (`"w"`) plu
 
 The rows of the initial data copy have change type `"C"` and no position: `"w"` and `"n"` are 0. Upsert them by key and leave them out of the watermark. A copy that failed and started again publishes its rows again. While a table is being copied and synced, its changes are published behind the changes of the other tables, which is one more reason to keep the watermark per table.
 
-The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off; it has no effect on the other outputs. The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
+The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off. The message outputs turn it off, since they keep no position, except that a single RabbitMQ stream can [turn it on](https://pg2json.com/docs/outputs/rabbitmq-streams/#deduplication). The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
 
 ## 🧪 Testing
 
@@ -402,6 +402,12 @@ No need to manage exchanges or queues — everything will flow directly through 
 The producer has up to one batch of messages in flight, and the listener waits for their confirmations at the end of the batch. `UseRabbitMqStreams` therefore sets the batch size to 10,000 changes (the default of the library is 100). In our [benchmark](https://github.com/PgOutput2Json/PgOutput2Json/tree/main/src/PgOutput2Json.Benchmark) the initial copy ran at about 170,000 rows per second and the stream at about 100,000 with batches of 10,000, and at about 68,000 and 42,000 with batches of 100 (measured on a Hetzner CX33, a cost-optimized cloud server with 4 shared vCPUs and 8 GB RAM, with PostgreSQL and RabbitMQ in Docker on the same machine). To use another size, call `WithBatchSize` after `UseRabbitMqStreams`. A batch that is not full is still confirmed after the batch wait time (100 ms by default). After an error, the unconfirmed messages of the batch are sent again.
 
 The messages go to the client in lists of `options.MessageBufferSize` (100 by default), each of which is one frame. A super stream gets them one by one, since it routes each message to its partition.
+
+### 4.4 Deduplication
+
+By default the changes that PostgreSQL replays after a reconnect are published again, and consumers deduplicate on `w`/`n`. On a single stream that only this listener writes to, `.WithDeduplication(true)` after `UseRabbitMqStreams` keeps them out of the stream: when it connects, the publisher reads the position (`w`, `n`) of the last message in the stream, and the listener skips the changes up to it. `options.LastPositionTimeout` (30 seconds) is how long it waits for that message.
+
+It cannot be used with a super stream (one last message per partition) or with the initial data copy (its workers write to the same stream, with positions of their own slots): `Build()` throws. It relies on the stream never keeping a message after one before it failed, as with one producer on a single stream.
 
 ## 5. Using Kafka
 

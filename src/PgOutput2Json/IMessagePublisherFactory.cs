@@ -17,5 +17,12 @@ namespace PgOutput2Json
         /// a table then uses one worker, whatever <see cref="ReplicationListenerOptions.CopyWorkersPerTable"/> says.
         /// </summary>
         public bool SupportsParallelCopy => true;
+
+        /// <summary>
+        /// Called when the listener is built, with the options as configured: throws if the output cannot work with them.
+        /// </summary>
+        public void Validate(ReplicationListenerOptions listenerOptions)
+        {
+        }
     }
 }

@@ -23,6 +23,12 @@ namespace PgOutput2Json.RabbitMqStreams
         /// </summary>
         public int MessageBufferSize { get; set; } = 100;
 
+        /// <summary>
+        /// With <see cref="PgOutput2JsonBuilder.WithDeduplication"/>(true): how long to wait for the last message of the
+        /// stream when connecting. Default is 30 seconds.
+        /// </summary>
+        public TimeSpan LastPositionTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
         public StreamSystemConfig StreamSystemConfig { get; set; } = new StreamSystemConfig
         {
             UserName = "guest",

@@ -17,9 +17,10 @@ namespace PgOutput2Json
         public bool UseTemporarySlot { get; internal set; } = true;
 
         /// <summary>
-        /// Used only by the publishers that save their position with the data (SQLite, MongoDB, DynamoDB):
-        /// changes replayed by PostgreSQL after a reconnect are skipped. All other publishers deliver
-        /// at-least-once, and consumers deduplicate on the "w" and "n" fields. Default is true.
+        /// Used only by the publishers that know their last position (SQLite, MongoDB, DynamoDB, a single RabbitMQ stream):
+        /// changes replayed by PostgreSQL after a reconnect are skipped. Default is true; the outputs that do not
+        /// use it turn it off (WithDeduplication after Use... changes it). The others deliver at-least-once,
+        /// and consumers deduplicate on the "w" and "n" fields.
         /// </summary>
         public bool UseDeduplication { get; set; } = true;
 

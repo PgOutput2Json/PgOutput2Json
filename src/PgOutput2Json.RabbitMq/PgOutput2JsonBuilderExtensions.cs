@@ -12,6 +12,9 @@ namespace PgOutput2Json
             // than the 100 of the library, more are not. WithBatchSize after UseRabbitMq changes it
             builder.WithBatchSize(1000);
 
+            // it does not know its last position: nothing to skip. WithDeduplication after UseRabbitMq changes it
+            builder.WithDeduplication(false);
+
             var options = new RabbitMqPublisherOptions();
 
             configureAction?.Invoke(options);

@@ -207,6 +207,8 @@ namespace PgOutput2Json
                 _listenerOptions.BatchWaitTime = TimeSpan.FromMilliseconds(10);
             }
 
+            _messagePublisherFactory.Validate(_listenerOptions);
+
             var listener = new ReplicationListener(_messagePublisherFactory, _listenerOptions, _jsonOptions, _loggerFactory);
 
             var pgOutput2Json = new PgOutput2Json(listener, _loggerFactory);

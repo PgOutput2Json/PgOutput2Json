@@ -8,6 +8,9 @@ namespace PgOutput2Json
         public static PgOutput2JsonBuilder UseEventHubs(this PgOutput2JsonBuilder builder, 
             Action<EventHubsPublisherOptions>? configureAction = null)
         {
+            // it does not know its last position: nothing to skip. WithDeduplication after UseEventHubs changes it
+            builder.WithDeduplication(false);
+
             var options = new EventHubsPublisherOptions();
 
             configureAction?.Invoke(options);

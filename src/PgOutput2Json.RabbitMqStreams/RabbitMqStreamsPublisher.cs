@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -20,6 +21,114 @@ namespace PgOutput2Json.RabbitMqStreams
             _loggerStreamSystem = loggerFactory?.CreateLogger<StreamSystem>();
             _loggerProducer = loggerFactory?.CreateLogger<Producer>();
             _logger = loggerFactory?.CreateLogger<RabbitMqStreamsPublisher>();
+        }
+
+        /// <summary>
+        /// With <see cref="PgOutput2JsonBuilder.WithDeduplication"/>: the position is read from the last message of the stream.
+        /// </summary>
+        internal bool ReadsLastPosition { get; init; }
+
+        /// <summary>
+        /// The position ("w" and "n") of the last message in the stream, which only this listener writes (a single stream,
+        /// without the initial copy): the listener skips the replayed changes up to it. (0, 0) for an empty stream.
+        /// </summary>
+        public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
+        {
+            if (!ReadsLastPosition) return (0, 0);
+
+            var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
+
+            ulong lastChunk;
+
+            try
+            {
+                // the first offset of the last chunk that the stream has committed; it has the last message
+                lastChunk = (await streamSystem.StreamStats(_options.StreamName).ConfigureAwait(false)).CommittedChunkId();
+            }
+            catch (OffsetNotFoundException)
+            {
+                return (0, 0);
+            }
+
+            var last = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var consumer = await Consumer.Create(new ConsumerConfig(streamSystem, _options.StreamName)
+            {
+                OffsetSpec = new OffsetTypeOffset(lastChunk),
+                ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-position",
+                MessageHandler = (_, _, context, message) =>
+                {
+                    if (context.ChunkId == lastChunk && context.Offset == context.ChunkId + context.ChunkMessagesCount - 1)
+                    {
+                        last.TrySetResult(message);
+                    }
+
+                    return Task.CompletedTask;
+                },
+            }).ConfigureAwait(false);
+
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+                timeout.CancelAfter(_options.LastPositionTimeout);
+
+                Message message;
+
+                try
+                {
+                    message = await last.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"The last message of the stream {_options.StreamName} did not arrive in {_options.LastPositionTimeout}");
+                }
+
+                var position = ReadPosition(message.Data.Contents)
+                    ?? throw new InvalidOperationException($"The last message of the stream {_options.StreamName} has no \"w\" and \"n\": with WithDeduplication(true) only the listener may write to it");
+
+                _logger?.LogInformation("Last position in {StreamName}: {Wal}/{MessageNo}", _options.StreamName, position.Item1, position.Item2);
+
+                return position;
+            }
+            finally
+            {
+                await consumer.Close().ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>The "w" and "n" of a message of the listener, null if it has not both.</summary>
+        internal static (ulong, ulong)? ReadPosition(System.Buffers.ReadOnlySequence<byte> json)
+        {
+            try
+            {
+                var reader = new Utf8JsonReader(json);
+
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
+
+                ulong? w = null, n = null;
+
+                while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    var isW = reader.ValueTextEquals("w"u8);
+                    var isN = !isW && reader.ValueTextEquals("n"u8);
+
+                    if (!reader.Read()) return null;
+
+                    if (isW && reader.TokenType == JsonTokenType.Number) w = reader.GetUInt64();
+                    else if (isN && reader.TokenType == JsonTokenType.Number) n = reader.GetUInt64();
+                    else reader.Skip();
+
+                    // both come first, after "c"
+                    if (w != null && n != null) return (w.Value, n.Value);
+                }
+
+                return null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
 
         public async override Task PublishAsync(JsonMessage jsonMsg, CancellationToken token)
