@@ -121,7 +121,7 @@ Every message carries a deduplication key: the transaction final LSN (`"w"`) plu
 
 The rows of the initial data copy have change type `"C"` and no position: `"w"` and `"n"` are 0. Upsert them by key and leave them out of the watermark. A copy that failed and started again publishes its rows again. While a table is being copied and synced, its changes are published behind the changes of the other tables, which is one more reason to keep the watermark per table.
 
-The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off. The message outputs turn it off, since they keep no position, except that a single RabbitMQ stream can [turn it on](https://pg2json.com/docs/outputs/rabbitmq-streams/#deduplication). The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
+The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. The message outputs publish them again, except a single RabbitMQ stream with [`UseDeduplication`](https://pg2json.com/docs/outputs/rabbitmq-streams/#deduplication). The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
 
 ## 🧪 Testing
 
@@ -257,9 +257,9 @@ The messages go to the client in lists of `options.MessageBufferSize` (100 by de
 
 ### Deduplication
 
-By default the changes that PostgreSQL replays after a reconnect are published again, and consumers deduplicate on `w`/`n`. On a single stream that only this listener writes to, `.WithDeduplication(true)` after `UseRabbitMqStreams` keeps them out of the stream: when it connects, the publisher reads the position (`w`, `n`) of the last message in the stream, and the listener skips the changes up to it. `options.LastPositionTimeout` (30 seconds) is how long it waits for that message.
+By default the changes that PostgreSQL replays after a reconnect are published again, and consumers deduplicate on `w`/`n`. On a single stream that only this listener writes to, `options.UseDeduplication = true` keeps them out of the stream: when it connects, the publisher reads the position (`w`, `n`) of the last message in the stream, and the listener skips the changes up to it.
 
-It cannot be used with a super stream (one last message per partition) or with the initial data copy (its workers write to the same stream, with positions of their own slots): `Build()` throws. It relies on the stream never keeping a message after one before it failed, as with one producer on a single stream.
+It cannot be used with a super stream or with the initial data copy: `Build()` throws.
 
 ## Working with Permanent Replication Slots
 

@@ -121,7 +121,7 @@ Every message carries a deduplication key: the transaction final LSN (`"w"`) plu
 
 The rows of the initial data copy have change type `"C"` and no position: `"w"` and `"n"` are 0. Upsert them by key and leave them out of the watermark. A copy that failed and started again publishes its rows again. While a table is being copied and synced, its changes are published behind the changes of the other tables, which is one more reason to keep the watermark per table.
 
-The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. `.WithDeduplication(false)` turns that off. The message outputs turn it off, since they keep no position, except that a single RabbitMQ stream can [turn it on](https://pg2json.com/docs/outputs/rabbitmq-streams/#deduplication). The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
+The outputs that store data instead of forwarding messages (SQLite, MongoDB, DynamoDB) save their position with the data, and the changes replayed after a reconnect are skipped for them. The message outputs publish them again, except a single RabbitMQ stream with [`UseDeduplication`](https://pg2json.com/docs/outputs/rabbitmq-streams/#deduplication). The ClickHouse output saves no position: every row it writes carries the position as its version, so a replayed change changes nothing.
 
 ## 🧪 Testing
 

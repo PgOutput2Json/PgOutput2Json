@@ -136,8 +136,8 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 {
                     options.StreamName = name;
                     options.StreamSystemConfig = CreateConfig();
-                })
-                .WithDeduplication(deduplication);
+                    options.UseDeduplication = deduplication;
+                });
 
             try
             {
@@ -201,8 +201,8 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     options.StreamName = name;
                     options.StreamSystemConfig = CreateConfig();
                     options.LastPositionTimeout = System.TimeSpan.FromSeconds(10);
-                })
-                .WithDeduplication(true);
+                    options.UseDeduplication = true;
+                });
 
             // what is in the stream up to the given id: retention can remove the first ones while it is read
             async Task<List<int>> IdsUntilAsync(int lastId)
@@ -276,8 +276,11 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 .WithPgPublications("p")
                 .WithPgReplicationSlot("s")
                 .WithInitialDataCopy(copy)
-                .UseRabbitMqStreams(options => options.IsSuperStream = superStream)
-                .WithDeduplication(true);
+                .UseRabbitMqStreams(options =>
+                {
+                    options.IsSuperStream = superStream;
+                    options.UseDeduplication = true;
+                });
 
             var e = Assert.ThrowsExactly<System.InvalidOperationException>(() => builder.Build());
 

@@ -128,12 +128,6 @@ namespace PgOutput2Json
             return this;
         }
 
-        public PgOutput2JsonBuilder WithDeduplication(bool useDeduplication)
-        {
-            _listenerOptions.UseDeduplication = useDeduplication;
-            return this;
-        }
-
         public PgOutput2JsonBuilder WithIdleWalMessageInterval(TimeSpan interval)
         {
             _listenerOptions.IdleWalMessageInterval = interval;

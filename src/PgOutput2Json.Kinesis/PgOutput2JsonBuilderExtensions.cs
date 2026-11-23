@@ -8,9 +8,6 @@ namespace PgOutput2Json
         public static PgOutput2JsonBuilder UseKinesis(this PgOutput2JsonBuilder builder, 
             Action<KinesisPublisherOptions>? configureAction = null)
         {
-            // it does not know its last position: nothing to skip. WithDeduplication after UseKinesis changes it
-            builder.WithDeduplication(false);
-
             var options = new KinesisPublisherOptions();
 
             configureAction?.Invoke(options);

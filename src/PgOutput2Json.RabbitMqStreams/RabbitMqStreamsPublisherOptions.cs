@@ -24,8 +24,15 @@ namespace PgOutput2Json.RabbitMqStreams
         public int MessageBufferSize { get; set; } = 100;
 
         /// <summary>
-        /// With <see cref="PgOutput2JsonBuilder.WithDeduplication"/>(true): how long to wait for the last message of the
-        /// stream when connecting. Default is 30 seconds.
+        /// Skips the changes that PostgreSQL replays after a reconnect: the position ("w" and "n") of the last message in
+        /// the stream is read when connecting. Only for a single stream that only the listener writes to, without the
+        /// initial data copy (Build throws otherwise). Default is false.
+        /// </summary>
+        public bool UseDeduplication { get; set; }
+
+        /// <summary>
+        /// With <see cref="UseDeduplication"/>: how long to wait for the last message of the stream when connecting.
+        /// Default is 30 seconds.
         /// </summary>
         public TimeSpan LastPositionTimeout { get; set; } = TimeSpan.FromSeconds(30);
 

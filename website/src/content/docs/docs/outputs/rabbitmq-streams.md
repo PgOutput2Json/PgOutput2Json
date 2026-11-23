@@ -78,6 +78,6 @@ The messages go to the client in lists of `options.MessageBufferSize` (100 by de
 
 ## Deduplication
 
-By default the changes that PostgreSQL replays after a reconnect are published again, and consumers deduplicate on `w`/`n`. On a single stream that only this listener writes to, `.WithDeduplication(true)` after `UseRabbitMqStreams` keeps them out of the stream: when it connects, the publisher reads the position (`w`, `n`) of the last message in the stream, and the listener skips the changes up to it. `options.LastPositionTimeout` (30 seconds) is how long it waits for that message.
+By default the changes that PostgreSQL replays after a reconnect are published again, and consumers deduplicate on `w`/`n`. On a single stream that only this listener writes to, `options.UseDeduplication = true` keeps them out of the stream: when it connects, the publisher reads the position (`w`, `n`) of the last message in the stream, and the listener skips the changes up to it.
 
-It cannot be used with a super stream (one last message per partition) or with the initial data copy (its workers write to the same stream, with positions of their own slots): `Build()` throws. It relies on the stream never keeping a message after one before it failed, as with one producer on a single stream.
+It cannot be used with a super stream or with the initial data copy: `Build()` throws.

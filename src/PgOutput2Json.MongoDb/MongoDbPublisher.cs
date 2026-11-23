@@ -14,7 +14,6 @@ namespace PgOutput2Json.MongoDb
         private readonly MongoDbPublisherOptions _options;
         private readonly ILogger<MongoDbPublisher>? _logger;
 
-        private readonly bool _useDeduplication;
 
         private MongoClient? _client;
         private IMongoDatabase? _db;
@@ -59,12 +58,11 @@ namespace PgOutput2Json.MongoDb
         private ulong? _lastWal;
         private ulong _lastMessageNo;
 
-        public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger, bool useDeduplication = true)
+        public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger)
         {
             _options = options;
             Names = new TargetNames(options.GetTableName);
             _logger = logger;
-            _useDeduplication = useDeduplication;
         }
 
         public override async Task PublishAsync(JsonMessage msg, CancellationToken token)
@@ -95,9 +93,8 @@ namespace PgOutput2Json.MongoDb
         {
             var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            // data exporter messages have no LSN info (0,0) - they must not overwrite the replication position;
-            // without deduplication the watermark is not persisted at all
-            var walEnd = _useDeduplication && _lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0)
+            // data exporter messages have no LSN info (0,0) - they must not overwrite the replication position
+            var walEnd = _lastWal.HasValue && (_lastWal.Value != 0 || _lastMessageNo != 0)
                 ? _lastWal
                 : null;
 
@@ -108,9 +105,6 @@ namespace PgOutput2Json.MongoDb
 
         public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            // without deduplication there is no need to read the last published position
-            if (!_useDeduplication) return (0UL, 0UL);
-
             var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
             return await db.GetWalEndAsync(token).ConfigureAwait(false);

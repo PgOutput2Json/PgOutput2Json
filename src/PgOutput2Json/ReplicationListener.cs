@@ -262,8 +262,8 @@ namespace PgOutput2Json
                                 replicationMessage.Message = message;
                                 replicationMessage.MessageNo++;
 
+                                // up to the position the publisher returned, (0, 0) for one that keeps none
                                 if (startingUp
-                                    && _options.UseDeduplication
                                     && (replicationMessage.TransactionFinalLsn, replicationMessage.MessageNo).CompareTo(lastPublished) <= 0)
                                 {
                                     // already processed

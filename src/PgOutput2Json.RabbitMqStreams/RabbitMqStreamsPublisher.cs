@@ -24,17 +24,12 @@ namespace PgOutput2Json.RabbitMqStreams
         }
 
         /// <summary>
-        /// With <see cref="PgOutput2JsonBuilder.WithDeduplication"/>: the position is read from the last message of the stream.
-        /// </summary>
-        internal bool ReadsLastPosition { get; init; }
-
-        /// <summary>
         /// The position ("w" and "n") of the last message in the stream, which only this listener writes (a single stream,
         /// without the initial copy): the listener skips the replayed changes up to it. (0, 0) for an empty stream.
         /// </summary>
         public override async Task<(ulong, ulong)> GetLastPublishedWalSeqAsync(CancellationToken token)
         {
-            if (!ReadsLastPosition) return (0, 0);
+            if (!_options.UseDeduplication) return (0, 0);
 
             var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
@@ -85,7 +80,7 @@ namespace PgOutput2Json.RabbitMqStreams
                 }
 
                 var position = ReadPosition(message.Data.Contents)
-                    ?? throw new InvalidOperationException($"The last message of the stream {_options.StreamName} has no \"w\" and \"n\": with WithDeduplication(true) only the listener may write to it");
+                    ?? throw new InvalidOperationException($"The last message of the stream {_options.StreamName} has no \"w\" and \"n\": with UseDeduplication only the listener may write to it");
 
                 _logger?.LogInformation("Last position in {StreamName}: {Wal}/{MessageNo}", _options.StreamName, position.Item1, position.Item2);
 
