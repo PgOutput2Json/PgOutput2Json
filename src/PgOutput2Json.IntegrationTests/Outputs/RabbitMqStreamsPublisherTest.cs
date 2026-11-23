@@ -169,6 +169,88 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             }
         }
 
+        /// <summary>
+        /// Retention removes whole segments of the stream, never the one it writes to: the last message stays,
+        /// so a restart finds it although the first messages are gone.
+        /// </summary>
+        [TestMethod]
+        public async Task Deduplication_should_find_the_last_message_after_retention()
+        {
+            const string name = "om_dedup_ret";
+
+            await Containers.GetRabbitMqAsync();
+
+            var system = await StreamSystem.Create(CreateConfig());
+
+            // segments of about 20 messages, and only two of them kept
+            await system.CreateStream(new StreamSpec(name) { MaxSegmentSizeBytes = 5_000, MaxLengthBytes = 10_000 });
+
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int PRIMARY KEY, v text);
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+            await Db.CreateSlotAsync($"{name}_replay_slot");
+
+            PgOutput2JsonBuilder CreateBuilder(string slotName) => PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications($"{name}_pub")
+                .WithPgReplicationSlot(slotName)
+                .UseRabbitMqStreams(options =>
+                {
+                    options.StreamName = name;
+                    options.StreamSystemConfig = CreateConfig();
+                    options.LastPositionTimeout = System.TimeSpan.FromSeconds(10);
+                })
+                .WithDeduplication(true);
+
+            async Task<List<int>> IdsAsync()
+            {
+                var stats = await system.StreamStats(name);
+
+                try
+                {
+                    // at least up to the first message of the last chunk
+                    return await ReadIdsAsync(system, name, (int)(stats.CommittedChunkId() - stats.FirstOffset()) + 1);
+                }
+                catch (OffsetNotFoundException)
+                {
+                    return [];
+                }
+            }
+
+            try
+            {
+                await using (new RunningListener(CreateBuilder($"{name}_slot")))
+                {
+                    // one transaction each, so that the messages go in many chunks
+                    for (var i = 1; i <= 500; i++) await Db.ExecuteAsync($"INSERT INTO {name} VALUES ({i}, 'a')");
+
+                    await Wait.UntilAsync(async () => (await IdsAsync()).Contains(500), "500 in the stream", 60);
+                }
+
+                var stats = await system.StreamStats(name);
+
+                Assert.IsTrue(stats.FirstOffset() > 0, "retention removed nothing");
+
+                await Db.ExecuteAsync($"INSERT INTO {name} VALUES (501, 'b')");
+
+                await using (new RunningListener(CreateBuilder($"{name}_replay_slot")))
+                {
+                    await Wait.UntilAsync(async () => (await IdsAsync()).Contains(501), "501 in the stream", 60);
+                }
+
+                // what retention left, then 501: nothing replayed
+                var ids = await IdsAsync();
+
+                CollectionAssert.AreEqual(Enumerable.Range(ids[0], 502 - ids[0]).ToList(), ids, string.Join(" ", ids));
+            }
+            finally
+            {
+                await system.Close();
+            }
+        }
+
         [TestMethod]
         [DataRow(true, false, "super stream")]
         [DataRow(false, true, "initial data copy")]
