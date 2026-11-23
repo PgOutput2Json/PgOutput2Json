@@ -204,19 +204,34 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 })
                 .WithDeduplication(true);
 
-            async Task<List<int>> IdsAsync()
+            // what is in the stream up to the given id: retention can remove the first ones while it is read
+            async Task<List<int>> IdsUntilAsync(int lastId)
             {
-                var stats = await system.StreamStats(name);
+                var ids = new ConcurrentQueue<int>();
+
+                var consumer = await Consumer.Create(new ConsumerConfig(system, name)
+                {
+                    OffsetSpec = new OffsetTypeFirst(),
+                    MessageHandler = (_, _, _, message) =>
+                    {
+                        using var json = System.Text.Json.JsonDocument.Parse(message.Data.Contents);
+
+                        ids.Enqueue(json.RootElement.GetProperty("r").GetProperty("id").GetInt32());
+
+                        return Task.CompletedTask;
+                    },
+                });
 
                 try
                 {
-                    // at least up to the first message of the last chunk
-                    return await ReadIdsAsync(system, name, (int)(stats.CommittedChunkId() - stats.FirstOffset()) + 1);
+                    await Wait.UntilAsync(() => ids.Contains(lastId), $"{lastId} in the stream", 60);
                 }
-                catch (OffsetNotFoundException)
+                finally
                 {
-                    return [];
+                    await consumer.Close();
                 }
+
+                return ids.ToList();
             }
 
             try
@@ -226,7 +241,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                     // one transaction each, so that the messages go in many chunks
                     for (var i = 1; i <= 500; i++) await Db.ExecuteAsync($"INSERT INTO {name} VALUES ({i}, 'a')");
 
-                    await Wait.UntilAsync(async () => (await IdsAsync()).Contains(500), "500 in the stream", 60);
+                    await IdsUntilAsync(500);
                 }
 
                 var stats = await system.StreamStats(name);
@@ -237,11 +252,11 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
                 await using (new RunningListener(CreateBuilder($"{name}_replay_slot")))
                 {
-                    await Wait.UntilAsync(async () => (await IdsAsync()).Contains(501), "501 in the stream", 60);
+                    await IdsUntilAsync(501);
                 }
 
                 // what retention left, then 501: nothing replayed
-                var ids = await IdsAsync();
+                var ids = await IdsUntilAsync(501);
 
                 CollectionAssert.AreEqual(Enumerable.Range(ids[0], 502 - ids[0]).ToList(), ids, string.Join(" ", ids));
             }
