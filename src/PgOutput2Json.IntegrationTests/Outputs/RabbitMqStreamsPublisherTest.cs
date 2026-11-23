@@ -266,6 +266,187 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             }
         }
 
+        /// <summary>
+        /// Consumers that store their offset on the server write it to the stream log: after the listener stops, those
+        /// entries are last. A restart must still find the last message.
+        /// </summary>
+        [TestMethod]
+        public async Task Deduplication_should_find_the_last_message_after_stored_consumer_offsets()
+        {
+            const string name = "om_dedup_offsets";
+
+            await Containers.GetRabbitMqAsync();
+
+            var system = await StreamSystem.Create(CreateConfig());
+
+            await system.CreateStream(new StreamSpec(name));
+
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int PRIMARY KEY, v text);
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+            await Db.CreateSlotAsync($"{name}_replay_slot");
+
+            PgOutput2JsonBuilder CreateBuilder(string slotName) => PgOutput2JsonBuilder.Create()
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications($"{name}_pub")
+                .WithPgReplicationSlot(slotName)
+                .UseRabbitMqStreams(options =>
+                {
+                    options.StreamName = name;
+                    options.StreamSystemConfig = CreateConfig();
+                    options.LastPositionTimeout = System.TimeSpan.FromSeconds(10);
+                    options.UseDeduplication = true;
+                });
+
+            try
+            {
+                await using (new RunningListener(CreateBuilder($"{name}_slot")))
+                {
+                    await Db.ExecuteAsync($"INSERT INTO {name} VALUES (1, 'a'), (2, 'b'); INSERT INTO {name} VALUES (3, 'c');");
+
+                    await ReadIdsAsync(system, name, 3);
+                }
+
+                // three consumers read to the end and store their offset, one after the other
+                for (var c = 0; c < 3; c++)
+                {
+                    var reference = $"{name}_consumer{c}";
+                    var stored = new TaskCompletionSource();
+
+                    var consumer = await Consumer.Create(new ConsumerConfig(system, name)
+                    {
+                        Reference = reference,
+                        OffsetSpec = new OffsetTypeFirst(),
+                        MessageHandler = async (_, source, context, message) =>
+                        {
+                            using var json = System.Text.Json.JsonDocument.Parse(message.Data.Contents);
+
+                            if (json.RootElement.GetProperty("r").GetProperty("id").GetInt32() == 3)
+                            {
+                                await source.StoreOffset(context.Offset);
+                                stored.TrySetResult();
+                            }
+                        },
+                    });
+
+                    await stored.Task.WaitAsync(System.TimeSpan.FromSeconds(30));
+                    await Wait.UntilAsync(() => system.TryQueryOffset(reference, name).Result != null, $"the offset of {reference}");
+                    await consumer.Close();
+                }
+
+                await Db.ExecuteAsync($"INSERT INTO {name} VALUES (4, 'd')");
+
+                using var logs = new CollectingLoggerFactory();
+
+                await using (new RunningListener(CreateBuilder($"{name}_replay_slot").WithLoggerFactory(logs)))
+                {
+                    try
+                    {
+                        await ReadIdsAsync(system, name, 4);
+                    }
+                    catch (System.TimeoutException e)
+                    {
+                        Assert.Fail($"{e.Message}\n{logs}");
+                    }
+                }
+
+                CollectionAssert.AreEqual(new[] { 1, 2, 3, 4 }, await ReadIdsAsync(system, name, 4));
+            }
+            finally
+            {
+                await system.Close();
+            }
+        }
+
+        /// <summary>
+        /// The broker closes the connections in the middle of a stream of changes: the batch fails, the listener connects
+        /// again and goes on after the last message in the stream. Every row is in the stream once, in order, without a gap.
+        /// </summary>
+        [TestMethod]
+        public async Task Deduplication_should_leave_no_gap_when_the_connection_drops()
+        {
+            const string name = "om_dedup_drop";
+            const int rows = 3000;
+
+            var rabbitMq = await Containers.GetRabbitMqAsync();
+
+            var system = await StreamSystem.Create(CreateConfig());
+
+            await system.CreateStream(new StreamSpec(name));
+
+            await Db.ExecuteAsync($@"
+                CREATE TABLE {name} (id int PRIMARY KEY, v text);
+                CREATE PUBLICATION {name}_pub FOR TABLE {name};");
+
+            await Db.CreateSlotAsync($"{name}_slot");
+
+            using var logs = new CollectingLoggerFactory();
+
+            var builder = PgOutput2JsonBuilder.Create()
+                .WithLoggerFactory(logs)
+                .WithPgConnectionString(Containers.PgConnectionString)
+                .WithPgPublications($"{name}_pub")
+                .WithPgReplicationSlot($"{name}_slot")
+                .WithReconnectDelay(System.TimeSpan.FromSeconds(1))
+                .UseRabbitMqStreams(options =>
+                {
+                    options.StreamName = name;
+                    options.StreamSystemConfig = CreateConfig();
+                    options.UseDeduplication = true;
+                })
+                .WithBatchSize(500);
+
+            try
+            {
+                await using (new RunningListener(builder))
+                {
+                    // one transaction each, while the connections are closed
+                    var inserts = Task.Run(async () =>
+                    {
+                        for (var i = 1; i <= rows; i++) await Db.ExecuteAsync($"INSERT INTO {name} VALUES ({i}, 'a')");
+                    });
+
+                    await ReadIdsAsync(system, name, 300);
+
+                    var closed = await rabbitMq.ExecAsync(["rabbitmqctl", "close_all_connections", "test"]);
+
+                    Assert.AreEqual(0, closed.ExitCode, closed.Stderr);
+
+                    await inserts;
+
+                    await Wait.UntilAsync(() => logs.Contains(Microsoft.Extensions.Logging.LogLevel.Error, "Error in replication listener"), "the failed batch");
+
+                    var stream = await StreamSystem.Create(CreateConfig());
+
+                    try
+                    {
+                        await ReadIdsAsync(stream, name, rows);
+                    }
+                    finally
+                    {
+                        await stream.Close();
+                    }
+                }
+
+                var check = await StreamSystem.Create(CreateConfig());
+
+                try
+                {
+                    CollectionAssert.AreEqual(Enumerable.Range(1, rows).ToList(), await ReadIdsAsync(check, name, rows));
+                }
+                finally
+                {
+                    await check.Close();
+                }
+            }
+            finally
+            {
+                try { await system.Close(); } catch (System.Exception) { }
+            }
+        }
+
         [TestMethod]
         [DataRow(true, false, "super stream")]
         [DataRow(false, true, "initial data copy")]

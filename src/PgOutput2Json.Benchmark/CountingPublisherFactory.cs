@@ -21,6 +21,8 @@ namespace PgOutput2Json.Benchmark
 
         public bool SupportsParallelCopy => inner?.SupportsParallelCopy ?? true;
 
+        public void Validate(ReplicationListenerOptions listenerOptions) => inner?.Validate(listenerOptions);
+
         public IMessagePublisher CreateMessagePublisher(ReplicationListenerOptions listenerOptions, string slotName, ILoggerFactory? loggerFactory)
         {
             var publisher = inner?.CreateMessagePublisher(listenerOptions, slotName, loggerFactory);

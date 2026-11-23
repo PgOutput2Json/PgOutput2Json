@@ -80,4 +80,4 @@ The messages go to the client in lists of `options.MessageBufferSize` (100 by de
 
 By default the changes that PostgreSQL replays after a reconnect are published again, and consumers deduplicate on `w`/`n`. On a single stream that only this listener writes to, `options.UseDeduplication = true` keeps them out of the stream: when it connects, the publisher reads the position (`w`, `n`) of the last message in the stream, and the listener skips the changes up to it.
 
-It cannot be used with a super stream or with the initial data copy: `Build()` throws.
+It cannot be used with a super stream or with the initial data copy: `Build()` throws. It needs RabbitMQ 3.11 or later.

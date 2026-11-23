@@ -26,7 +26,7 @@ namespace PgOutput2Json.RabbitMqStreams
         /// <summary>
         /// Skips the changes that PostgreSQL replays after a reconnect: the position ("w" and "n") of the last message in
         /// the stream is read when connecting. Only for a single stream that only the listener writes to, without the
-        /// initial data copy (Build throws otherwise). Default is false.
+        /// initial data copy (Build throws otherwise). Needs RabbitMQ 3.11 or later. Default is false.
         /// </summary>
         public bool UseDeduplication { get; set; }
 

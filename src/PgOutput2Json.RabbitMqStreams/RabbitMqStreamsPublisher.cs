@@ -33,12 +33,11 @@ namespace PgOutput2Json.RabbitMqStreams
 
             var streamSystem = await EnsureStreamSystemAsync().ConfigureAwait(false);
 
-            ulong lastChunk;
-
             try
             {
-                // the first offset of the last chunk that the stream has committed; it has the last message
-                lastChunk = (await streamSystem.StreamStats(_options.StreamName).ConfigureAwait(false)).CommittedChunkId();
+                // only to know if the stream is empty: the committed chunk can be one of the offsets that consumers
+                // store on the server, which are in the log too, after the last message
+                (await streamSystem.StreamStats(_options.StreamName).ConfigureAwait(false)).CommittedChunkId();
             }
             catch (OffsetNotFoundException)
             {
@@ -47,12 +46,17 @@ namespace PgOutput2Json.RabbitMqStreams
 
             var last = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
 
+            // the chunk the consumer starts with: OffsetTypeLast is the last chunk of messages
+            ulong? lastChunk = null;
+
             var consumer = await Consumer.Create(new ConsumerConfig(streamSystem, _options.StreamName)
             {
-                OffsetSpec = new OffsetTypeOffset(lastChunk),
+                OffsetSpec = new OffsetTypeLast(),
                 ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-position",
                 MessageHandler = (_, _, context, message) =>
                 {
+                    lastChunk ??= context.ChunkId;
+
                     if (context.ChunkId == lastChunk && context.Offset == context.ChunkId + context.ChunkMessagesCount - 1)
                     {
                         last.TrySetResult(message);
@@ -110,9 +114,17 @@ namespace PgOutput2Json.RabbitMqStreams
 
                     if (!reader.Read()) return null;
 
-                    if (isW && reader.TokenType == JsonTokenType.Number) w = reader.GetUInt64();
-                    else if (isN && reader.TokenType == JsonTokenType.Number) n = reader.GetUInt64();
-                    else reader.Skip();
+                    if (isW || isN)
+                    {
+                        // not a number of the listener (negative, a fraction, too large): not its message
+                        if (reader.TokenType != JsonTokenType.Number || !reader.TryGetUInt64(out var value)) return null;
+
+                        if (isW) w = value; else n = value;
+                    }
+                    else
+                    {
+                        reader.Skip();
+                    }
 
                     // both come first, after "c"
                     if (w != null && n != null) return (w.Value, n.Value);
@@ -285,6 +297,7 @@ namespace PgOutput2Json.RabbitMqStreams
                     MaxInFlight = _batchSize,
                     MessagesBufferSize = _options.MessageBufferSize,
                     ClientProvidedName = $"{_options.StreamSystemConfig.ClientProvidedName}-producer",
+                    ReconnectStrategy = new NoReconnectStrategy(),
                     ConfirmationHandler = confirmation =>
                     {
                         switch (confirmation.Status)
