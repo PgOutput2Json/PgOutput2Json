@@ -110,5 +110,47 @@ namespace PgOutput2Json.Tests
             Assert.AreEqual(JsonWriteMode.Default, named.JsonOptions.WriteMode);
             Assert.AreEqual(JsonWriteMode.Compact, compact.JsonOptions.WriteMode);
         }
+
+        /// <summary>
+        /// A store keeps the position of each subscription under its name, and only the user knows which sources write into it.
+        /// </summary>
+        [TestMethod]
+        [DataRow("SQLite")]
+        [DataRow("MongoDB")]
+        [DataRow("DynamoDB")]
+        public void Store_should_need_a_subscription_name(string store)
+        {
+            Action use = store switch
+            {
+                "SQLite" => () => Valid().UseSqlite(),
+                "MongoDB" => () => Valid().UseMongoDb(),
+                _ => () => Valid().UseDynamoDb(options => options.SubscriptionName = " "),
+            };
+
+            var e = Assert.ThrowsExactly<ArgumentException>(use);
+
+            StringAssert.Contains(e.Message, "SubscriptionName");
+        }
+
+        /// <summary>
+        /// A publisher made without the builder needs the name too: else every one would share the key "Position:".
+        /// </summary>
+        [TestMethod]
+        [DataRow("SQLite")]
+        [DataRow("MongoDB")]
+        [DataRow("DynamoDB")]
+        public void Store_publisher_should_need_a_subscription_name(string store)
+        {
+            Action create = store switch
+            {
+                "SQLite" => () => _ = new Sqlite.SqlitePublisher(new Sqlite.SqlitePublisherOptions { ConnectionStringBuilder = new() }, null),
+                "MongoDB" => () => _ = new MongoDb.MongoDbPublisher(new MongoDb.MongoDbPublisherOptions { ClientSettings = new(), DatabaseName = "db" }, null),
+                _ => () => _ = new DynamoDb.DynamoDbPublisher(new DynamoDb.DynamoDbPublisherOptions { ClientConfig = new() }, null),
+            };
+
+            var e = Assert.ThrowsExactly<ArgumentException>(create);
+
+            StringAssert.Contains(e.Message, "SubscriptionName");
+        }
     }
 }

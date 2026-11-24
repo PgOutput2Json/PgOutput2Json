@@ -15,18 +15,29 @@ namespace PgOutput2Json.MongoDb
     {
         private const string ToastValue = "__TOAST__";
 
-        public static async Task<(ulong, ulong)> GetWalEndAsync(this IMongoDatabase db, CancellationToken token)
+        public static async Task<(ulong, ulong)> GetWalEndAsync(this IMongoDatabase db, string subscriptionName, CancellationToken token)
         {
-            var position = await db.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
+            var position = await db.GetConfigAsync(ConfigKey.PositionOf(subscriptionName), token).ConfigureAwait(false);
 
             if (position != null) return ParsePosition(position);
 
-            // saved before version 2.1: the next confirm saves the position under its new key
+            // before version 2.2 the store had one position: the first subscription takes it. The old keys are removed first,
+            // so that no other subscription takes it too; a stop in between only loses it, and the changes are written again
+            var oldPosition = await db.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
             var walEndValue = await db.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
             var messageNoValue = await db.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
 
-            return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
-                    messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+            if (oldPosition == null && walEndValue == null && messageNoValue == null) return (0, 0);
+
+            var walEnd = oldPosition != null
+                ? ParsePosition(oldPosition)
+                : (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
+                   messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+
+            await db.DeleteConfigAsync([ConfigKey.Position, ConfigKey.WalEnd, ConfigKey.MessageNo], token).ConfigureAwait(false);
+            await db.SaveConfigAsync(ConfigKey.PositionOf(subscriptionName), FormatPosition(walEnd.Item1, walEnd.Item2), token).ConfigureAwait(false);
+
+            return walEnd;
         }
 
         internal static string FormatPosition(ulong walEnd, ulong messageNo)
@@ -71,6 +82,13 @@ namespace PgOutput2Json.MongoDb
             ).ConfigureAwait(false);
         }
 
+        public static async Task DeleteConfigAsync(this IMongoDatabase db, IEnumerable<string> keys, CancellationToken token)
+        {
+            var collection = db.GetCollection<Config>("__pg2j_config");
+
+            await collection.DeleteManyAsync(Builders<Config>.Filter.In(cfg => cfg.Id, keys), token).ConfigureAwait(false);
+        }
+
         public static async Task<string?> GetConfigAsync(this IMongoDatabase db, string key, CancellationToken token)
         {
             var collection = db.GetCollection<Config>("__pg2j_config");
@@ -109,7 +127,7 @@ namespace PgOutput2Json.MongoDb
             }
         }
 
-        public static async Task ConfirmBatchAsync(this IMongoDatabase db, ulong? walEnd, ulong messageNo, List<BulkWriteModel> batch, CancellationToken token)
+        public static async Task ConfirmBatchAsync(this IMongoDatabase db, string subscriptionName, ulong? walEnd, ulong messageNo, List<BulkWriteModel> batch, CancellationToken token)
         {
             if (walEnd.HasValue)
             {
@@ -118,8 +136,8 @@ namespace PgOutput2Json.MongoDb
                 // the last write of the ordered bulk write: saved only once all the rows before it are
                 batch.Add(new BulkWriteReplaceOneModel<Config>(
                     configNamespace,
-                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.Position),
-                    new Config { Id = ConfigKey.Position, Value = FormatPosition(walEnd.Value, messageNo) },
+                    Builders<Config>.Filter.Eq(cfg => cfg.Id, ConfigKey.PositionOf(subscriptionName)),
+                    new Config { Id = ConfigKey.PositionOf(subscriptionName), Value = FormatPosition(walEnd.Value, messageNo) },
                     isUpsert: true
                 ));
             }

@@ -331,6 +331,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             await FailureScenario.RunAsync("of_mongo",
                 builder => builder.UseMongoDb(options =>
                 {
+                    options.SubscriptionName = "test";
                     options.ClientSettings = settings;
                     options.DatabaseName = "of_mongo_db";
                 }),
@@ -359,7 +360,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             using var client = new AmazonDynamoDBClient(config);
 
             await FailureScenario.RunAsync("of_dynamo",
-                builder => builder.UseDynamoDb(options => options.ClientConfig = config),
+                builder => builder.UseDynamoDb(options => { options.ClientConfig = config; options.SubscriptionName = "test"; }),
                 breakAsync: () => Containers.StopAsync(Containers.DynamoDb),
                 readIdsAsync: async () =>
                 {
@@ -387,7 +388,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             try
             {
                 await FailureScenario.RunAsync("of_sqlite",
-                    builder => builder.UseSqlite(options => options.ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString)),
+                    builder => builder.UseSqlite(options => { options.ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString); options.SubscriptionName = "test"; }),
                     breakAsync: async () =>
                     {
                         var blocker = new SqliteConnection(connectionString);

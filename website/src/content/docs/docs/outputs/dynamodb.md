@@ -54,6 +54,7 @@ public class Worker : BackgroundService
             .WithPgPublications("my_publication")
             .UseDynamoDb(options =>
             {
+                options.SubscriptionName = "my_subscription"; // one per source database and slot
                 options.ClientConfig = new AmazonDynamoDBConfig
                 {
                     ServiceURL = "http://localhost:8000",                              // for local DynamoDB, change/remove for AWS

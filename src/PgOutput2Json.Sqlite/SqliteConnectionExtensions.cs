@@ -15,23 +15,34 @@ namespace PgOutput2Json.Sqlite
     {
         private const string ToastValue = "__TOAST__";
 
-        public static async Task<(ulong, ulong)> GetWalEndAsync(this SqliteConnection cn, CancellationToken token)
+        public static async Task<(ulong, ulong)> GetWalEndAsync(this SqliteConnection cn, string subscriptionName, CancellationToken token)
         {
-            var position = await GetConfigAsync(cn, ConfigKey.Position, token).ConfigureAwait(false);
+            var position = await cn.GetConfigAsync(ConfigKey.PositionOf(subscriptionName), token).ConfigureAwait(false);
 
             if (position != null) return ParsePosition(position);
 
-            // saved before version 2.1: the next confirm saves the position under its new key
-            var walEndValue = await GetConfigAsync(cn, ConfigKey.WalEnd, token).ConfigureAwait(false);
-            var messageNoValue = await GetConfigAsync(cn, ConfigKey.MessageNo, token).ConfigureAwait(false);
+            // before version 2.2 the store had one position: the first subscription takes it. The old keys are removed first,
+            // so that no other subscription takes it too; a stop in between only loses it, and the changes are written again
+            var oldPosition = await cn.GetConfigAsync(ConfigKey.Position, token).ConfigureAwait(false);
+            var walEndValue = await cn.GetConfigAsync(ConfigKey.WalEnd, token).ConfigureAwait(false);
+            var messageNoValue = await cn.GetConfigAsync(ConfigKey.MessageNo, token).ConfigureAwait(false);
 
-            return (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
-                    messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+            if (oldPosition == null && walEndValue == null && messageNoValue == null) return (0, 0);
+
+            var walEnd = oldPosition != null
+                ? ParsePosition(oldPosition)
+                : (walEndValue != null ? ulong.Parse(walEndValue, CultureInfo.InvariantCulture) : 0,
+                   messageNoValue != null ? ulong.Parse(messageNoValue, CultureInfo.InvariantCulture) : 0);
+
+            await cn.DeleteConfigAsync([ConfigKey.Position, ConfigKey.WalEnd, ConfigKey.MessageNo], token).ConfigureAwait(false);
+            await cn.SaveConfigAsync(ConfigKey.PositionOf(subscriptionName), FormatPosition(walEnd.Item1, walEnd.Item2), token).ConfigureAwait(false);
+
+            return walEnd;
         }
 
-        public static async Task SetWalEndAsync(this SqliteConnection cn, ulong walEnd, ulong messageNo, CancellationToken token)
+        public static async Task SetWalEndAsync(this SqliteConnection cn, string subscriptionName, ulong walEnd, ulong messageNo, CancellationToken token)
         {
-            await SaveConfigAsync(cn, ConfigKey.Position, FormatPosition(walEnd, messageNo), token).ConfigureAwait(false);
+            await SaveConfigAsync(cn, ConfigKey.PositionOf(subscriptionName), FormatPosition(walEnd, messageNo), token).ConfigureAwait(false);
         }
 
         internal static string FormatPosition(ulong walEnd, ulong messageNo)
@@ -90,6 +101,22 @@ namespace PgOutput2Json.Sqlite
             if (result == 0)
             {
                 cmd.CommandText = "INSERT INTO __pg2j_config (cfg_key, cfg_value) VALUES (@cfg_key, @cfg_value)";
+
+                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+        }
+
+        public static async Task DeleteConfigAsync(this SqliteConnection cn, IEnumerable<string> keys, CancellationToken token)
+        {
+            using var cmd = cn.CreateCommand();
+
+            var key = cmd.Parameters.Add("cfg_key", SqliteType.Text);
+
+            cmd.CommandText = "DELETE FROM __pg2j_config WHERE cfg_key = @cfg_key";
+
+            foreach (var k in keys)
+            {
+                key.Value = k;
 
                 await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }

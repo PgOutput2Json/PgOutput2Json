@@ -25,13 +25,13 @@ namespace PgOutput2Json.IntegrationTests.Outputs
         }
 
         [TestMethod]
-        public async Task Position_saved_in_two_values_should_be_read_and_saved_again_as_one()
+        public async Task Position_of_an_earlier_version_should_become_the_position_of_the_subscription()
         {
             var config = new AmazonDynamoDBConfig { ServiceURL = await Containers.GetDynamoDbUrlAsync() };
 
             using var client = new AmazonDynamoDBClient(config);
 
-            var options = new global::PgOutput2Json.DynamoDb.DynamoDbPublisherOptions { ClientConfig = config };
+            var options = new global::PgOutput2Json.DynamoDb.DynamoDbPublisherOptions { ClientConfig = config, SubscriptionName = "dyn_pos_orders" };
 
             Task PutAsync(string key, string value) => client.PutItemAsync(new PutItemRequest
             {
@@ -41,11 +41,11 @@ namespace PgOutput2Json.IntegrationTests.Outputs
 
             await using (var publisher = new global::PgOutput2Json.DynamoDb.DynamoDbPublisher(options, null))
             {
-                // creates the config table; the other store tests leave their own position in it
+                // creates the config table; the other store tests leave their positions in it
                 await publisher.GetLastPublishedWalSeqAsync(default);
 
                 // a store of an earlier version: the two parts of the position under keys of their own
-                await client.DeleteItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = "Position" } });
+                await client.DeleteItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = "Position:dyn_pos_orders" } });
                 await PutAsync("WalEnd", "200");
                 await PutAsync("MessageNo", "5");
 
@@ -55,13 +55,28 @@ namespace PgOutput2Json.IntegrationTests.Outputs
                 await publisher.ConfirmAsync(default);
             }
 
-            var position = await client.GetItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = "Position" } }, true);
+            var position = await client.GetItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = "Position:dyn_pos_orders" } }, true);
 
             Assert.AreEqual("300/1", position.Item["Value"].S);
+
+            foreach (var oldKey in new[] { "Position", "WalEnd", "MessageNo" })
+            {
+                var old = await client.GetItemAsync("__pg2j_config", new() { ["ConfigKey"] = new AttributeValue { S = oldKey } }, true);
+
+                Assert.IsFalse(old.IsItemSet, oldKey);
+            }
 
             await using (var publisher = new global::PgOutput2Json.DynamoDb.DynamoDbPublisher(options, null))
             {
                 Assert.AreEqual((300UL, 1UL), await publisher.GetLastPublishedWalSeqAsync(default));
+            }
+
+            // another subscription into the same store starts from nothing
+            options.SubscriptionName = "dyn_pos_customers";
+
+            await using (var publisher = new global::PgOutput2Json.DynamoDb.DynamoDbPublisher(options, null))
+            {
+                Assert.AreEqual((0UL, 0UL), await publisher.GetLastPublishedWalSeqAsync(default));
             }
         }
 
@@ -92,7 +107,7 @@ namespace PgOutput2Json.IntegrationTests.Outputs
             }
 
             await StoreScenario.RunAsync("os_dynamo",
-                builder => builder.UseDynamoDb(options => options.ClientConfig = config),
+                builder => builder.UseDynamoDb(options => { options.ClientConfig = config; options.SubscriptionName = "test"; }),
                 ReadAsync,
                 expectedAfterCopy:
                     """

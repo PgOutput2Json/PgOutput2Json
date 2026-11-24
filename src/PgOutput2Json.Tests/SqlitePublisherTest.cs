@@ -17,7 +17,8 @@ namespace PgOutput2Json.Tests
         {
             var options = new SqlitePublisherOptions
             {
-                ConnectionStringBuilder = new SqliteConnectionStringBuilder("Data Source=:memory:")
+                ConnectionStringBuilder = new SqliteConnectionStringBuilder("Data Source=:memory:"),
+                SubscriptionName = "test",
             };
 
             await using var publisher = new SqlitePublisher(options, null);
@@ -46,7 +47,8 @@ namespace PgOutput2Json.Tests
 
             var options = new SqlitePublisherOptions
             {
-                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False")
+                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False"),
+                SubscriptionName = "test",
             };
 
             try
@@ -83,14 +85,20 @@ namespace PgOutput2Json.Tests
             }
         }
 
+        /// <summary>
+        /// A store of an earlier version has one position: the first subscription takes it, and it is gone for any other.
+        /// </summary>
         [TestMethod]
-        public async Task Position_saved_in_two_values_should_be_read_and_saved_again_as_one()
+        [DataRow("('WalEnd', '200'), ('MessageNo', '5')")]
+        [DataRow("('Position', '200/5')")]
+        public async Task Position_of_an_earlier_version_should_become_the_position_of_the_subscription(string oldPosition)
         {
             var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pg2j_{System.Guid.NewGuid():N}.db");
 
             var options = new SqlitePublisherOptions
             {
-                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False")
+                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False"),
+                SubscriptionName = "orders",
             };
 
             async Task<string?> ConfigAsync(string sql)
@@ -106,10 +114,9 @@ namespace PgOutput2Json.Tests
 
             try
             {
-                // a store of an earlier version: the two parts of the position under keys of their own
-                await ConfigAsync(@"
+                await ConfigAsync($@"
                     CREATE TABLE __pg2j_config (cfg_key TEXT NOT NULL, cfg_value TEXT, CONSTRAINT __pg2j_config_pk PRIMARY KEY (cfg_key));
-                    INSERT INTO __pg2j_config VALUES ('WalEnd', '200'), ('MessageNo', '5');");
+                    INSERT INTO __pg2j_config VALUES {oldPosition};");
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {
@@ -119,11 +126,20 @@ namespace PgOutput2Json.Tests
                     await publisher.ConfirmAsync(CancellationToken.None);
                 }
 
-                Assert.AreEqual("300/1", await ConfigAsync("SELECT cfg_value FROM __pg2j_config WHERE cfg_key = 'Position'"));
+                Assert.AreEqual("300/1", await ConfigAsync("SELECT cfg_value FROM __pg2j_config WHERE cfg_key = 'Position:orders'"));
+                Assert.AreEqual("0", await ConfigAsync("SELECT CAST(count(*) AS TEXT) FROM __pg2j_config WHERE cfg_key IN ('Position', 'WalEnd', 'MessageNo')"));
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {
                     Assert.AreEqual((300UL, 1UL), await publisher.GetLastPublishedWalSeqAsync(CancellationToken.None));
+                }
+
+                // another subscription into the same store starts from nothing
+                options.SubscriptionName = "customers";
+
+                await using (var publisher = new SqlitePublisher(options, null))
+                {
+                    Assert.AreEqual((0UL, 0UL), await publisher.GetLastPublishedWalSeqAsync(CancellationToken.None));
                 }
             }
             finally
@@ -185,7 +201,7 @@ namespace PgOutput2Json.Tests
         {
             await WithApplicationDatabaseAsync(async connectionString =>
             {
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 // a child copied before its parent, as the syncs of two tables can do
                 await using (var publisher = new SqlitePublisher(options, null))
@@ -224,7 +240,7 @@ namespace PgOutput2Json.Tests
                 var schema = $"\"s\":[{t},[{J(id)},1,23],[{J(name)},0,25]]";
                 var schemaAdded = $"\"s\":[{t},[{J(id)},1,23],[{J(name)},0,25],[{J(added)},0,23]]";
 
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {
@@ -264,7 +280,7 @@ namespace PgOutput2Json.Tests
             {
                 await ExecuteAsync(connectionString, "CREATE TABLE victim (id INTEGER); INSERT INTO victim VALUES (1)");
 
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {
@@ -294,7 +310,7 @@ namespace PgOutput2Json.Tests
                 // a read-only connection of the application, back in the pool
                 await ExecuteAsync(connectionString, "PRAGMA query_only = true");
 
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {

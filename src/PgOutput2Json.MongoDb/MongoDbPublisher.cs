@@ -60,6 +60,11 @@ namespace PgOutput2Json.MongoDb
 
         public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger)
         {
+            if (string.IsNullOrWhiteSpace(options.SubscriptionName))
+            {
+                throw new ArgumentException("SubscriptionName must be provided: the store keeps the position of each subscription under its name", nameof(options));
+            }
+
             _options = options;
             Names = new TargetNames(options.GetTableName);
             _logger = logger;
@@ -98,7 +103,7 @@ namespace PgOutput2Json.MongoDb
                 ? _lastWal
                 : null;
 
-            await db.ConfirmBatchAsync(walEnd, _lastMessageNo, _batch, token).ConfigureAwait(false);
+            await db.ConfirmBatchAsync(_options.SubscriptionName, walEnd, _lastMessageNo, _batch, token).ConfigureAwait(false);
 
             _batch.Clear();
         }
@@ -107,7 +112,7 @@ namespace PgOutput2Json.MongoDb
         {
             var db = await EnsureDatabaseAsync(token).ConfigureAwait(false);
 
-            return await db.GetWalEndAsync(token).ConfigureAwait(false);
+            return await db.GetWalEndAsync(_options.SubscriptionName, token).ConfigureAwait(false);
         }
 
         public override ValueTask DisposeAsync()

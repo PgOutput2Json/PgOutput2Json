@@ -27,6 +27,12 @@ namespace PgOutput2Json.Sqlite
         public required SqliteConnectionStringBuilder ConnectionStringBuilder { get; set; }
 
         /// <summary>
+        /// Required. The name of this subscription (one source database and replication slot) in the store: the position
+        /// of the last saved change is kept under it. Every source that writes into the same store needs its own.
+        /// </summary>
+        public string SubscriptionName { get; set; } = "";
+
+        /// <summary>
         /// Runs after the output has opened its connection and set it up, before the first write.
         /// </summary>
         public Func<SqliteConnection, Task>? PostConnectionSetup { get; set; }
