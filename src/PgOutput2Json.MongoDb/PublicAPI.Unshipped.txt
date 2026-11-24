@@ -1,9 +1,1 @@
 #nullable enable
-PgOutput2Json.MongoDb.MongoDbPublisherOptions.GetTableName.get -> System.Func<string!, string!, string!>!
-PgOutput2Json.MongoDb.MongoDbPublisherOptions.GetTableName.set -> void
-PgOutput2Json.MongoDb.MongoDbPublisherOptions.SubscriptionName.get -> string!
-PgOutput2Json.MongoDb.MongoDbPublisherOptions.SubscriptionName.set -> void
-PgOutput2Json.MongoDb.MongoDbPublisherOptions.TimestampTimeZone.get -> System.TimeZoneInfo!
-PgOutput2Json.MongoDb.MongoDbPublisherOptions.TimestampTimeZone.set -> void
-*REMOVED*PgOutput2Json.MongoDb.MongoDbPublisher.MongoDbPublisher(PgOutput2Json.MongoDb.MongoDbPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.MongoDb.MongoDbPublisher!>? logger, bool useDeduplication = true) -> void
-PgOutput2Json.MongoDb.MongoDbPublisher.MongoDbPublisher(PgOutput2Json.MongoDb.MongoDbPublisherOptions! options, Microsoft.Extensions.Logging.ILogger<PgOutput2Json.MongoDb.MongoDbPublisher!>? logger) -> void

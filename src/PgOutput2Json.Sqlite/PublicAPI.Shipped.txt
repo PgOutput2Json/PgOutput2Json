@@ -19,9 +19,13 @@ PgOutput2Json.Sqlite.SqlitePublisher.SqlitePublisher(PgOutput2Json.Sqlite.Sqlite
 PgOutput2Json.Sqlite.SqlitePublisherOptions
 PgOutput2Json.Sqlite.SqlitePublisherOptions.ConnectionStringBuilder.get -> Microsoft.Data.Sqlite.SqliteConnectionStringBuilder!
 PgOutput2Json.Sqlite.SqlitePublisherOptions.ConnectionStringBuilder.set -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.GetTableName.get -> System.Func<string!, string!, string!>!
+PgOutput2Json.Sqlite.SqlitePublisherOptions.GetTableName.set -> void
 PgOutput2Json.Sqlite.SqlitePublisherOptions.PostConnectionSetup.get -> System.Func<Microsoft.Data.Sqlite.SqliteConnection!, System.Threading.Tasks.Task!>?
 PgOutput2Json.Sqlite.SqlitePublisherOptions.PostConnectionSetup.set -> void
 PgOutput2Json.Sqlite.SqlitePublisherOptions.SqlitePublisherOptions() -> void
+PgOutput2Json.Sqlite.SqlitePublisherOptions.SubscriptionName.get -> string!
+PgOutput2Json.Sqlite.SqlitePublisherOptions.SubscriptionName.set -> void
 PgOutput2Json.Sqlite.SqlitePublisherOptions.UseWal.get -> bool
 PgOutput2Json.Sqlite.SqlitePublisherOptions.UseWal.set -> void
 PgOutput2Json.Sqlite.SqlitePublisherOptions.WalCheckpointTryCount.get -> int

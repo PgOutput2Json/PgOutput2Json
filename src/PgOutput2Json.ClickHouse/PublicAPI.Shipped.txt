@@ -13,7 +13,7 @@ PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Database.get -> string!
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Database.set -> void
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Endpoint.get -> string!
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Endpoint.set -> void
-PgOutput2Json.ClickHouse.ClickHousePublisherOptions.GetTableName.get -> System.Func<string!, string!>!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.GetTableName.get -> System.Func<string!, string!, string!>!
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.GetTableName.set -> void
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.HttpClient.get -> System.Net.Http.HttpClient?
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.HttpClient.set -> void
@@ -21,6 +21,8 @@ PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Password.get -> string!
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Password.set -> void
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Settings.get -> System.Collections.Generic.Dictionary<string!, string!>!
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.Tables.get -> System.Collections.Generic.Dictionary<string!, PgOutput2Json.ClickHouse.ClickHouseTableOptions!>!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.TimestampTimeZone.get -> System.TimeZoneInfo!
+PgOutput2Json.ClickHouse.ClickHousePublisherOptions.TimestampTimeZone.set -> void
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseArrayTypes.get -> bool
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseArrayTypes.set -> void
 PgOutput2Json.ClickHouse.ClickHousePublisherOptions.UseAsyncInserts.get -> bool

@@ -1,6 +1,1 @@
 #nullable enable
-override PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
-PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.LastPositionTimeout.get -> System.TimeSpan
-PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.LastPositionTimeout.set -> void
-PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.UseDeduplication.get -> bool
-PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.UseDeduplication.set -> void

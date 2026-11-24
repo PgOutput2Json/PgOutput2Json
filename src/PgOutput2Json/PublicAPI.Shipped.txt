@@ -18,6 +18,7 @@ PgOutput2Json.IMessagePublisherFactory
 PgOutput2Json.IMessagePublisherFactory.CreateMessagePublisher(PgOutput2Json.ReplicationListenerOptions! listenerOptions, string! slotName, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> PgOutput2Json.IMessagePublisher!
 PgOutput2Json.IMessagePublisherFactory.RequiredWriteMode.get -> PgOutput2Json.JsonWriteMode?
 PgOutput2Json.IMessagePublisherFactory.SupportsParallelCopy.get -> bool
+PgOutput2Json.IMessagePublisherFactory.Validate(PgOutput2Json.ReplicationListenerOptions! listenerOptions) -> void
 PgOutput2Json.IPgOutput2Json
 PgOutput2Json.IPgOutput2Json.StartAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
 PgOutput2Json.IRowPublisher
@@ -30,7 +31,9 @@ PgOutput2Json.JsonMessage.JsonMessage() -> void
 PgOutput2Json.JsonMessage.KeyKolValue.get -> System.Text.StringBuilder!
 PgOutput2Json.JsonMessage.MessageNo.get -> ulong
 PgOutput2Json.JsonMessage.PartitionKolValue.get -> System.Text.StringBuilder!
-PgOutput2Json.JsonMessage.TableName.get -> System.Text.StringBuilder!
+PgOutput2Json.JsonMessage.RelationName.get -> string!
+PgOutput2Json.JsonMessage.SchemaName.get -> string!
+PgOutput2Json.JsonMessage.TableName.get -> string!
 PgOutput2Json.JsonMessage.TxFinalLsn.get -> ulong
 PgOutput2Json.JsonOptions
 PgOutput2Json.JsonOptions.JsonOptions() -> void
@@ -141,7 +144,6 @@ PgOutput2Json.PgOutput2JsonBuilder
 PgOutput2Json.PgOutput2JsonBuilder.Build() -> PgOutput2Json.IPgOutput2Json!
 PgOutput2Json.PgOutput2JsonBuilder.PgOutput2JsonBuilder() -> void
 PgOutput2Json.PgOutput2JsonBuilder.WithBatchSize(int batchSize) -> PgOutput2Json.PgOutput2JsonBuilder!
-PgOutput2Json.PgOutput2JsonBuilder.WithDeduplication(bool useDeduplication) -> PgOutput2Json.PgOutput2JsonBuilder!
 PgOutput2Json.PgOutput2JsonBuilder.WithIdleWalMessageInterval(System.TimeSpan interval) -> PgOutput2Json.PgOutput2JsonBuilder!
 PgOutput2Json.PgOutput2JsonBuilder.WithInitialDataCopy(bool copyData = false, int maxParallelJobs = 2) -> PgOutput2Json.PgOutput2JsonBuilder!
 PgOutput2Json.PgOutput2JsonBuilder.WithInitialDataCopy(bool copyData, int maxParallelJobs, int workersPerTable) -> PgOutput2Json.PgOutput2JsonBuilder!
@@ -171,8 +173,6 @@ PgOutput2Json.ReplicationListenerOptions.PublicationNames.get -> string![]!
 PgOutput2Json.ReplicationListenerOptions.ReconnectDelay.get -> System.TimeSpan
 PgOutput2Json.ReplicationListenerOptions.ReplicationListenerOptions() -> void
 PgOutput2Json.ReplicationListenerOptions.ReplicationSlotName.get -> string!
-PgOutput2Json.ReplicationListenerOptions.UseDeduplication.get -> bool
-PgOutput2Json.ReplicationListenerOptions.UseDeduplication.set -> void
 PgOutput2Json.ReplicationListenerOptions.UseTemporarySlot.get -> bool
 PgOutput2Json.ReplicationMessage
 PgOutput2Json.ReplicationMessage.CommitTimeStamp.get -> System.DateTime
@@ -184,6 +184,8 @@ PgOutput2Json.ReplicationMessage.Message.set -> void
 PgOutput2Json.ReplicationMessage.MessageNo.get -> ulong
 PgOutput2Json.ReplicationMessage.MessageNo.set -> void
 PgOutput2Json.ReplicationMessage.ReplicationMessage() -> void
+PgOutput2Json.ReplicationMessage.TableName.get -> string!
+PgOutput2Json.ReplicationMessage.TableName.set -> void
 PgOutput2Json.ReplicationMessage.TransactionFinalLsn.get -> ulong
 PgOutput2Json.ReplicationMessage.TransactionFinalLsn.set -> void
 PgOutput2Json.RowChangeType
@@ -208,7 +210,10 @@ PgOutput2Json.RowColumn.TypeName.init -> void
 PgOutput2Json.RowTable
 PgOutput2Json.RowTable.Columns.get -> System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowColumn!>!
 PgOutput2Json.RowTable.Name.get -> string!
+PgOutput2Json.RowTable.RelationName.get -> string!
 PgOutput2Json.RowTable.RowTable(string! name, System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowColumn!>! columns) -> void
+PgOutput2Json.RowTable.RowTable(string! schemaName, string! relationName, System.Collections.Generic.IReadOnlyList<PgOutput2Json.RowColumn!>! columns) -> void
+PgOutput2Json.RowTable.SchemaName.get -> string!
 PgOutput2Json.RowValue
 PgOutput2Json.RowValue.Kind.get -> PgOutput2Json.RowValueKind
 PgOutput2Json.RowValue.RowValue() -> void

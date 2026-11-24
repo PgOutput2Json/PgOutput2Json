@@ -5,6 +5,8 @@ PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisher.RabbitMqStreamsPublisher(
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.IsSuperStream.get -> bool
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.IsSuperStream.set -> void
+PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.LastPositionTimeout.get -> System.TimeSpan
+PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.LastPositionTimeout.set -> void
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.MessageBufferSize.get -> int
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.MessageBufferSize.set -> void
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.RabbitMqStreamsPublisherOptions() -> void
@@ -14,9 +16,12 @@ PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.StreamSystemConfig
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.StreamSystemConfig.set -> void
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.SuperStreamConfig.get -> RabbitMQ.Stream.Client.Reliable.SuperStreamConfig!
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.SuperStreamConfig.set -> void
+PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.UseDeduplication.get -> bool
+PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.UseDeduplication.set -> void
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.WriteTableNameToMessageKey.get -> bool
 PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions.WriteTableNameToMessageKey.set -> void
 override PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisher.ConfirmAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
 override PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisher.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisher.GetLastPublishedWalSeqAsync(System.Threading.CancellationToken token) -> System.Threading.Tasks.Task<(ulong, ulong)>!
 override PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisher.PublishAsync(PgOutput2Json.JsonMessage! jsonMsg, System.Threading.CancellationToken token) -> System.Threading.Tasks.Task!
 static PgOutput2Json.PgOutput2JsonBuilderExtensions.UseRabbitMqStreams(this PgOutput2Json.PgOutput2JsonBuilder! builder, System.Action<PgOutput2Json.RabbitMqStreams.RabbitMqStreamsPublisherOptions!>? configureAction = null) -> PgOutput2Json.PgOutput2JsonBuilder!

@@ -50,7 +50,7 @@
              CompatibilitySuppressions.xml, on purpose. The baseline is the first release of the version line (x.y.0):
              patch releases do not move it -->
         <EnablePackageValidation>true</EnablePackageValidation>
-        <PackageValidationBaselineVersion>2.1.0</PackageValidationBaselineVersion>
+        <PackageValidationBaselineVersion>2.2.0</PackageValidationBaselineVersion>
     </PropertyGroup>
 
     <!-- the public API, listed in PublicAPI.Shipped.txt (released) and PublicAPI.Unshipped.txt (since the last release) next to
