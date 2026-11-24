@@ -32,12 +32,12 @@
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
         <!-- AWSSDK 4.1 needs System.IO.Hashing 11, which does not support net8.0 and net9.0 (a warning in every build) -->
-        <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.110.3" />
+        <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.1.0.3" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
-        <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.110.3" />
+        <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.1.0.3" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
     </ItemGroup>
 
