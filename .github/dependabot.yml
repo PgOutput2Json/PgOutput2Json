@@ -1,26 +1,16 @@
-# Updates of the dependencies, once a month, each ecosystem in one grouped pull request. Security updates come
-# separately, as soon as there's an advisory (Dependabot alerts in the repository's settings).
+# NuGet: security updates only. A package reference of a library is the lowest version its users get, so it is raised
+# only for a reason (an advisory, a fix or an API we need, a line out of support), by hand, not every month. Security
+# updates come as soon as there's an advisory (Dependabot alerts and security updates in the repository's settings).
+# No ignore rules: GitHub applies them to security updates too.
+# The website and the GitHub Actions: version updates once a month, each ecosystem in one grouped pull request.
 version: 2
 updates:
   - package-ecosystem: nuget
     directory: /src
     schedule:
       interval: monthly
-    groups:
-      nuget:
-        patterns: ['*']
-    ignore:
-      # major versions by hand: a new major of a client library can change its API or drop a target framework, and a
-      # new .NET version is a change of the target frameworks
-      - dependency-name: '*'
-        update-types: ['version-update:semver-major']
-      # the packages reference the lowest version for each target framework (8.0.0, 9.0.0, 10.0.0) on purpose, so an
-      # application is not made to upgrade it
-      - dependency-name: 'Microsoft.Extensions.Logging.Abstractions'
-      # AWSSDK is 4.0 for net8.0 and net9.0 (4.1 needs System.IO.Hashing 11, which does not support them) and 4.1 for
-      # net10.0 and net11.0: minor updates by hand, so the two lines stay apart
-      - dependency-name: 'AWSSDK.*'
-        update-types: ['version-update:semver-minor']
+    # 0 turns the version updates off (security updates have a limit of their own)
+    open-pull-requests-limit: 0
 
   - package-ecosystem: npm
     directory: /website
