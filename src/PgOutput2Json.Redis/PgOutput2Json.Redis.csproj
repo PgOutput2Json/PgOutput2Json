@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+        <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
         <Description>PgOutput2Json.Redis library uses PostgreSQL logical replication to push changes, as JSON messages, from database tables to Redis</Description>
         <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     </PropertyGroup>

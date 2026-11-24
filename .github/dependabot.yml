@@ -18,7 +18,7 @@ updates:
       # application is not made to upgrade it
       - dependency-name: 'Microsoft.Extensions.Logging.Abstractions'
       # AWSSDK is 4.0 for net8.0 and net9.0 (4.1 needs System.IO.Hashing 11, which does not support them) and 4.1 for
-      # net10.0: minor updates by hand, so the two lines stay apart
+      # net10.0 and net11.0: minor updates by hand, so the two lines stay apart
       - dependency-name: 'AWSSDK.*'
         update-types: ['version-update:semver-minor']
 
