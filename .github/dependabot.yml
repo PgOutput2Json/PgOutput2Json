@@ -1,6 +1,7 @@
-# NuGet: security updates only. A package reference of a library is the lowest version its users get, so it is raised
-# only for a reason (an advisory, a fix or an API we need, a line out of support), by hand, not every month. Security
-# updates come as soon as there's an advisory (Dependabot alerts and security updates in the repository's settings).
+# NuGet: a pull request per package once a month, each evaluated by hand. A package reference of a library is the
+# lowest version its users get, so it is raised only for a reason (an advisory, a fix or an API we need, a line out of
+# support); a pull request without one is closed. Security updates come as soon as there's an advisory (Dependabot
+# alerts and security updates in the repository's settings).
 # No ignore rules: GitHub applies them to security updates too.
 # The website and the GitHub Actions: version updates once a month, each ecosystem in one grouped pull request.
 version: 2
@@ -9,8 +10,8 @@ updates:
     directory: /src
     schedule:
       interval: monthly
-    # 0 turns the version updates off (security updates have a limit of their own)
-    open-pull-requests-limit: 0
+    # not grouped, so each package can be taken or closed on its own
+    open-pull-requests-limit: 20
 
   - package-ecosystem: npm
     directory: /website
