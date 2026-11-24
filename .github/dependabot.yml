@@ -3,6 +3,7 @@
 # support); a pull request without one is closed. Security updates come as soon as there's an advisory (Dependabot
 # alerts and security updates in the repository's settings).
 # No ignore rules: GitHub applies them to security updates too.
+# Dependabot installs the SDK of global.json (it has none for .NET 11 otherwise, and cannot restore net11.0).
 # The website and the GitHub Actions: version updates once a month, each ecosystem in one grouped pull request.
 version: 2
 updates:

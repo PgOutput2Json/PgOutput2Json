@@ -30,7 +30,7 @@ Both test projects run on every pull request and on `main` (`.github/workflows/t
 
 The website (landing page and docs, Astro + Starlight) is in `website/` and is deployed to GitHub Pages by `.github/workflows/website.yml`. Its docs pages were split from `README.md`: when the README or an adapter README changes, update the matching page in `website/src/content/docs/docs/`. See `website/README.md`. Each package README (`src/<Package>/README.md`, shown on NuGet) is built from them: the root README up to its Quick Start, the Quick Start steps 1.1 to 1.3 (for the core package also 1.4), a `## Using <Output>` section with the output's website page (headings one level down, links absolute to https://pg2json.com/docs/, the temporary slot note after the worker example), and the permanent replication slots section. Keep them in sync when any of these change.
 
-The core library targets `net8.0`, `net9.0`, `net10.0`, and `net11.0`. `TreatWarningsAsErrors=True` is set — all warnings must be resolved.
+The core library targets `net8.0`, `net9.0`, `net10.0`, and `net11.0`. `global.json` asks for the .NET 11 SDK (11.0.100 or a later feature band), which builds all four; Dependabot installs it from there. `TreatWarningsAsErrors=True` is set — all warnings must be resolved.
 
 ## Packages and Releases
 
