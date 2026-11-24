@@ -42,8 +42,4 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(TargetFramework)' == 'net11.0'">
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="11.0.0" />
-    </ItemGroup>
-
 </Project>
