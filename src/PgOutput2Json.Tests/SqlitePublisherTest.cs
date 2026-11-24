@@ -17,7 +17,8 @@ namespace PgOutput2Json.Tests
         {
             var options = new SqlitePublisherOptions
             {
-                ConnectionStringBuilder = new SqliteConnectionStringBuilder("Data Source=:memory:")
+                ConnectionStringBuilder = new SqliteConnectionStringBuilder("Data Source=:memory:"),
+                SubscriptionName = "test",
             };
 
             await using var publisher = new SqlitePublisher(options, null);
@@ -46,7 +47,8 @@ namespace PgOutput2Json.Tests
 
             var options = new SqlitePublisherOptions
             {
-                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False")
+                ConnectionStringBuilder = new SqliteConnectionStringBuilder($"Data Source={path};Pooling=False"),
+                SubscriptionName = "test",
             };
 
             try
@@ -199,7 +201,7 @@ namespace PgOutput2Json.Tests
         {
             await WithApplicationDatabaseAsync(async connectionString =>
             {
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 // a child copied before its parent, as the syncs of two tables can do
                 await using (var publisher = new SqlitePublisher(options, null))
@@ -238,7 +240,7 @@ namespace PgOutput2Json.Tests
                 var schema = $"\"s\":[{t},[{J(id)},1,23],[{J(name)},0,25]]";
                 var schemaAdded = $"\"s\":[{t},[{J(id)},1,23],[{J(name)},0,25],[{J(added)},0,23]]";
 
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {
@@ -278,7 +280,7 @@ namespace PgOutput2Json.Tests
             {
                 await ExecuteAsync(connectionString, "CREATE TABLE victim (id INTEGER); INSERT INTO victim VALUES (1)");
 
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {
@@ -308,7 +310,7 @@ namespace PgOutput2Json.Tests
                 // a read-only connection of the application, back in the pool
                 await ExecuteAsync(connectionString, "PRAGMA query_only = true");
 
-                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString) };
+                var options = new SqlitePublisherOptions { ConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString), SubscriptionName = "test" };
 
                 await using (var publisher = new SqlitePublisher(options, null))
                 {

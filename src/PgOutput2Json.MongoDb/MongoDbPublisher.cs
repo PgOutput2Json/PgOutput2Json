@@ -60,6 +60,11 @@ namespace PgOutput2Json.MongoDb
 
         public MongoDbPublisher(MongoDbPublisherOptions options, ILogger<MongoDbPublisher>? logger)
         {
+            if (string.IsNullOrWhiteSpace(options.SubscriptionName))
+            {
+                throw new ArgumentException("SubscriptionName must be provided: the store keeps the position of each subscription under its name", nameof(options));
+            }
+
             _options = options;
             Names = new TargetNames(options.GetTableName);
             _logger = logger;
